@@ -52,3 +52,39 @@ setup() {
   [ "$(yq .git.host "$PROJ/.agentic/agentic.yaml")" = github.com ]
   [ "$(yq '.repos[0].name' "$PROJ/.agentic/agentic.yaml")" = orders-service ]
 }
+
+@test "init survives a repository with hundreds of build files and lists at most 50" {
+  mkdir -p "$PROJ/many"
+  seq 1 3000 | sed "s#.*#$PROJ/many/f&.tf#" | tr '\n' '\0' | xargs -0 touch
+  for i in $(seq 1 200); do mkdir -p "$PROJ/pkg$i"; echo '{}' > "$PROJ/pkg$i/package.json"; done
+  mkdir -p "$PROJ/.terraform/modules/m"; echo x > "$PROJ/.terraform/modules/m/main.tf"
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"next:"* ]]
+  [ "$(grep -c '^- \./' "$PROJ/.agentic/detect-report.md")" -le 50 ]
+  ! grep -q '\.terraform' "$PROJ/.agentic/detect-report.md"
+  grep -q '^Notes:' "$PROJ/.agentic/detect-report.md"
+}
+
+@test "init strips credentials from an https remote and keeps & literal" {
+  git -C "$PROJ" remote set-url origin 'https://user:tok123@git.example.com/team/x.git?a=1&b=2'
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  y="$PROJ/.agentic/agentic.yaml"
+  [ "$(yq '.repos[0].url' "$y")" = 'https://git.example.com/team/x.git?a=1&b=2' ]
+  [ "$(yq .git.host "$y")" = git.example.com ]
+  ! grep -rq tok123 "$PROJ/.agentic"
+}
+
+@test "render_tools output of every shape passes agentic-config validate" {
+  source "$REPO_ROOT/lib/host/detect.sh"
+  make_agentic_dir
+  for g in false 8.10; do
+    d=$'java=21,17,8\nmaven=3.9.9\ngradle='"$g"$'\nnode=22\npython=3.12\nterraform=1.9.8\ngo=1.22.0\ndotnet=8.0\nhelm=3.16.1'
+    mkdir -p "$PROJ/.agentic"
+    { printf 'version: 1\nproject: shapes\nrepos:\n  - name: shapes\n    url: "git@git.example.com:t/s.git"\ngit:\n  host: git.example.com\n'
+      render_tools "$d"; } > "$PROJ/.agentic/agentic.yaml"
+    run "$REPO_ROOT/image/bin/agentic-config" validate "$PROJ/.agentic"
+    [ "$status" -eq 0 ]
+  done
+}

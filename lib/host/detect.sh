@@ -6,10 +6,19 @@ DEFAULT_GRADLE=8.10
 DEFAULT_HELM=3.16.1
 DEFAULT_MAVEN=3.9.9
 
+# _pruned ROOT FIND-TESTS...: matching files under ROOT, skipping vendored and generated trees.
+_pruned() {
+  local root="$1"; shift
+  find "$root" -maxdepth 5 \( -name .git -o -name node_modules -o -name .terraform -o -name target \
+    -o -name build -o -name dist -o -name .agentic -o -name .venv \) -prune -o -type f "$@" -print 2>/dev/null
+}
 # _files ROOT NAME: files called NAME, skipping vendored and generated trees.
-_files() {
-  find "$1" -maxdepth 5 \( -name .git -o -name node_modules -o -name .terraform -o -name target \
-    -o -name build -o -name dist -o -name .agentic -o -name .venv \) -prune -o -type f -name "$2" -print 2>/dev/null
+_files() { _pruned "$1" -name "$2"; }
+# report_files ROOT: the build files init lists in detect-report.md, relative to ROOT.
+report_files() {
+  (cd "$1" && _pruned . \( -name pom.xml -o -name 'build.gradle*' -o -name package.json -o -name pyproject.toml \
+    -o -name '*.tf' -o -name go.mod -o -name '*.csproj' -o -name Chart.yaml -o -name '.tool-versions' \
+    -o -name 'docker-compose*.yml' \))
 }
 _major() { case "$1" in 1.*) cut -d. -f2 <<<"$1" ;; *) echo "${1%%[.+_-]*}" ;; esac; }
 # _tv ROOT TOOL: the version .tool-versions gives TOOL, without a vendor prefix.

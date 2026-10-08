@@ -71,7 +71,8 @@ cmd_build() {
 }
 
 cmd_init() {
-  local force=0 root cfg det name url host line
+  local force=0 root cfg det name url host line files
+  shopt -u patsub_replacement 2>/dev/null || true   # & in a URL stays literal
   [ "${1:-}" = --force ] && force=1
   root="$(project_root)"; cfg="$root/.agentic"
   if [ -f "$cfg/agentic.yaml" ] && [ "$force" = 0 ]; then
@@ -88,6 +89,7 @@ cmd_init() {
   det="$(detect_tools "$root")"
   name="$(slugify "$(basename "$root")")"
   url="$(git -C "$root" remote get-url origin 2>/dev/null || true)"
+  url="$(sed -E 's#^(https?://)[^/@]*@#\1#' <<<"$url")"   # no credentials in a committed file
   host="github.com"
   if [ -n "$url" ]; then host="$(sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*$##' <<<"$url")"; fi
   while IFS= read -r line; do
@@ -102,9 +104,8 @@ cmd_init() {
     echo "# Detection report ($(date -u +%Y-%m-%d))"
     echo
     echo "Build files found:"
-    (cd "$root" && find . -maxdepth 5 \( -name .git -o -name node_modules -o -name .agentic \) -prune -o -type f \
-      \( -name pom.xml -o -name 'build.gradle*' -o -name package.json -o -name pyproject.toml -o -name '*.tf' \
-         -o -name go.mod -o -name '*.csproj' -o -name Chart.yaml -o -name '.tool-versions' -o -name 'docker-compose*.yml' \) -print | sed 's/^/- /' | head -50)
+    files="$(report_files "$root")"
+    sed -n '1,50s/^/- /p' <<<"$files"
     echo
     echo "Detected:"; grep -v '^note=' <<<"$det" | sed 's/^/- /' || true
     echo
