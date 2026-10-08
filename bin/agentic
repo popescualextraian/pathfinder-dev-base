@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Host CLI for agentic-dev-base. Run `agentic help`.
+set -euo pipefail
+AGENTIC_ROOT="${AGENTIC_ROOT:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
+# shellcheck source=../lib/host/common.sh
+source "$AGENTIC_ROOT/lib/host/common.sh"
+# shellcheck source=../lib/host/aws.sh
+source "$AGENTIC_ROOT/lib/host/aws.sh"
+
+usage() {
+  cat <<'EOF'
+agentic <command> [options]          run inside a project repository
+  init [--force]                     write .agentic/ for this repository, with detected tools
+  build [--refresh-plugins] [--no-cache]
+                                     build the base if needed, then agentic-<project>:local
+  login [claude|copilot]             log a harness in for this project (once)
+  setup                              refine .agentic/ with the /agentic-setup skill
+  shell [CMD...]                     throwaway container (removed on exit)
+  dev [stop|recreate|status] [--host-profile wsl]
+                                     persistent dev container, attached through tmux (detach: Ctrl-b d)
+  doctor                             check tools, MCP servers, logins, certificates
+  build-base [--force]               build agentic-dev-base:local (make build)
+EOF
+}
+
+# base_hash: a hash of everything the base image is built from.
+base_hash() {
+  (cd "$AGENTIC_ROOT" && find image derive config schema skills -type f -print0 | sort -z \
+    | xargs -0 sha256sum | sha256sum | cut -c1-16)
+}
+
+cmd_build_base() {
+  local h; h="$(base_hash)"
+  if [ "${1:-}" != --force ] && [ "$(image_label "$BASE_IMAGE" agentic.base.hash)" = "$h" ]; then
+    echo "base image is current"; return 0
+  fi
+  proxy_build_args
+  local ca="${AGENTIC_BUILD_CA_DIR:-$AGENTIC_DATA/ca}" ctx=()
+  if compgen -G "$ca/*.crt" >/dev/null; then ctx=(--build-context "agentic-ca=$ca"); fi
+  docker build -f "$AGENTIC_ROOT/image/Dockerfile" "${PROXY_BUILD_ARGS[@]}" "${ctx[@]}" \
+    --label "agentic.base.hash=$h" -t "$BASE_IMAGE" "$AGENTIC_ROOT"
+}
+
+cmd_build() {
+  local refresh=0 nocache=() cfg base img
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --refresh-plugins) refresh=1 ;;
+      --no-cache) nocache=(--no-cache) ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  need_config
+  cmd_build_base
+  cfg="$(cfg_dir)"; base="$(base_image_of)"; img="$(project_image)"
+  image_exists "$base" || die "base image $base not found; build or pull it first"
+  check_env_file "$cfg/.env"
+  mkdir -p "$cfg/.build"
+  if ! docker run --rm --entrypoint /opt/agentic/derive/render-dockerfile.sh \
+       -v "$cfg:/agentic-config:ro" "$base" > "$cfg/.build/Dockerfile.derived"; then
+    die "agentic.yaml has errors (see above)"
+  fi
+  local args=(-f "$cfg/.build/Dockerfile.derived" --build-arg "UID=$(id -u)" --build-arg "GID=$(id -g)" -t "$img")
+  if [ "$refresh" = 1 ]; then args+=(--build-arg "AGENTIC_PLUGINS_REFRESH=$(date +%s)"); fi
+  proxy_build_args
+  docker build "${nocache[@]}" "${PROXY_BUILD_ARGS[@]}" "${args[@]}" "$cfg"
+  echo "built $img"
+}
+
+main() {
+  local cmd="${1:-help}"
+  if [ "$#" -gt 0 ]; then shift; fi
+  case "$cmd" in
+    build) cmd_build "$@" ;;
+    build-base) cmd_build_base "$@" ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then main "$@"; fi
