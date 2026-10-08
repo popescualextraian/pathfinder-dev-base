@@ -21,7 +21,6 @@ agentic <command> [options]          run inside a project repository
   doctor                             check the configured container: steps, tools, logins, MCP, certificates
   dev [stop|recreate|status] [--host-profile wsl]
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
-  doctor                             check tools, MCP servers, logins, certificates
   build-base [--force]               build agentic-dev-base:local (make build)
 EOF
 }
