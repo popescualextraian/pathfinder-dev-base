@@ -75,6 +75,7 @@ RUN PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm install -g --prefix /opt/agenti
       printf '#!/bin/sh\nPATH=/opt/node/%s/bin:$PATH exec %s "$@"\n' "${NODE_HARNESS}" "$b" > "/usr/local/bin/$n"; \
       chmod 755 "/usr/local/bin/$n"; \
     done \
+ && find /opt/agentic/npm/lib/node_modules/ccusage -path '*/bin/ccusage' -type f -exec chmod 755 {} + \
  && ln -s playwright-mcp /usr/local/bin/mcp-server-playwright
 
 # Python MCP servers and Graphify, as uv tools shared by every user

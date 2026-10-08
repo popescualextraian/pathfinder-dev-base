@@ -24,3 +24,7 @@ D="$REPO_ROOT/image/Dockerfile"
     [ "$status" -ne 0 ] || { echo "$p is ignored"; false; }
   done
 }
+
+@test "ccusage's native binary is made executable at build (it cannot chmod itself as dev)" {
+  grep -Eq 'node_modules/ccusage.*-exec chmod (755|a\+x)' "$D"
+}
