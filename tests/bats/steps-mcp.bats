@@ -81,3 +81,18 @@ apply() {
   [[ "$output" == *"MCP servers differ from agentic.yaml"* ]]
   [ ! -f "$CJ" ]
 }
+
+@test "a failing jq computation is fatal and leaves .claude.json untouched" {
+  printf 'version: 1\nproject: demo\n' > "$AGENTIC_CONFIG_MOUNT/agentic.yaml"
+  bash "$S/10-validate.sh" >/dev/null
+  printf '{"hasCompletedOnboarding":true}\n' > "$CJ"
+  before="$(cat "$CJ")"
+  # a private copy of lib with a broken jq module
+  rm "$AGENTIC_DIR/lib"
+  cp -r "$REPO_ROOT/image/lib" "$AGENTIC_DIR/lib"
+  echo 'def desired($g): ;' > "$AGENTIC_DIR/lib/mcp.jq"
+  run bash "$S/40-mcp.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"could not compute MCP servers"* ]]
+  [ "$before" = "$(cat "$CJ")" ]
+}

@@ -8,20 +8,22 @@ graphify="${AGENTIC_GRAPHIFY_PYTHON:-/opt/agentic/uv-tools/graphifyy/bin/python}
 lib="$AGENTIC_DIR/lib"
 rc=0
 
-desired="$(jq -c -L "$lib" --arg g "$graphify" 'include "mcp"; desired($g)' "$RESOLVED")"
+desired="$(jq -c -L "$lib" --arg g "$graphify" 'include "mcp"; desired($g)' "$RESOLVED")" || { say "could not compute MCP servers"; exit 1; }
 mf="$(claude_dir)/agentic-managed-mcp.json"
 managed="$(jq -c . "$mf" 2>/dev/null || echo '[]')"
 read_json() { if [ -s "$1" ] && jq -e . "$1" >/dev/null 2>&1; then cat "$1"; else echo '{}'; fi; }
 
 cf="$(claude_json)"
 pf="$(copilot_dir)/mcp-config.json"
-claude_next="$(read_json "$cf" | jq -L "$lib" --argjson m "$managed" --argjson d "$desired" 'include "mcp"; merge_managed($m; $d)')"
-copilot_next="$(read_json "$pf" | jq -L "$lib" --argjson m "$managed" --argjson d "$desired" 'include "mcp"; merge_managed($m; $d | to_copilot)')"
+claude_next="$(read_json "$cf" | jq -L "$lib" --argjson m "$managed" --argjson d "$desired" 'include "mcp"; merge_managed($m; $d)')" || { say "could not compute MCP servers"; exit 1; }
+copilot_next="$(read_json "$pf" | jq -L "$lib" --argjson m "$managed" --argjson d "$desired" 'include "mcp"; merge_managed($m; $d | to_copilot)')" || { say "could not compute MCP servers"; exit 1; }
 
 # Variables the servers need at connect time.
+refs="$(jq -r -L "$lib" 'include "mcp"; to_entries[] | .key as $k | (.value | env_refs[]) | [$k, .] | @tsv' <<<"$desired")" || { say "could not compute MCP servers"; exit 1; }
 while IFS=$'\t' read -r server var; do
+  [ -n "$server" ] || continue
   if [ -z "${!var:-}" ]; then say "MCP server $server uses \${$var}, which is not set (add it to .agentic/.env)"; rc=2; fi
-done < <(jq -r -L "$lib" 'include "mcp"; to_entries[] | .key as $k | (.value | env_refs[]) | [$k, .] | @tsv' <<<"$desired")
+done <<<"$refs"
 if jq -e 'has("atlassian")' <<<"$desired" >/dev/null && [ -z "${JIRA_PERSONAL_TOKEN:-}${CONFLUENCE_PERSONAL_TOKEN:-}" ]; then
   say "MCP server atlassian has no token: set JIRA_PERSONAL_TOKEN or CONFLUENCE_PERSONAL_TOKEN in .agentic/.env"
   rc=2
