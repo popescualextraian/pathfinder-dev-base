@@ -118,6 +118,13 @@ write() { printf '%s\n' "$2" > "$1"; }
   [ "$(config_find)" = "$AGENTIC_CONFIG_MOUNT" ]
 }
 
+@test "agentic-config says so when AGENTIC_CONFIG_B64 is not valid base64" {
+  export AGENTIC_CONFIG_MOUNT="$BATS_TEST_TMPDIR/none" AGENTIC_WORK="$BATS_TEST_TMPDIR/none"
+  AGENTIC_CONFIG_B64='%%%not-base64' run "$AC" validate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"AGENTIC_CONFIG_B64 is not valid base64"* ]]
+}
+
 @test "config_path maps .agentic/ paths into the config directory" {
   source "$AGENTIC_DIR/lib/common.sh"
   mkdir -p "$AGENTIC_STATE"; echo /agentic-config > "$AGENTIC_STATE/config-dir"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Config discovery, resolution and validation. Source after common.sh.
 
-# config_find: the directory holding agentic.yaml; nothing when there is none.
+# config_find: the directory holding agentic.yaml; nothing when there is none. Fails, with a
+# message, when AGENTIC_CONFIG_B64 is set but does not decode.
 config_find() {
   local d
   for d in "${AGENTIC_CONFIG_MOUNT:-/agentic-config}" "${AGENTIC_WORK:-/work}/.agentic"; do
@@ -10,7 +11,11 @@ config_find() {
   if [ -n "${AGENTIC_CONFIG_B64:-}" ]; then
     d="$AGENTIC_STATE/env-config"
     mkdir -p "$d"
-    printf '%s' "$AGENTIC_CONFIG_B64" | base64 -d > "$d/agentic.yaml" || return 1
+    if ! printf '%s' "$AGENTIC_CONFIG_B64" | base64 -d > "$d/agentic.yaml" 2>/dev/null; then
+      rm -f "$d/agentic.yaml"
+      say "AGENTIC_CONFIG_B64 is not valid base64"
+      return 1
+    fi
     printf '%s\n' "$d"
   fi
 }

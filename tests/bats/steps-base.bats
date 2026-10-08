@@ -111,6 +111,13 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ "$(cat "$AGENTIC_STATE/config-dir")" = "" ]
 }
 
+@test "10 fails when AGENTIC_CONFIG_B64 is not valid base64, instead of using the defaults" {
+  AGENTIC_CONFIG_B64='%%%not-base64' run bash "$S/10-validate.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"AGENTIC_CONFIG_B64 is not valid base64"* ]]
+  [ ! -f "$AGENTIC_STATE/config.json" ]
+}
+
 @test "10 finds the config inside a cloned /work" {
   git clone -q "$O" "$AGENTIC_WORK/x" && mv "$AGENTIC_WORK/x/.agentic" "$AGENTIC_WORK/.agentic"
   run bash "$S/10-validate.sh"

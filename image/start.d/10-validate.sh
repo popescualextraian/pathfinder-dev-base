@@ -6,7 +6,7 @@ source "$AGENTIC_DIR/lib/config.sh"
 mkdir -p "$AGENTIC_STATE"
 tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
 rc=0
-dir="$(config_find)"
+dir="$(config_find)" || exit 1
 if [ -z "$dir" ]; then
   say "no agentic.yaml found; using defaults"
   config_resolve | jq -c '.project = "default"' > "$tmp"

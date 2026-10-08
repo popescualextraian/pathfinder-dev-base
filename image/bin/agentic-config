@@ -10,7 +10,7 @@ source "$AGENTIC_DIR/lib/config.sh"
 
 dir_arg() {
   local d="${1:-}"
-  if [ -z "$d" ]; then d="$(config_find)"; fi
+  if [ -z "$d" ]; then d="$(config_find)" || exit 1; fi
   if [ -z "$d" ] || [ ! -f "$d/agentic.yaml" ]; then say "no agentic.yaml found"; exit 1; fi
   printf '%s\n' "$d"
 }
