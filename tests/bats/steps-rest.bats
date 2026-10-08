@@ -19,6 +19,39 @@ stub() { printf '#!/bin/sh\necho "%s $*" >> "$LOG"\n%s\n' "$1" "${2:-exit 0}" > 
 config() { printf '%s\n' "$1" > "$AGENTIC_CONFIG_MOUNT/agentic.yaml"; bash "$S/10-validate.sh" >/dev/null; }
 
 # --- 50-plugins
+# --- 25-harness
+@test "25 sets the Claude model as ANTHROPIC_MODEL and the Copilot model in its config" {
+  echo '{"trusted_folders":["/work"]}' > "$BATS_TEST_TMPDIR/cp.json"; mkdir -p "$HOME/.copilot"
+  cp "$BATS_TEST_TMPDIR/cp.json" "$HOME/.copilot/config.json"
+  config $'version: 1\nproject: demo\nharness:\n  claude: {model: claude-opus-x}\n  copilot: {model: gpt-x}'
+  run bash "$S/25-harness.sh"
+  [ "$status" -eq 0 ]
+  grep -qx 'export ANTHROPIC_MODEL=claude-opus-x' "$AGENTIC_STATE/env"
+  [ "$(jq -r .model "$HOME/.copilot/config.json")" = gpt-x ]
+  [ "$(jq -r '.trusted_folders[0]' "$HOME/.copilot/config.json")" = /work ]
+}
+
+@test "25 with empty models sets nothing" {
+  config $'version: 1\nproject: demo'
+  run bash "$S/25-harness.sh"
+  [ "$status" -eq 0 ]
+  run grep -q ANTHROPIC_MODEL "$AGENTIC_STATE/env"
+  [ "$status" -ne 0 ]
+  [ ! -e "$HOME/.copilot/config.json" ]
+}
+
+@test "25 --check reports model drift and changes nothing" {
+  config $'version: 1\nproject: demo\nharness:\n  claude: {model: claude-opus-x}\n  copilot: {model: gpt-x}'
+  ANTHROPIC_MODEL=other run bash "$S/25-harness.sh" --check
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"ANTHROPIC_MODEL"* ]]
+  [[ "$output" == *"Copilot model"* ]]
+  [ ! -e "$HOME/.copilot/config.json" ]
+  bash "$S/25-harness.sh"
+  ANTHROPIC_MODEL=claude-opus-x run bash "$S/25-harness.sh" --check
+  [ "$status" -eq 0 ]
+}
+
 @test "50 links the baked plugins and enables the configured ones" {
   stub copilot
   config $'version: 1\nproject: demo'

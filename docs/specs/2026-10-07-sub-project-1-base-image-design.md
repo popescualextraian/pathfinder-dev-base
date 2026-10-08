@@ -232,6 +232,7 @@ Config lookup order: `/agentic-config`, then `/work/.agentic`, then `AGENTIC_CON
 | `05-workspace` | If `/work` is empty: clone `AGENTIC_REPO_URL`, else fail with a clear message. Clone missing `repos:` into `/workspaces`. |
 | `10-validate` | Find the config (§6.1) and validate it. Exit non-zero on error. |
 | `20-onboarding` | Seed harness onboarding and trust for `/work` and `/workspaces/*`. |
+| `25-harness` | `harness.claude.model` as `ANTHROPIC_MODEL`, `harness.copilot.model` as `model` in Copilot's `config.json`; empty leaves the harness default. |
 | `30-git` | `user.name` and `user.email`, credential helper for `git.host` from `GH_TOKEN` or `GIT_TOKEN`, `GH_HOST`, `GIT_COMMITTER_*`. |
 | `40-mcp` | Reconcile managed MCP servers for both harnesses: remove disabled ones, add or update enabled ones, expand `${VAR}`. Servers added by hand are left alone. |
 | `50-plugins` | Link `~/.claude/plugins` (and Copilot's) to the baked plugins. Warn about configured plugins not in the image. |
