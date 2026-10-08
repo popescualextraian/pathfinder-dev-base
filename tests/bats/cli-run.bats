@@ -128,3 +128,10 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   run ag dev status
   [ "$output" = "agentic-demo-dev: not created" ]
 }
+
+@test "setup with Copilot and no login prints the auth help without a stray shell error" {
+  DOCKER_LABEL=copilot run ag setup
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agentic login copilot"* ]]
+  [[ "$output" != *"No such file"* ]]
+}

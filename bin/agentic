@@ -142,7 +142,8 @@ harness_authenticated() {
         || [ -n "$(dotenv_value "$env" ANTHROPIC_API_KEY)$(dotenv_value "$env" CLAUDE_CODE_OAUTH_TOKEN)$(dotenv_value "$env" CLAUDE_CODE_USE_BEDROCK)" ] ;;
     copilot)
       [ -n "$(dotenv_value "$env" COPILOT_GITHUB_TOKEN)$(dotenv_value "$env" GH_TOKEN)" ] \
-        || tr -d '[:space:]' < "$data/config.json" 2>/dev/null | grep -q '"logged_in_users":\[{' ;;
+        || { [ -r "$data/config.json" ] \
+             && tr -d '[:space:]' < "$data/config.json" | grep -q '"logged_in_users":\[{'; } ;;
     *) return 1 ;;
   esac
 }
