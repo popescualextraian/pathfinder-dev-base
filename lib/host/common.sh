@@ -80,8 +80,8 @@ build_run_args() {
     build_aws_dir "$HOME/.aws" "$data/aws" "$profile"
     RUN_ARGS+=(-v "$data/aws:/home/dev/.aws")
   fi
-  sock=/var/run/docker.sock
+  sock="${AGENTIC_DOCKER_SOCK:-/var/run/docker.sock}"
   if [ "$(image_label "$img" agentic.docker_socket)" = true ] && [ -S "$sock" ]; then
-    RUN_ARGS+=(-v "$sock:$sock" --group-add "$(stat -c %g "$sock")")
+    RUN_ARGS+=(-v "$sock:/var/run/docker.sock" --group-add "$(stat -c %g "$sock")")
   fi
 }

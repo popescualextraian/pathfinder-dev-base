@@ -75,8 +75,19 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
 }
 
 @test "the Docker socket is mounted only when the image label says so" {
+  SOCK="$BATS_TEST_TMPDIR/docker.sock"
+  python3 -c 'import socket,sys;s=socket.socket(socket.AF_UNIX);s.bind(sys.argv[1])' "$SOCK"
+  export AGENTIC_DOCKER_SOCK="$SOCK"
+  DOCKER_LABEL=true run in_project 'build_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
+  [ "$status" -eq 0 ]
+  grep -qx "$SOCK:/var/run/docker.sock" <<<"$output"
+  grep -qx -- "--group-add" <<<"$output"
+  grep -qx "$(stat -c %g "$SOCK")" <<<"$output"
   DOCKER_LABEL=false run in_project 'build_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
-  run grep -q docker.sock <<<"$output"
+  [ "$status" -eq 0 ]
+  run grep -q "docker.sock" <<<"$output"
+  [ "$status" -ne 0 ]
+  run grep -qx -- "--group-add" <<<"$output"
   [ "$status" -ne 0 ]
 }
 
@@ -119,8 +130,12 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
 
 @test "build passes proxy variables as build arguments" {
   export HTTPS_PROXY=http://proxy.example.com:8080
-  DOCKER_LABEL=current run in_project 'main build'
-  grep -qx "HTTPS_PROXY" "$DOCKER_LOG"
+  h="$(bash -c "source '$A'; base_hash")"
+  DOCKER_LABEL="$h" run in_project 'main build'
+  [ "$status" -eq 0 ]
+  [ "$(grep -c -- '^--- build' "$DOCKER_LOG")" -eq 1 ]
+  docker_sub build 1 | grep -qx "agentic-demo:local"
+  docker_sub build 1 | grep -qx "HTTPS_PROXY"
 }
 
 @test "build stops when the config does not render" {
