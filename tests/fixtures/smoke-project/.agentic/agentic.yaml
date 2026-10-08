@@ -1,0 +1,10 @@
+version: 1
+project: smoke-project
+base_image: agentic-smoke-overlay:local
+tools:
+  java: {versions: [17, 8], default: 17}
+  terraform: "1.5.7"
+  hello: "1.0"
+  apt: [tree]
+mcp:
+  atlassian: {enabled: true, jira_url: "https://jira.example.com"}

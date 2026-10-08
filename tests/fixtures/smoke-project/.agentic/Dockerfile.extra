@@ -1,0 +1,1 @@
+RUN echo extra > /etc/agentic-extra
