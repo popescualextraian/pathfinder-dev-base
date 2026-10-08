@@ -31,3 +31,10 @@ load helpers
   grep -q 'agentic-config validate' "$f"
   grep -q 'Never read .agentic/.env' "$f"
 }
+
+@test "the README names the CA file rules and how private repos authenticate" {
+  f="$REPO_ROOT/README.md"
+  grep -qF '`*.crt`' "$f"
+  grep -qF 'AGENTIC_BUILD_CA_DIR' "$f"
+  grep -qF 'Never put a token in the URL' "$f"
+}

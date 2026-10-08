@@ -12,7 +12,9 @@ bash, git and Docker. Clone this repository once and put `bin/agentic` on your P
 
 Behind a TLS-intercepting proxy, put your CA certificate into `~/.agentic/ca/` before the first
 build (the base image needs it to download anything), and into the project's `.agentic/certs/`
-so Java, Node, Python and Chromium trust it too.
+so Java, Node, Python and Chromium trust it too. The files in `~/.agentic/ca/` must be named
+`*.crt` and hold PEM content; others are ignored. `AGENTIC_BUILD_CA_DIR` points the build at
+another directory.
 
 ## Quick start
 
@@ -23,6 +25,13 @@ so Java, Node, Python and Chromium trust it too.
     agentic setup         # optional: refine .agentic/ with the /agentic-setup skill
     agentic dev           # persistent container, tmux session in /work; run claude or copilot
     agentic doctor        # when something looks wrong
+
+## Private repositories
+
+Repositories (`AGENTIC_REPO_URL`, `repos:`) clone over https with `GIT_TOKEN` or `GH_TOKEN` from
+`.agentic/.env`. Never put a token in the URL itself (`https://user:token@...`): URLs end up in
+configs and logs. `git@host:` and `ssh://git@host/` URLs are rewritten to https, because no SSH
+keys are mounted.
 
 ## Extending
 
