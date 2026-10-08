@@ -71,6 +71,19 @@ fake_jdk() {
   grep -q "chown -R 1001:1002" "$LOG"
 }
 
+@test "remap-user chowns only the directories that exist" {
+  for c in groupmod usermod chown; do
+    printf '#!/bin/sh\necho "%s $*" >> "$LOG"\n' "$c" > "$BATS_TEST_TMPDIR/bin/$c"; chmod +x "$BATS_TEST_TMPDIR/bin/$c"
+  done
+  printf '#!/bin/sh\necho 1000\n' > "$BATS_TEST_TMPDIR/bin/id"; chmod +x "$BATS_TEST_TMPDIR/bin/id"
+  printf '#!/bin/sh\nfor a; do case "$a" in /*) [ -e "$a" ] || { echo "chown: $a missing" >&2; exit 1; };; esac; done\necho "chown $*" >> "$LOG"\n' > "$BATS_TEST_TMPDIR/bin/chown"
+  chmod +x "$BATS_TEST_TMPDIR/bin/chown"
+  run "$B/agentic-remap-user" 1001 1002
+  [ "$status" -eq 0 ]
+  grep -q "chown -R 1001:1002 /home/dev" "$LOG"
+  ! grep -q "/opt/agentic/claude-plugins" "$LOG" || [ -e /opt/agentic/claude-plugins ]
+}
+
 @test "install-plugins installs only missing plugins and reports failures after trying all" {
   mkdir -p "$HOME/.claude/plugins"
   echo '{"plugins":{"have@m":[{}]}}' > "$HOME/.claude/plugins/installed_plugins.json"
@@ -80,6 +93,16 @@ fake_jdk() {
   grep -q "claude plugin marketplace add o/m" "$LOG"
   grep -q "claude plugin install new@m" "$LOG"
   ! grep -q "install have@m" "$LOG"
+}
+
+@test "install-plugins warns about a failed marketplace add and still installs" {
+  mkdir -p "$HOME/.claude/plugins"
+  printf '#!/bin/sh\necho "claude $*" >> "$LOG"\ncase "$3" in add) echo "boom" >&2; exit 1;; esac\nexit 0\n' > "$BATS_TEST_TMPDIR/bin/claude"; chmod +x "$BATS_TEST_TMPDIR/bin/claude"
+  run "$B/agentic-install-plugins" '{"claude":["new@m"],"marketplaces":["o/badmarket"]}'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"o/badmarket"* ]]
+  [[ "$output" == *"boom"* ]]
+  grep -q "claude plugin install new@m" "$LOG"
 }
 
 @test "use-java switches JAVA_HOME and PATH in the current shell" {

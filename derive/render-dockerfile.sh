@@ -22,6 +22,9 @@ problems=()
 # records a problem when the path points outside it. Call directly, not in $(...).
 inside() {
   local p; p="$(cfg "$1")"
+  case "/$p/" in
+    */../*) problems+=("${1#.}: $p must be inside .agentic/"); return 1 ;;
+  esac
   case "$p" in
     .agentic/*) REL="${p#.agentic/}"; return 0 ;;
     *) problems+=("${1#.}: $p must be inside .agentic/"); return 1 ;;

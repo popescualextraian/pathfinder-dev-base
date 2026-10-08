@@ -59,3 +59,11 @@ normalise() { sed -E 's/agentic\.config\.hash="[0-9a-f]+"/agentic.config.hash="H
   b="$(bash "$R" "$C" | grep -o 'config.hash="[0-9a-f]*"')"
   [ "$a" != "$b" ]
 }
+
+@test "a .. segment cannot escape .agentic/" {
+  printf 'RUN echo outside\n' > "$BATS_TEST_TMPDIR/outside"
+  printf 'version: 1\nproject: demo\ntools:\n  extra_dockerfile: .agentic/../../outside\n' > "$C/agentic.yaml"
+  run bash "$R" "$C"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"tools.extra_dockerfile: .agentic/../../outside must be inside .agentic/"* ]]
+}

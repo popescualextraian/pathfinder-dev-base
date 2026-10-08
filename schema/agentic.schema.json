@@ -48,7 +48,7 @@
         "go": {"description": "Go version (exact, e.g. 1.22.5).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"}]},
         "glab": {"description": "GitLab CLI version (exact).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}]},
         "psql": {"description": "PostgreSQL client major (e.g. 16).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+$"}]},
-        "apt": {"description": "Plain apt packages, optionally pinned (name=version).", "type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]*(=[^ ]+)?$"}},
+        "apt": {"description": "Plain apt packages, optionally pinned (name=version).", "type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]*(=[A-Za-z0-9.+:~_-]+)?$"}},
         "extra_dockerfile": {"description": "Dockerfile lines appended to the derived image, run as root, inside .agentic/.", "type": "string"}
       }
     },

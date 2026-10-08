@@ -5,4 +5,8 @@ uid="${1:?usage: agentic-remap-user UID GID}"; gid="${2:?usage: agentic-remap-us
 if [ "$(id -u dev)" = "$uid" ] && [ "$(id -g dev)" = "$gid" ]; then exit 0; fi
 groupmod -o -g "$gid" dev
 usermod -o -u "$uid" -g "$gid" dev
-chown -R "$uid:$gid" /home/dev /opt/agentic/claude-plugins /work /workspaces
+dirs=(/home/dev)
+for d in /opt/agentic/claude-plugins /work /workspaces; do
+  if [ -d "$d" ]; then dirs+=("$d"); fi
+done
+chown -R "$uid:$gid" "${dirs[@]}"

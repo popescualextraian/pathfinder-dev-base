@@ -132,3 +132,12 @@ write() { printf '%s\n' "$2" > "$1"; }
   run "$AC" get .docker.socket
   [ "$output" = false ]
 }
+
+@test "apt pins may not carry shell metacharacters" {
+  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  apt: ["tree=1;id"]'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  apt: ["tree=2.1.1-2"]'
+  run "$AC" validate "$P"
+  [ "$status" -eq 0 ]
+}
