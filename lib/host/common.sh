@@ -78,7 +78,7 @@ build_run_args() {
   profile="$(dotenv_value "$cfg/.env" AWS_PROFILE)"
   if [ -n "$profile" ] && [ -d "$HOME/.aws" ]; then
     build_aws_dir "$HOME/.aws" "$data/aws" "$profile"
-    RUN_ARGS+=(-v "$data/aws:/home/dev/.aws")
+    RUN_ARGS+=(-v "$data/aws:/home/dev/.aws:ro")
   fi
   sock="${AGENTIC_DOCKER_SOCK:-/var/run/docker.sock}"
   if [ "$(image_label "$img" agentic.docker_socket)" = true ] && [ -S "$sock" ]; then

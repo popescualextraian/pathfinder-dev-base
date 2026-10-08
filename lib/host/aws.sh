@@ -15,10 +15,10 @@ ini_section() {
 }
 
 # build_aws_dir SRC DEST PROFILE: DEST gets the profile, its sso-session, its credentials and the
-# SSO cache. Rebuilt on every start, so the cache is fresh. Never fails: AWS is optional.
+# SSO cache. Rewritten in place on every start, so the cache is fresh; the directory itself is
+# never removed, because a running dev container has it bind-mounted. Never fails: AWS is optional.
 build_aws_dir() {
   local src="$1" dest="$2" profile="$3" want section sso creds
-  rm -rf "$dest"
   mkdir -p "$dest"
   : > "$dest/config"
   if [ "$profile" = default ]; then want="default"; else want="profile $profile"; fi
@@ -32,12 +32,17 @@ build_aws_dir() {
   fi
   creds="$(ini_section "$src/credentials" "$profile")"
   if [ -n "$creds" ]; then
-    printf '%s\n' "$creds" > "$dest/credentials"
+    touch "$dest/credentials"
     chmod 600 "$dest/credentials"
+    printf '%s\n' "$creds" > "$dest/credentials"
+  else
+    rm -f "$dest/credentials"
   fi
+  # Sync the cache: drop what the host no longer has, then copy the host's files over.
+  if [ -d "$dest/sso/cache" ]; then find "$dest/sso/cache" -mindepth 1 -delete 2>/dev/null || true; fi
   if [ -d "$src/sso/cache" ]; then
-    mkdir -p "$dest/sso"
-    cp -r "$src/sso/cache" "$dest/sso/cache"
+    mkdir -p "$dest/sso/cache"
+    cp -r "$src/sso/cache/." "$dest/sso/cache/"
   fi
   return 0
 }
