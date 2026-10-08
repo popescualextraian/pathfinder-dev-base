@@ -112,6 +112,17 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
   grep -qx "agentic-ca=$AGENTIC_DATA/ca" "$DOCKER_LOG"
 }
 
+@test "build keeps .env and .build/ out of the build context" {
+  DOCKER_LABEL=current DOCKER_RUN_OUT='FROM agentic-dev-base:local' run in_project 'main build'
+  [ "$status" -eq 0 ]
+  ign="$PROJ/.agentic/.build/Dockerfile.derived.dockerignore"
+  [ -f "$ign" ]
+  grep -qx '.env' "$ign"
+  grep -qx '.env.*' "$ign"
+  grep -qx '!.env.example' "$ign"
+  grep -qx '.build/' "$ign"
+}
+
 @test "build renders the Dockerfile in the base image, then builds the project image" {
   DOCKER_LABEL=current DOCKER_RUN_OUT='FROM agentic-dev-base:local' run in_project 'main build'
   [ "$status" -eq 0 ]

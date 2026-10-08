@@ -63,6 +63,8 @@ cmd_build() {
        -v "$cfg:/agentic-config:ro" "$base" > "$cfg/.build/Dockerfile.derived"; then
     die "agentic.yaml has errors (see above)"
   fi
+  # BuildKit reads <Dockerfile>.dockerignore next to the -f file: secrets never reach the context.
+  printf '%s\n' .env '.env.*' '!.env.example' .build/ > "$cfg/.build/Dockerfile.derived.dockerignore"
   local args=(-f "$cfg/.build/Dockerfile.derived" --build-arg "UID=$(id -u)" --build-arg "GID=$(id -g)" -t "$img")
   if [ "$refresh" = 1 ]; then args+=(--build-arg "AGENTIC_PLUGINS_REFRESH=$(date +%s)"); fi
   proxy_build_args
