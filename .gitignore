@@ -1,0 +1,4 @@
+/tests/tmp/
+*.log
+.agentic/.env
+.agentic/.build/

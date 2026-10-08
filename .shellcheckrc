@@ -1,0 +1,3 @@
+# Image scripts source libraries by their runtime path (/opt/agentic/lib/...), which shellcheck
+# cannot follow from the repository.
+disable=SC1091
