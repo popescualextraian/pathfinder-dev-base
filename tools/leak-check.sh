@@ -24,7 +24,8 @@ for f in "${files[@]}"; do
     .env|.env.*) echo "leak-check: $f: real .env file"; fail=1 ;;
   esac
 done
-terms="$(grep -vE '^[[:space:]]*(#|$)' "$list" || true)"
+# A CRLF denylist would leave \r on every term and match nothing: strip it.
+terms="$(tr -d '\r' < "$list" | grep -vE '^[[:space:]]*(#|$)' || true)"
 if [ -z "$terms" ]; then
   echo "leak-check: denylist $list has no terms; configure your denylist (one term per line)" >&2
   exit 1

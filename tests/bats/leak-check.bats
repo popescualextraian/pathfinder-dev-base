@@ -91,3 +91,12 @@ setup() {
   [[ "$output" != *"clean"* ]]
   [[ "$output" == *"grep failed"* ]]
 }
+
+@test "a CRLF denylist still finds its terms" {
+  printf '# comment\r\nacme-corp\r\n\r\n' > "$AGENTIC_LEAK_DENYLIST"
+  echo 'see acme-corp here' > "$R/doc.md"
+  git -C "$R" add doc.md
+  run bash "$LC" "$R"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"doc.md"* ]]
+}
