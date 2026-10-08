@@ -18,6 +18,7 @@ agentic <command> [options]          run inside a project repository
   login [claude|copilot]             log a harness in for this project (once)
   setup                              refine .agentic/ with the /agentic-setup skill
   shell [CMD...]                     throwaway container (removed on exit)
+  doctor                             check the configured container: steps, tools, logins, MCP, certificates
   dev [stop|recreate|status] [--host-profile wsl]
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
   doctor                             check tools, MCP servers, logins, certificates
@@ -234,6 +235,13 @@ cmd_dev() {
   esac
 }
 
+cmd_doctor() {
+  need_config
+  local img; img="$(run_image)"
+  build_run_args "$img"
+  docker run --rm "${RUN_ARGS[@]}" -e "AGENTIC_IMAGE_CONFIG_HASH=$(image_label "$img" agentic.config.hash)" "$img" agentic-doctor
+}
+
 main() {
   local cmd="${1:-help}"
   if [ "$#" -gt 0 ]; then shift; fi
@@ -244,6 +252,7 @@ main() {
     shell) cmd_shell "$@" ;;
     login) cmd_login "$@" ;;
     setup) cmd_setup "$@" ;;
+    doctor) cmd_doctor "$@" ;;
     dev) cmd_dev "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;

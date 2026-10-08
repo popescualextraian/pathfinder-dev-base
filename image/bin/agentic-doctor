@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Checks a configured container: the start steps in check mode, then live probes.
+# Exit 1 when there is any error; warnings alone pass.
+set -uo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+# shellcheck source=../lib/common.sh
+source "$AGENTIC_DIR/lib/common.sh"
+errors=0; warnings=0
+ok() { echo "  ok    $*"; }
+warn() { echo "  warn  $*"; warnings=$((warnings + 1)); }
+err() { echo "  error $*"; errors=$((errors + 1)); }
+last_line() { tail -n 1 <<<"$1" | sed 's/^agentic: //'; }
+
+# probe_url LABEL URL: TLS failures are errors (a CA is missing), other failures warnings.
+probe_url() {
+  local rc
+  curl -sS -o /dev/null --max-time 10 "$2" >/dev/null 2>&1
+  rc=$?
+  case "$rc" in
+    0) ok "$1 reachable" ;;
+    35|51|58|59|60|77|83) err "$1: TLS certificate not trusted ($2); add the CA to .agentic/certs and run agentic build" ;;
+    *) warn "$1 unreachable ($2, curl exit $rc)" ;;
+  esac
+}
+
+echo "start steps"
+for s in "${AGENTIC_STEPS_DIR:-$AGENTIC_DIR/start.d}"/[0-9][0-9]-*.sh; do
+  [ -f "$s" ] || continue
+  name="$(basename "$s" .sh)"
+  out="$(bash "$s" --check </dev/null 2>&1)"; rc=$?
+  case "$rc" in
+    0) ok "$name" ;;
+    2) warn "$name: $(last_line "$out")" ;;
+    *) err "$name: $(last_line "$out")" ;;
+  esac
+done
+
+echo "tools"
+while IFS=$'\t' read -r tool version; do
+  if v="$(bash "$AGENTIC_DIR/tools/$tool.sh" check "$version" 2>&1)"; then ok "$tool $version: $(head -1 <<<"$v")"
+  else err "$tool $version is not installed (run agentic build)"; fi
+done < <(jq -r '.tools // {} | to_entries[]
+  | select(.key != "apt" and .key != "extra_dockerfile" and .value != false and .value != null)
+  | .key as $k | (if (.value | type) == "object" then .value.versions[]
+                  elif (.value | type) == "array" then .value[] else .value end)
+  | [$k, tostring] | @tsv' "$RESOLVED")
+for c in claude copilot git gh aws az; do
+  if command -v "$c" >/dev/null 2>&1; then ok "$c"; else err "$c is missing from the image"; fi
+done
+
+echo "logins"
+if [ -s "$(claude_dir)/.credentials.json" ] || [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}${CLAUDE_CODE_USE_BEDROCK:-}" ]; then
+  ok "claude"
+else warn "claude: not authenticated (agentic login claude, or a key in .agentic/.env)"; fi
+if [ -n "${COPILOT_GITHUB_TOKEN:-}${GH_TOKEN:-}" ] \
+   || jq -e '(.logged_in_users // []) | length > 0' "$(copilot_dir)/config.json" >/dev/null 2>&1; then
+  ok "copilot"
+else warn "copilot: not authenticated (agentic login copilot, or COPILOT_GITHUB_TOKEN in .agentic/.env)"; fi
+
+echo "mcp servers"
+while IFS=$'\t' read -r name type target; do
+  case "$type" in
+    http) probe_url "mcp $name" "$target" ;;
+    *) if command -v "$target" >/dev/null 2>&1; then ok "mcp $name"; else err "mcp $name: command $target not found"; fi ;;
+  esac
+done < <(jq -r '.mcpServers // {} | to_entries[] | [.key, (.value.type // "stdio"), (.value.url // .value.command)] | @tsv' "$(claude_json)" 2>/dev/null)
+
+echo "certificates"
+for key in .mcp.atlassian.jira_url .mcp.atlassian.confluence_url; do
+  u="$(cfg "$key")"
+  if [ -n "$u" ] && cfg_true .mcp.atlassian.enabled; then probe_url "${key##*.}" "$u"; fi
+done
+host="$(cfg .git.host)"
+if [ -n "$host" ]; then probe_url "git host" "https://$host"; fi
+
+echo "docker"
+if cfg_true .docker.socket; then
+  if docker version >/dev/null 2>&1; then ok "docker daemon"; else err "docker.socket is true but the daemon is not reachable"; fi
+else ok "docker socket not requested"; fi
+
+echo "image"
+if [ -n "${AGENTIC_IMAGE_CONFIG_HASH:-}" ]; then
+  if [ "$(sha256sum < "$RESOLVED" | cut -c1-16)" = "$AGENTIC_IMAGE_CONFIG_HASH" ]; then ok "built from the current agentic.yaml"
+  else warn "agentic.yaml changed since the last agentic build; tools, certs, plugins and docker apply only after agentic build"; fi
+fi
+
+echo "doctor: $errors errors, $warnings warnings"
+[ "$errors" -eq 0 ]
