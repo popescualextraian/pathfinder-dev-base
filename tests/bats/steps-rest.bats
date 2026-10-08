@@ -11,6 +11,8 @@ setup() {
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH" LOG="$BATS_TEST_TMPDIR/calls.log"
   S="$REPO_ROOT/image/start.d"
   unset DISPLAY WAYLAND_DISPLAY
+  export AGENTIC_X11_DIR="$BATS_TEST_TMPDIR/x11" AGENTIC_X_TMP="$BATS_TEST_TMPDIR/xtmp" AGENTIC_X11_WAIT=1
+  mkdir -p "$AGENTIC_X11_DIR" "$AGENTIC_X_TMP"
 }
 
 stub() { printf '#!/bin/sh\necho "%s $*" >> "$LOG"\n%s\n' "$1" "${2:-exit 0}" > "$BATS_TEST_TMPDIR/bin/$1"; chmod +x "$BATS_TEST_TMPDIR/bin/$1"; }
@@ -92,13 +94,32 @@ config() { printf '%s\n' "$1" > "$AGENTIC_CONFIG_MOUNT/agentic.yaml"; bash "$S/1
 
 # --- 80-display
 @test "80 starts Xvfb for headed Playwright without a display and exports DISPLAY" {
-  stub Xvfb; stub pgrep 'exit 1'
+  stub Xvfb ': > "$AGENTIC_X11_DIR/X99"'; stub pgrep 'exit 1'
   config $'version: 1\nproject: demo\nmcp:\n  playwright: {enabled: true, mode: headed}'
   run bash "$S/80-display.sh"
   [ "$status" -eq 0 ]
-  sleep 0.2
   grep -q "Xvfb :99" "$LOG"
   grep -q '^export DISPLAY=:99$' "$AGENTIC_STATE/env"
+}
+
+@test "80 removes a stale lock and socket before starting Xvfb" {
+  stub Xvfb '[ ! -e "$AGENTIC_X_TMP/.X99-lock" ] && : > "$AGENTIC_X11_DIR/X99"'; stub pgrep 'exit 1'
+  : > "$AGENTIC_X_TMP/.X99-lock"; : > "$AGENTIC_X11_DIR/X99"
+  config $'version: 1\nproject: demo\nmcp:\n  playwright: {enabled: true, mode: headed}'
+  run bash "$S/80-display.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$AGENTIC_X_TMP/.X99-lock" ]
+  grep -q '^export DISPLAY=:99$' "$AGENTIC_STATE/env"
+}
+
+@test "80 warns and exports nothing when Xvfb never comes up" {
+  stub Xvfb; stub pgrep 'exit 1'
+  config $'version: 1\nproject: demo\nmcp:\n  playwright: {enabled: true, mode: headed}'
+  run bash "$S/80-display.sh"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Xvfb did not come up"* ]]
+  run grep -s DISPLAY "$AGENTIC_STATE/env"
+  [ "$status" -ne 0 ]
 }
 
 @test "80 uses an existing display" {
