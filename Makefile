@@ -9,6 +9,7 @@ test:
 
 lint:
 	shellcheck -x $(SHELL_SOURCES)
+	jq empty schema/agentic.schema.json
 	tools/leak-check.sh
 
 build:

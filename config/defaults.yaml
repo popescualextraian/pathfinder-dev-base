@@ -1,0 +1,38 @@
+# Base defaults. An overlay's /opt/agentic/defaults/agentic.yaml and the project's
+# .agentic/agentic.yaml are merged over this file, in that order; lists are replaced, not merged.
+version: 1
+base_image: agentic-dev-base:local
+repos: []
+git:
+  host: github.com
+  user_name: ""
+  user_email: ""
+tools:
+  java: {versions: [21], default: 21}
+  maven: "3.9.9"
+  gradle: false
+  node: {versions: [22], default: 22}
+  python: ["3.12"]
+  apt: []
+  extra_dockerfile: .agentic/Dockerfile.extra
+certs: .agentic/certs
+plugins:
+  claude: [superpowers@claude-plugins-official]
+  copilot: []
+  marketplaces: [anthropics/claude-plugins-official]
+mcp:
+  atlassian: {enabled: false, jira_url: "", confluence_url: ""}
+  playwright: {enabled: true, mode: headless}
+  graphify: {enabled: true}
+  custom: []
+skills: .agentic/skills
+hooks:
+  on_build: .agentic/hooks/on-build.sh
+  on_start: .agentic/hooks/on-start.sh
+  on_start_required: false
+harness:
+  default: claude
+  claude: {model: ""}
+  copilot: {model: ""}
+docker:
+  socket: false

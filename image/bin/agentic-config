@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Resolve, validate and query agentic.yaml. Usage: agentic-config resolve|validate [DIR] | get EXPR
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+# shellcheck source=../lib/common.sh
+source "$AGENTIC_DIR/lib/common.sh"
+# shellcheck source=../lib/config.sh
+source "$AGENTIC_DIR/lib/config.sh"
+
+dir_arg() {
+  local d="${1:-}"
+  if [ -z "$d" ]; then d="$(config_find)"; fi
+  if [ -z "$d" ] || [ ! -f "$d/agentic.yaml" ]; then say "no agentic.yaml found"; exit 1; fi
+  printf '%s\n' "$d"
+}
+
+case "${1:-}" in
+  resolve) config_resolve "$(dir_arg "${2:-}")" ;;
+  validate)
+    tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+    config_resolve "$(dir_arg "${2:-}")" > "$tmp"
+    if config_validate "$tmp"; then echo "agentic.yaml is valid"; else exit 1; fi ;;
+  get) jq -r "${2:?usage: agentic-config get EXPR}" "$RESOLVED" ;;
+  *) echo "usage: agentic-config resolve [DIR] | validate [DIR] | get EXPR" >&2; exit 2 ;;
+esac

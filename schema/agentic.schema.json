@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "agentic.yaml",
+  "description": "Project configuration for agentic-dev-base.",
+  "type": "object",
+  "required": ["version", "project"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"description": "Schema version. Always 1.", "enum": [1]},
+    "project": {"description": "Project name. Names the image agentic-<project>:local and the workspace directory.", "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "base_image": {"description": "Image the derived image is built FROM: the base or an overlay built FROM the base.", "type": "string", "minLength": 1},
+    "repos": {
+      "description": "Repositories. The first is the primary one, at /work; the others are cloned to /workspaces/<name>.",
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["name"], "additionalProperties": false,
+        "properties": {
+          "name": {"description": "Directory name.", "type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+          "url": {"description": "Clone URL.", "type": "string"},
+          "ref": {"description": "Branch or tag to check out.", "type": "string"}
+        }
+      }
+    },
+    "git": {
+      "description": "Git settings.", "type": "object", "additionalProperties": false,
+      "properties": {
+        "host": {"description": "Git host for the credential helper and GH_HOST.", "type": "string"},
+        "user_name": {"description": "Commit author name. Empty uses the host's git config.", "type": "string"},
+        "user_email": {"description": "Commit author email. Empty uses the host's git config.", "type": "string"}
+      }
+    },
+    "tools": {
+      "description": "Build-time tools. Changing them needs agentic build.",
+      "type": "object",
+      "additionalProperties": {"description": "A preset provided by an overlay: false or a version.", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]*$"}]},
+      "properties": {
+        "java": {"description": "JDK majors, installed side by side under /opt/java/<v>; 21 is always present. default sets JAVA_HOME.", "anyOf": [{"enum": [false]}, {"type": "object", "required": ["versions", "default"], "additionalProperties": false, "properties": {"versions": {"type": "array", "items": {"type": "integer", "minimum": 8}}, "default": {"type": "integer", "minimum": 8}}}]},
+        "node": {"description": "Node majors, side by side under /opt/node/<v>; 22 is always present. default goes first on PATH.", "anyOf": [{"enum": [false]}, {"type": "object", "required": ["versions", "default"], "additionalProperties": false, "properties": {"versions": {"type": "array", "items": {"type": "integer", "minimum": 16}}, "default": {"type": "integer", "minimum": 16}}}]},
+        "python": {"description": "Python versions installed with uv.", "type": "array", "items": {"type": "string", "pattern": "^3\\.[0-9]+$"}},
+        "maven": {"description": "Maven version (exact, e.g. 3.9.9).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}]},
+        "gradle": {"description": "System Gradle version (exact). The wrapper (./gradlew) is the norm; false installs none.", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"}]},
+        "terraform": {"description": "Terraform version (exact).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}]},
+        "checkov": {"description": "Checkov version (exact).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}]},
+        "tflint": {"description": "TFLint version (exact).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}]},
+        "kubectl": {"description": "kubectl version (exact).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}]},
+        "helm": {"description": "Helm version (exact).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}]},
+        "dotnet": {"description": ".NET SDK channel (e.g. 8.0).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"}]},
+        "go": {"description": "Go version (exact, e.g. 1.22.5).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$"}]},
+        "glab": {"description": "GitLab CLI version (exact).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}]},
+        "psql": {"description": "PostgreSQL client major (e.g. 16).", "anyOf": [{"enum": [false]}, {"type": "string", "pattern": "^[0-9]+$"}]},
+        "apt": {"description": "Plain apt packages, optionally pinned (name=version).", "type": "array", "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]*(=[^ ]+)?$"}},
+        "extra_dockerfile": {"description": "Dockerfile lines appended to the derived image, run as root, inside .agentic/.", "type": "string"}
+      }
+    },
+    "certs": {"description": "Directory inside .agentic/ whose *.crt files are trusted by the system, Java, Node, Python and Chromium.", "type": "string"},
+    "plugins": {
+      "description": "Harness plugins. Claude plugins are baked at build time; Copilot plugins install at first start.",
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "claude": {"description": "Claude plugins as name@marketplace.", "type": "array", "items": {"type": "string", "pattern": "^[^@ ]+@[^@ ]+$"}},
+        "copilot": {"description": "Copilot plugins as name@marketplace.", "type": "array", "items": {"type": "string", "pattern": "^[^@ ]+@[^@ ]+$"}},
+        "marketplaces": {"description": "Marketplace repositories (owner/repo) added before installing.", "type": "array", "items": {"type": "string"}}
+      }
+    },
+    "mcp": {
+      "description": "MCP servers, applied at every start without a rebuild.",
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "atlassian": {"description": "Jira and Confluence (mcp-atlassian). Tokens: JIRA_PERSONAL_TOKEN, CONFLUENCE_PERSONAL_TOKEN in .env.", "type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}, "jira_url": {"type": "string"}, "confluence_url": {"type": "string"}}},
+        "playwright": {"description": "Browser automation. headed needs a display; without one Xvfb starts.", "type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}, "mode": {"enum": ["headless", "headed"]}}},
+        "graphify": {"description": "Code and docs graph server (graphify-out/graph.json in the working directory).", "type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
+        "custom": {
+          "description": "Other MCP servers. ${VAR} references are expanded by the harness from the environment.",
+          "type": "array",
+          "items": {
+            "type": "object", "required": ["name", "type"], "additionalProperties": false,
+            "properties": {
+              "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+              "type": {"enum": ["stdio", "http"]},
+              "command": {"type": "string"},
+              "args": {"type": "array", "items": {"type": "string"}},
+              "env": {"type": "object", "additionalProperties": {"type": "string"}},
+              "url": {"type": "string"},
+              "headers": {"type": "object", "additionalProperties": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "skills": {"description": "Directory inside .agentic/ with project skills (<name>/SKILL.md), copied into both harnesses.", "type": "string"},
+    "hooks": {
+      "description": "Project hooks.", "type": "object", "additionalProperties": false,
+      "properties": {
+        "on_build": {"description": "Script run as dev at the end of the derived build. Never sees .env.", "type": "string"},
+        "on_start": {"description": "Script run as dev at every container start, with the full environment.", "type": "string"},
+        "on_start_required": {"description": "When true, a failing on_start stops the container.", "type": "boolean"}
+      }
+    },
+    "harness": {
+      "description": "Harness choice and models.", "type": "object", "additionalProperties": false,
+      "properties": {
+        "default": {"description": "Harness used by agentic setup.", "enum": ["claude", "copilot"]},
+        "claude": {"type": "object", "additionalProperties": false, "properties": {"model": {"description": "Model; empty uses the harness default.", "type": "string"}}},
+        "copilot": {"type": "object", "additionalProperties": false, "properties": {"model": {"description": "Model; empty uses the harness default.", "type": "string"}}}
+      }
+    },
+    "docker": {
+      "description": "Docker access.", "type": "object", "additionalProperties": false,
+      "properties": {
+        "socket": {"description": "Mount the host Docker socket. It is host root; off by default. Changing it needs agentic build.", "type": "boolean"}
+      }
+    }
+  }
+}
