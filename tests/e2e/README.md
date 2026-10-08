@@ -22,3 +22,12 @@ Run on a real machine before tagging a release. Each step lists what you should 
    --host-profile wsl`, ask Claude to open a page → a visible Chromium window.
 8. **Corporate network.** With your CA in `~/.agentic/ca/` and `.agentic/certs/`, the build and
    `agentic doctor` pass behind the proxy.
+9. **MCP servers connect.** Enable `mcp.atlassian` and add an `mcp.custom` server whose header
+   uses a `${VAR}` reference, with `VAR` in `.agentic/.env`. In `agentic shell claude`,
+   `claude mcp list` → `playwright`, `graphify`, `atlassian` and the custom server all
+   connected. In `agentic shell copilot`, `/mcp` → the same servers, Atlassian connected with
+   its token. Neither `~/.claude.json` nor `~/.copilot/` contains the token's value.
+10. **Harness models.** Set `harness.claude.model` and `harness.copilot.model`, restart the
+    container → `echo $ANTHROPIC_MODEL` and Claude's `/model` show the Claude model;
+    `~/.copilot/config.json` has `"model"` and Copilot's `/model` shows it. `agentic doctor`
+    reports no model drift.
