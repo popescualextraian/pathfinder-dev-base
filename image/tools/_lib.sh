@@ -19,26 +19,57 @@ arch_node() { case "$(arch_go)" in amd64) echo x64 ;; arm64) echo arm64 ;; esac;
 
 fetch() { curl -fsSL --retry 3 -o "$2" "$1"; }
 
-# untar URL DEST [STRIP]: unpack a tarball into DEST, dropping STRIP leading path parts.
-untar() {
-  local url="$1" dest="$2" strip="${3:-1}" tmp
-  tmp="$(mktemp -d)"
-  fetch "$url" "$tmp/archive"
-  mkdir -p "$dest"
-  tar -xf "$tmp/archive" -C "$dest" --strip-components="$strip"
-  rm -rf "$tmp"
+# first_missing PATH: the topmost ancestor of PATH (or PATH itself) that does not exist yet.
+first_missing() {
+  local p="$1" top=""
+  while [ ! -e "$p" ] && [ "$p" != / ] && [ "$p" != . ]; do top="$p"; p="$(dirname "$p")"; done
+  echo "$top"
 }
 
-# unzip_to URL DEST [STRIP_TOP]: unpack a zip into DEST; with STRIP_TOP=1 its single top folder is dropped.
-unzip_to() {
-  local url="$1" dest="$2" strip="${3:-0}" tmp
-  tmp="$(mktemp -d)"
-  fetch "$url" "$tmp/archive.zip"
-  mkdir -p "$tmp/x" "$dest"
-  unzip -q "$tmp/archive.zip" -d "$tmp/x"
-  if [ "$strip" = 1 ]; then cp -a "$tmp"/x/*/. "$dest/"; else cp -a "$tmp/x/." "$dest/"; fi
-  rm -rf "$tmp"
+# stage_extract DEST FILL...: run FILL (given the staging dir) next to DEST, then move
+# the result into place. On failure nothing is left behind, so `present` stays false.
+stage_extract() {
+  local dest="$1" created tmp
+  shift
+  created="$(first_missing "$dest")"
+  mkdir -p "$(dirname "$dest")"
+  tmp="$(mktemp -d "$(dirname "$dest")/.tmp.XXXXXX")"
+  if "$@" "$tmp/x" && rm -rf "$dest" && mv "$tmp/x" "$dest"; then
+    rm -rf "$tmp"
+  else
+    rm -rf "$tmp"
+    if [ -n "$created" ]; then rm -rf "$created"; else rm -rf "$dest"; fi
+    return 1
+  fi
 }
+
+_untar_into() {
+  local url="$1" strip="$2" out="$3" a
+  a="$(mktemp)"
+  fetch "$url" "$a" && mkdir -p "$out" && tar -xf "$a" -C "$out" --strip-components="$strip"
+  local rc=$?
+  rm -f "$a"
+  return "$rc"
+}
+
+_unzip_into() {
+  local url="$1" strip="$2" out="$3" a
+  a="$(mktemp)"
+  { fetch "$url" "$a" && mkdir -p "$out" && unzip -q "$a" -d "$out"; } || { rm -f "$a"; return 1; }
+  rm -f "$a"
+  if [ "$strip" = 1 ]; then
+    # drop the single top folder
+    local top; top="$(ls -A "$out")"
+    [ "$(printf '%s\n' "$top" | wc -l)" -eq 1 ] && [ -d "$out/$top" ] || return 1
+    mv "$out/$top" "$out.top" && rm -rf "$out" && mv "$out.top" "$out"
+  fi
+}
+
+# untar URL DEST [STRIP]: unpack a tarball into DEST (atomically), dropping STRIP leading path parts.
+untar() { stage_extract "$2" _untar_into "$1" "${3:-1}"; }
+
+# unzip_to URL DEST [STRIP_TOP]: unpack a zip into DEST (atomically); with STRIP_TOP=1 its single top folder is dropped.
+unzip_to() { stage_extract "$2" _unzip_into "$1" "${3:-0}"; }
 
 present() { [ -d "$1" ] && [ -n "$(ls -A "$1" 2>/dev/null)" ]; }
 

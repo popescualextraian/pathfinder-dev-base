@@ -67,12 +67,44 @@ setup() {
   [ "$(cat "$BATS_TEST_TMPDIR/trusted")" = "$AGENTIC_OPT/java/17" ]
 }
 
-@test "python uses uv's install dir and skips an installed version" {
+# uv stub: `python find` succeeds (as it would on a system python), everything else is logged
+uv_stub() {
   printf '#!/bin/sh\n[ "$1 $2" = "python find" ] && exit 0\necho "uv $*" >> "%s/uv.log"\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/bin/uv"
   chmod +x "$BATS_TEST_TMPDIR/bin/uv"
+}
+
+@test "python skips a uv-managed version that is already installed" {
+  uv_stub
+  mkdir -p "$AGENTIC_OPT/python/cpython-3.12.8-linux-x86_64-gnu"
   run bash "$T/python.sh" install 3.12
   [ "$status" -eq 0 ]
   [ ! -f "$BATS_TEST_TMPDIR/uv.log" ]
+  run bash "$T/python.sh" check 3.12
+  [ "$status" -eq 0 ]
+  [[ "$output" == *cpython-3.12.8* ]]
   run bash "$T/python.sh" env 3.12
   [ "$output" = "UV_PYTHON_INSTALL_DIR=$AGENTIC_OPT/python" ]
+}
+
+@test "python installs via uv when no managed version exists, even if uv find would succeed" {
+  uv_stub
+  run bash "$T/python.sh" install 3.12
+  [ "$status" -eq 0 ]
+  grep -q "uv python install 3.12" "$BATS_TEST_TMPDIR/uv.log"
+  run bash "$T/python.sh" check 3.12
+  [ "$status" -ne 0 ]
+}
+
+@test "a corrupt download leaves no version dir behind, so a retry downloads again" {
+  cat > "$BATS_TEST_TMPDIR/bin/curl" <<'STUB'
+#!/bin/sh
+while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
+echo "not an archive" > "$out"
+STUB
+  for pv in helm:3.16.1 terraform:1.9.8 tflint:0.53.0 maven:3.9.9 glab:1.46.1 go:1.22.5 gradle:8.10; do
+    p="${pv%%:*}"; v="${pv#*:}"
+    run bash "$T/$p.sh" install "$v"
+    [ "$status" -ne 0 ] || { echo "$p: corrupt archive accepted"; false; }
+    [ ! -e "$AGENTIC_OPT/$p/$v" ] || { echo "$p: version dir left behind"; false; }
+  done
 }
