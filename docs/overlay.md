@@ -23,7 +23,7 @@ needs no mount and no TTY; start steps never wait for input; `CLAUDE_CONFIG_DIR`
 ```dockerfile
 FROM agentic-dev-base:local
 COPY defaults/agentic.yaml /opt/agentic/defaults/agentic.yaml
-COPY tools/ /opt/agentic/tools/
+COPY --chmod=755 tools/ /opt/agentic/tools/
 COPY skills/ /opt/agentic/skills/
 COPY --chmod=755 start.d/ /opt/agentic/start.d/
 COPY --chmod=755 worker.d/ /opt/agentic/worker.d/

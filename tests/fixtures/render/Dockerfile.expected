@@ -7,11 +7,11 @@ RUN agentic-remap-user "$UID" "$GID"
 COPY certs/ /usr/local/share/ca-certificates/agentic/
 RUN update-ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends tree graphviz && rm -rf /var/lib/apt/lists/*
-RUN /opt/agentic/tools/java.sh install 17 && /opt/agentic/tools/java.sh install 11
-RUN /opt/agentic/tools/maven.sh install 3.9.9
-RUN /opt/agentic/tools/node.sh install 22
-RUN /opt/agentic/tools/python.sh install 3.12
-RUN /opt/agentic/tools/terraform.sh install 1.9.8
+RUN bash /opt/agentic/tools/java.sh install 17 && bash /opt/agentic/tools/java.sh install 11
+RUN bash /opt/agentic/tools/maven.sh install 3.9.9
+RUN bash /opt/agentic/tools/node.sh install 22
+RUN bash /opt/agentic/tools/python.sh install 3.12
+RUN bash /opt/agentic/tools/terraform.sh install 1.9.8
 ENV JAVA_HOME=/opt/java/17
 ENV MAVEN_HOME=/opt/maven/3.9.9
 ENV UV_PYTHON_INSTALL_DIR=/opt/python

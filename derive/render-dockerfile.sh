@@ -47,7 +47,7 @@ while IFS= read -r tool; do
   [ "${#versions[@]}" -gt 0 ] || continue
   line=""
   for v in "${versions[@]}"; do
-    line+="${line:+ && }$IMG/tools/$tool.sh install $v"
+    line+="${line:+ && }bash $IMG/tools/$tool.sh install $v"
   done
   installs+=("RUN $line")
   while IFS= read -r kv; do
