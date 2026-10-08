@@ -141,9 +141,9 @@ harness_authenticated() {
   case "$h" in
     claude)
       [ -s "$data/.credentials.json" ] \
-        || [ -n "$(dotenv_value "$env" ANTHROPIC_API_KEY)$(dotenv_value "$env" CLAUDE_CODE_OAUTH_TOKEN)$(dotenv_value "$env" CLAUDE_CODE_USE_BEDROCK)" ] ;;
+        || [ -n "$(token_value "$env" ANTHROPIC_API_KEY)$(token_value "$env" CLAUDE_CODE_OAUTH_TOKEN)$(token_value "$env" CLAUDE_CODE_USE_BEDROCK)" ] ;;
     copilot)
-      [ -n "$(dotenv_value "$env" COPILOT_GITHUB_TOKEN)$(dotenv_value "$env" GH_TOKEN)" ] \
+      [ -n "$(token_value "$env" COPILOT_GITHUB_TOKEN)$(token_value "$env" GH_TOKEN)" ] \
         || { [ -r "$data/config.json" ] \
              && tr -d '[:space:]' < "$data/config.json" | grep -q '"logged_in_users":\[{'; } ;;
     *) return 1 ;;
@@ -154,7 +154,8 @@ auth_help() {
   cat >&2 <<EOF
 agentic: $1 is not authenticated for $(project_name). Pick one:
   Claude   subscription   agentic login claude      (then /login inside, then /exit)
-           API key        ANTHROPIC_API_KEY=... in .agentic/.env
+           subscription   CLAUDE_CODE_OAUTH_TOKEN=... in .agentic/.env (the token from claude setup-token)
+           API key        ANTHROPIC_API_KEY=sk-ant-api... in .agentic/.env (pay per use; never a subscription token)
            Bedrock        CLAUDE_CODE_USE_BEDROCK=1 and AWS_PROFILE=... in .agentic/.env
   Copilot  device login   agentic login copilot     (then /login inside, then /exit)
            token          COPILOT_GITHUB_TOKEN=... (or GH_TOKEN) in .agentic/.env, GH_HOST for Enterprise

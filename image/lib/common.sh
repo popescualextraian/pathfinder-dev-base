@@ -20,6 +20,16 @@ cfg() { jq -r "($1) // empty" "$RESOLVED"; }
 cfg_true() { jq -e "($1) == true" "$RESOLVED" >/dev/null 2>&1; }
 cfg_json() { jq -c "$1" "$RESOLVED"; }
 
+# is_placeholder VALUE: a stand-in such as TBD, changeme or <token>, not a credential.
+is_placeholder() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    tbd|todo|changeme|change-me|none|null|n/a|xxx*|'<'*'>') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# token VAR: the variable's value, empty when unset or a placeholder.
+token() { local v="${!1:-}"; if is_placeholder "$v"; then v=""; fi; printf '%s' "$v"; }
+
 config_dir() { cat "$AGENTIC_STATE/config-dir" 2>/dev/null || true; }
 
 # config_path REL: a config path (".agentic/x") as a path inside the config directory.

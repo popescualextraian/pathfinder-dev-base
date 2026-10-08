@@ -129,6 +129,21 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   [ "$output" = "agentic-demo-dev: not created" ]
 }
 
+@test "a placeholder such as TBD is not a token" {
+  printf 'COPILOT_GITHUB_TOKEN=TBD\nGH_TOKEN=changeme\n' > "$PROJ/.agentic/.env"
+  DOCKER_LABEL=copilot run ag setup
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agentic login copilot"* ]]
+}
+
+@test "the auth help explains the subscription token and the API key" {
+  run ag setup
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"claude setup-token"* ]]
+  [[ "$output" == *"CLAUDE_CODE_OAUTH_TOKEN"* ]]
+  [[ "$output" == *"sk-ant-api"* ]]
+}
+
 @test "setup with Copilot and no login prints the auth help without a stray shell error" {
   DOCKER_LABEL=copilot run ag setup
   [ "$status" -eq 1 ]

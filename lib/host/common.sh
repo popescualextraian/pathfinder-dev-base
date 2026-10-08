@@ -40,6 +40,20 @@ dotenv_value() {
   if [ -f "$1" ]; then grep -E "^$2=" "$1" | tail -1 | cut -d= -f2- || true; fi
 }
 
+# is_placeholder VALUE: a stand-in such as TBD, changeme or <token>, not a credential.
+is_placeholder() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    tbd|todo|changeme|change-me|none|null|n/a|xxx*|'<'*'>') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# token_value FILE KEY: KEY's value in .env, empty when unset or a placeholder.
+token_value() {
+  local v; v="$(dotenv_value "$1" "$2")"
+  if is_placeholder "$v"; then v=""; fi
+  printf '%s' "$v"
+}
+
 # check_env_file FILE: refuse what docker --env-file would silently mangle.
 check_env_file() {
   local f="$1"

@@ -57,6 +57,12 @@ step() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$AGENTIC_STEPS_DIR/$1.sh"; }
   [[ "$output" == *"warn  copilot: not authenticated"* ]]
 }
 
+@test "a placeholder token does not count as a login" {
+  export COPILOT_GITHUB_TOKEN=TBD
+  run bash "$D"
+  [[ "$output" == *"warn  copilot: not authenticated"* ]]
+}
+
 @test "an HTTP MCP server with an untrusted certificate is an error with the fix" {
   echo '{"mcpServers":{"docs":{"type":"http","url":"https://mcp.example.com/mcp"}}}' > "$HOME/.claude.json"
   CURL_RC=60 run bash "$D"

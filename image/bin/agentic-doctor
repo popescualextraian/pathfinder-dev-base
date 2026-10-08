@@ -50,10 +50,10 @@ for c in claude copilot git gh aws az; do
 done
 
 echo "logins"
-if [ -s "$(claude_dir)/.credentials.json" ] || [ -n "${ANTHROPIC_API_KEY:-}${CLAUDE_CODE_OAUTH_TOKEN:-}${CLAUDE_CODE_USE_BEDROCK:-}" ]; then
+if [ -s "$(claude_dir)/.credentials.json" ] || [ -n "$(token ANTHROPIC_API_KEY)$(token CLAUDE_CODE_OAUTH_TOKEN)$(token CLAUDE_CODE_USE_BEDROCK)" ]; then
   ok "claude"
 else warn "claude: not authenticated (agentic login claude, or a key in .agentic/.env)"; fi
-if [ -n "${COPILOT_GITHUB_TOKEN:-}${GH_TOKEN:-}" ] \
+if [ -n "$(token COPILOT_GITHUB_TOKEN)$(token GH_TOKEN)" ] \
    || jq -e '(.logged_in_users // []) | length > 0' "$(copilot_dir)/config.json" >/dev/null 2>&1; then
   ok "copilot"
 else warn "copilot: not authenticated (agentic login copilot, or COPILOT_GITHUB_TOKEN in .agentic/.env)"; fi
