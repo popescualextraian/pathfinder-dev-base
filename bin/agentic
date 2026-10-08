@@ -115,6 +115,124 @@ cmd_init() {
   echo "next: review it, then run: agentic build && agentic login && agentic setup (optional) && agentic dev"
 }
 
+# run_image: the project image, or the base with a notice before the first build.
+run_image() {
+  local img; img="$(project_image)"
+  if image_exists "$img"; then printf '%s\n' "$img"; return 0; fi
+  say "$img not built yet; using $(base_image_of) (run agentic build)"
+  base_image_of
+}
+
+cmd_shell() {
+  need_config
+  local img tty=(-i)
+  img="$(run_image)"
+  if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
+  build_run_args "$img"
+  docker run --rm "${tty[@]}" "${RUN_ARGS[@]}" "$img" "$@"
+}
+
+# harness_authenticated claude|copilot: a login on disk or a token in .env.
+harness_authenticated() {
+  local h="$1" data env
+  data="$AGENTIC_DATA/projects/$(project_name)/harness/$h"; env="$(cfg_dir)/.env"
+  case "$h" in
+    claude)
+      [ -s "$data/.credentials.json" ] \
+        || [ -n "$(dotenv_value "$env" ANTHROPIC_API_KEY)$(dotenv_value "$env" CLAUDE_CODE_OAUTH_TOKEN)$(dotenv_value "$env" CLAUDE_CODE_USE_BEDROCK)" ] ;;
+    copilot)
+      [ -n "$(dotenv_value "$env" COPILOT_GITHUB_TOKEN)$(dotenv_value "$env" GH_TOKEN)" ] \
+        || tr -d '[:space:]' < "$data/config.json" 2>/dev/null | grep -q '"logged_in_users":\[{' ;;
+    *) return 1 ;;
+  esac
+}
+
+auth_help() {
+  cat >&2 <<EOF
+agentic: $1 is not authenticated for $(project_name). Pick one:
+  Claude   subscription   agentic login claude      (then /login inside, then /exit)
+           API key        ANTHROPIC_API_KEY=... in .agentic/.env
+           Bedrock        CLAUDE_CODE_USE_BEDROCK=1 and AWS_PROFILE=... in .agentic/.env
+  Copilot  device login   agentic login copilot     (then /login inside, then /exit)
+           token          COPILOT_GITHUB_TOKEN=... (or GH_TOKEN) in .agentic/.env, GH_HOST for Enterprise
+EOF
+}
+
+cmd_login() {
+  need_config
+  local h="${1:-claude}" img
+  case "$h" in claude|copilot) ;; *) die "usage: agentic login [claude|copilot]" ;; esac
+  img="$(run_image)"
+  if harness_authenticated "$h"; then say "$h already has a login or token for $(project_name); starting it anyway"; fi
+  echo "Starting $h. Run /login, follow the instructions, then /exit. The login is kept for this project."
+  build_run_args "$img"
+  docker run --rm -it "${RUN_ARGS[@]}" "$img" "$h"
+}
+
+cmd_setup() {
+  need_config
+  local img h
+  img="$(run_image)"
+  h="$(image_label "$img" agentic.harness)"
+  case "$h" in claude|copilot) ;; *) h=claude ;; esac
+  if ! harness_authenticated "$h"; then auth_help "$h"; exit 1; fi
+  build_run_args "$img"
+  if [ "$h" = copilot ]; then set -- copilot -i "/agentic-setup"; else set -- claude "/agentic-setup"; fi
+  docker run --rm -it "${RUN_ARGS[@]}" "$img" "$@"
+}
+
+WSL_ARGS=(-e DISPLAY=:0 -e WAYLAND_DISPLAY=/run/wslg/wayland-0 -e TMUX_TMPDIR=/home/dev
+  -v /mnt/wslg/runtime-dir:/run/wslg -v /tmp:/tmp)
+
+dev_start() {
+  local name="$1" img="$2" wsl="$3" extra=()
+  image_exists "$img" || die "$img is not built; run agentic build"
+  build_run_args "$img"
+  if [ "$wsl" = 1 ]; then extra=("${WSL_ARGS[@]}"); fi
+  docker run -d --name "$name" --restart unless-stopped --label agentic.kind=dev \
+    "${RUN_ARGS[@]}" "${extra[@]}" "$img" sleep infinity >/dev/null
+}
+
+dev_status() {
+  local name="$1" img="$2" running cur latest
+  if ! running="$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)"; then
+    echo "$name: not created"; return 0
+  fi
+  cur="$(docker inspect -f '{{.Image}}' "$name" 2>/dev/null || true)"
+  latest="$(docker image inspect -f '{{.Id}}' "$img" 2>/dev/null || true)"
+  echo "$name: running=$running image=$img"
+  if [ -n "$latest" ] && [ "$cur" != "$latest" ]; then echo "outdated: $img was rebuilt; run agentic dev recreate"; fi
+}
+
+cmd_dev() {
+  need_config
+  local action=attach wsl=0 name img
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      attach|stop|recreate|status) action="$1" ;;
+      --host-profile) [ "${2:-}" = wsl ] || die "only --host-profile wsl is supported"; wsl=1; shift ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  name="agentic-$(project_name)-dev"; img="$(project_image)"
+  case "$action" in
+    stop) docker stop "$name" >/dev/null; echo "stopped $name" ;;
+    status) dev_status "$name" "$img" ;;
+    recreate)
+      docker rm -f "$name" >/dev/null 2>&1 || true
+      dev_start "$name" "$img" "$wsl"
+      docker exec -it "$name" dev-shell ;;
+    attach)
+      case "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)" in
+        true) ;;
+        false) docker start "$name" >/dev/null ;;
+        *) dev_start "$name" "$img" "$wsl" ;;
+      esac
+      docker exec -it "$name" dev-shell ;;
+  esac
+}
+
 main() {
   local cmd="${1:-help}"
   if [ "$#" -gt 0 ]; then shift; fi
@@ -122,6 +240,10 @@ main() {
     init) cmd_init "$@" ;;
     build) cmd_build "$@" ;;
     build-base) cmd_build_base "$@" ;;
+    shell) cmd_shell "$@" ;;
+    login) cmd_login "$@" ;;
+    setup) cmd_setup "$@" ;;
+    dev) cmd_dev "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
   esac
