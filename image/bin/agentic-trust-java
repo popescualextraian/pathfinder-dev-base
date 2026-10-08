@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Imports the project's CA certificates into each JDK's cacerts. Usage: agentic-trust-java [JDK_DIR...]
+set -euo pipefail
+ca="${AGENTIC_CA_DIR:-/usr/local/share/ca-certificates/agentic}"
+compgen -G "$ca/*.crt" >/dev/null || exit 0
+if [ "$#" -eq 0 ]; then set -- "${AGENTIC_OPT:-/opt}"/java/*; fi
+for jdk in "$@"; do
+  [ -x "$jdk/bin/keytool" ] || continue
+  store="$jdk/lib/security/cacerts"
+  [ -f "$store" ] || [ -d "$jdk/lib/security" ] || store="$jdk/jre/lib/security/cacerts"
+  for crt in "$ca"/*.crt; do
+    alias="agentic-$(basename "$crt" .crt)"
+    "$jdk/bin/keytool" -delete -noprompt -keystore "$store" -storepass changeit -alias "$alias" >/dev/null 2>&1 || true
+    "$jdk/bin/keytool" -importcert -noprompt -keystore "$store" -storepass changeit -alias "$alias" -file "$crt"
+  done
+done

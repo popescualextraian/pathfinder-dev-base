@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Adds the project's CA certificates to the user's NSS database, which Chromium reads.
+set -euo pipefail
+ca="${AGENTIC_CA_DIR:-/usr/local/share/ca-certificates/agentic}"
+compgen -G "$ca/*.crt" >/dev/null || exit 0
+db="$HOME/.pki/nssdb"
+if [ ! -f "$db/cert9.db" ]; then
+  mkdir -p "$db"
+  certutil -d "sql:$db" -N --empty-password
+fi
+for crt in "$ca"/*.crt; do
+  certutil -d "sql:$db" -A -t "C,," -n "agentic-$(basename "$crt" .crt)" -i "$crt"
+done

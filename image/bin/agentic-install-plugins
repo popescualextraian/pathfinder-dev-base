@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Installs missing Claude plugins at build time. Usage: agentic-install-plugins JSON
+# JSON: {"claude":["name@marketplace",...],"marketplaces":["owner/repo",...]}
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+# shellcheck source=../lib/common.sh
+source "$AGENTIC_DIR/lib/common.sh"
+json="${1:?usage: agentic-install-plugins JSON}"
+installed="$(claude_dir)/plugins/installed_plugins.json"
+timeout_s="${AGENTIC_NET_TIMEOUT:-300}"
+failed=0
+while IFS= read -r m; do
+  timeout "$timeout_s" claude plugin marketplace add "$m" </dev/null >/dev/null 2>&1 || true
+done < <(jq -r '.marketplaces[]?' <<<"$json")
+while IFS= read -r p; do
+  if jq -e --arg k "$p" '.plugins[$k]' "$installed" >/dev/null 2>&1; then continue; fi
+  if ! timeout "$timeout_s" claude plugin install "$p" </dev/null; then
+    say "plugin $p failed to install"
+    failed=1
+  fi
+done < <(jq -r '.claude[]?' <<<"$json")
+exit "$failed"
