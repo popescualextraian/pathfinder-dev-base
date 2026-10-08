@@ -6,6 +6,8 @@ AGENTIC_ROOT="${AGENTIC_ROOT:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}"
 source "$AGENTIC_ROOT/lib/host/common.sh"
 # shellcheck source=../lib/host/aws.sh
 source "$AGENTIC_ROOT/lib/host/aws.sh"
+# shellcheck source=../lib/host/detect.sh
+source "$AGENTIC_ROOT/lib/host/detect.sh"
 
 usage() {
   cat <<'EOF'
@@ -68,10 +70,55 @@ cmd_build() {
   echo "built $img"
 }
 
+cmd_init() {
+  local force=0 root cfg det name url host line
+  [ "${1:-}" = --force ] && force=1
+  root="$(project_root)"; cfg="$root/.agentic"
+  if [ -f "$cfg/agentic.yaml" ] && [ "$force" = 0 ]; then
+    die ".agentic/agentic.yaml already exists; use --force to overwrite it"
+  fi
+  mkdir -p "$cfg"
+  # the skeleton never overwrites a file that is already there
+  (cd "$AGENTIC_ROOT/templates/dot-agentic" && find . -type f) | while IFS= read -r line; do
+    if [ ! -e "$cfg/$line" ]; then
+      mkdir -p "$cfg/$(dirname "$line")"
+      cp "$AGENTIC_ROOT/templates/dot-agentic/$line" "$cfg/$line"
+    fi
+  done
+  det="$(detect_tools "$root")"
+  name="$(slugify "$(basename "$root")")"
+  url="$(git -C "$root" remote get-url origin 2>/dev/null || true)"
+  host="github.com"
+  if [ -n "$url" ]; then host="$(sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*$##' <<<"$url")"; fi
+  while IFS= read -r line; do
+    case "$line" in
+      @TOOLS@) render_tools "$det" ;;
+      *) line="${line//@PROJECT@/$name}"; line="${line//@REPO_NAME@/$name}"
+         line="${line//@REPO_URL@/$url}"; line="${line//@GIT_HOST@/$host}"
+         printf '%s\n' "$line" ;;
+    esac
+  done < "$AGENTIC_ROOT/templates/agentic.yaml.tmpl" > "$cfg/agentic.yaml"
+  {
+    echo "# Detection report ($(date -u +%Y-%m-%d))"
+    echo
+    echo "Build files found:"
+    (cd "$root" && find . -maxdepth 5 \( -name .git -o -name node_modules -o -name .agentic \) -prune -o -type f \
+      \( -name pom.xml -o -name 'build.gradle*' -o -name package.json -o -name pyproject.toml -o -name '*.tf' \
+         -o -name go.mod -o -name '*.csproj' -o -name Chart.yaml -o -name '.tool-versions' -o -name 'docker-compose*.yml' \) -print | sed 's/^/- /' | head -50)
+    echo
+    echo "Detected:"; grep -v '^note=' <<<"$det" | sed 's/^/- /' || true
+    echo
+    echo "Notes:"; grep '^note=' <<<"$det" | sed 's/^note=/- /' || true
+  } > "$cfg/detect-report.md"
+  echo "wrote $cfg/agentic.yaml"
+  echo "next: review it, then run: agentic build && agentic login && agentic setup (optional) && agentic dev"
+}
+
 main() {
   local cmd="${1:-help}"
   if [ "$#" -gt 0 ]; then shift; fi
   case "$cmd" in
+    init) cmd_init "$@" ;;
     build) cmd_build "$@" ;;
     build-base) cmd_build_base "$@" ;;
     help|-h|--help) usage ;;
