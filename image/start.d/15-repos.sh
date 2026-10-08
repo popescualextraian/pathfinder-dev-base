@@ -11,10 +11,10 @@ while IFS=$'\t' read -r name url ref; do
   dest="$ws/$name"
   [ -d "$dest/.git" ] && continue
   if [ "$check" = 1 ]; then say "$name is not cloned yet"; rc=2; continue; fi
-  args=(clone --quiet)
+  args=()
   if [ -n "$ref" ]; then args+=(--branch "$ref"); fi
-  if ! (eval "$(git_cred_env "$(url_host "$url")")"; git "${args[@]}" "$url" "$dest"); then
-    say "could not clone $name from $url"
+  if ! (eval "$(git_cred_env "$(url_host "$url")")"; git_clone "$url" "$dest" "${args[@]}"); then
+    say "could not clone $name from $(redact_url "$url")"
     rc=2
   fi
 done < <(jq -r '.repos[1:][]? | [.name, (.url // ""), (.ref // "")] | @tsv' "$RESOLVED")

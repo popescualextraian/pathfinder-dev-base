@@ -12,11 +12,12 @@ if [ -z "${AGENTIC_REPO_URL:-}" ]; then
   say "$work is empty: mount a repository or set AGENTIC_REPO_URL"
   exit 2
 fi
-if [ "$check" = 1 ]; then say "would clone $AGENTIC_REPO_URL into $work"; exit 0; fi
+shown="$(redact_url "$AGENTIC_REPO_URL")"
+if [ "$check" = 1 ]; then say "would clone $shown into $work"; exit 0; fi
 eval "$(git_cred_env "$(url_host "$AGENTIC_REPO_URL")")"
-args=(clone --quiet)
+args=()
 if [ -n "${AGENTIC_REPO_REF:-}" ]; then args+=(--branch "$AGENTIC_REPO_REF"); fi
-if ! git "${args[@]}" "$AGENTIC_REPO_URL" "$work"; then
-  say "clone of $AGENTIC_REPO_URL failed"
+if ! git_clone "$AGENTIC_REPO_URL" "$work" "${args[@]}"; then
+  say "clone of $shown failed"
   exit 1
 fi

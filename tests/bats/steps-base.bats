@@ -44,6 +44,47 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ -z "$(ls -A "$AGENTIC_WORK")" ]
 }
 
+@test "05 never prints the userinfo of a failing repo URL" {
+  export GIT_ALLOW_PROTOCOL=file   # offline: https and ssh fail at once
+  AGENTIC_REPO_URL="https://user:tok@127.0.0.1:1/x" run bash "$S/05-workspace.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"https://***@127.0.0.1:1/x"* ]]
+  [[ "$output" != *tok* ]]
+  AGENTIC_REPO_URL="https://user:tok@127.0.0.1:1/x" run bash "$S/05-workspace.sh" --check
+  [[ "$output" != *tok* ]]
+}
+
+@test "05 keeps the token out of the start log" {
+  export GIT_ALLOW_PROTOCOL=file   # offline: https and ssh fail at once
+  export AGENTIC_STEPS_DIR="$BATS_TEST_TMPDIR/steps"; mkdir -p "$AGENTIC_STEPS_DIR"
+  ln -s "$S/05-workspace.sh" "$AGENTIC_STEPS_DIR/05-workspace.sh"
+  AGENTIC_REPO_URL="https://user:tok@127.0.0.1:1/x" run bash "$REPO_ROOT/image/entrypoint.sh" true
+  [ "$status" -eq 1 ]
+  [[ "$output" != *tok* ]]
+  grep -q '127.0.0.1:1/x' "$AGENTIC_STATE/start.log"
+  run grep -q tok "$AGENTIC_STATE/start.log"
+  [ "$status" -ne 0 ]
+}
+
+@test "05 and 15 clone with prompts off and ssh in batch mode" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\necho "$GIT_TERMINAL_PROMPT|$GIT_SSH_COMMAND" >> "%s"\nexit 1\n' "$BATS_TEST_TMPDIR/seen" > "$BATS_TEST_TMPDIR/bin/git"
+  chmod +x "$BATS_TEST_TMPDIR/bin/git"
+  config $'version: 1\nproject: demo\nrepos:\n  - {name: main}\n  - {name: lib, url: "git@git.example.com:team/lib.git"}'
+  bash "$S/10-validate.sh"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" AGENTIC_REPO_URL="git@git.example.com:team/x.git" run bash "$S/05-workspace.sh"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run bash "$S/15-repos.sh"
+  [ "$(sort -u "$BATS_TEST_TMPDIR/seen")" = "0|ssh -o BatchMode=yes" ]
+  [ "$(wc -l < "$BATS_TEST_TMPDIR/seen")" -eq 2 ]
+}
+
+@test "redact_url hides userinfo in every URL" {
+  run bash -c "source '$AGENTIC_DIR/lib/common.sh'; source '$AGENTIC_DIR/lib/gitenv.sh'; redact_url 'a https://u:p@h/x and ssh://git@h2/y git@h3:z'"
+  [ "$output" = 'a https://***@h/x and ssh://***@h2/y git@h3:z' ]
+  run bash -c "source '$AGENTIC_DIR/lib/common.sh'; source '$AGENTIC_DIR/lib/gitenv.sh'; echo 'https://u:p@h/x' | redact_url"
+  [ "$output" = 'https://***@h/x' ]
+}
+
 # --- 10-validate
 @test "10 resolves the mounted config and records its directory" {
   config $'version: 1\nproject: demo'
@@ -94,6 +135,26 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   run bash "$S/15-repos.sh"
   [ "$status" -eq 2 ]
   [[ "$output" == *"could not clone gone"* ]]
+}
+
+@test "15 never prints the userinfo of a failing repo URL" {
+  export GIT_ALLOW_PROTOCOL=file   # offline: https and ssh fail at once
+  config $'version: 1\nproject: demo\nrepos:\n  - {name: main}\n  - {name: priv, url: "https://user:tok@127.0.0.1:1/x"}'
+  bash "$S/10-validate.sh"
+  run bash "$S/15-repos.sh"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"could not clone priv from https://***@127.0.0.1:1/x"* ]]
+  [[ "$output" != *tok* ]]
+}
+
+@test "15 clones a git@ URL over https, without prompting" {
+  export GIT_ALLOW_PROTOCOL=file   # offline: https and ssh fail at once
+  config $'version: 1\nproject: demo\nrepos:\n  - {name: main}\n  - {name: ssh, url: "git@127.0.0.1:team/x.git"}'
+  bash "$S/10-validate.sh"
+  run bash "$S/15-repos.sh"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"transport 'https' not allowed"* ]]
+  [[ "$output" != *"transport 'ssh'"* ]]
 }
 
 # --- 20-onboarding
@@ -147,6 +208,14 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   grep -q '^export GH_HOST=git.example.com$' "$AGENTIC_STATE/env"
   out="$(GH_TOKEN=supersecret bash -c "source '$AGENTIC_STATE/env'; printf 'protocol=https\nhost=git.example.com\n\n' | git credential fill")"
   [[ "$out" == *"password=supersecret"* ]]
+}
+
+@test "30 with a token rewrites git@ and ssh:// URLs for git.host to https" {
+  config $'version: 1\nproject: demo\ngit:\n  host: git.example.com'; bash "$S/10-validate.sh"
+  GH_TOKEN=supersecret bash "$S/30-git.sh"
+  run bash -c "source '$AGENTIC_STATE/env'; git ls-remote --get-url git@git.example.com:team/x.git; git ls-remote --get-url ssh://git@git.example.com/team/y.git"
+  [ "${lines[0]}" = https://git.example.com/team/x.git ]
+  [ "${lines[1]}" = https://git.example.com/team/y.git ]
 }
 
 @test "30 without a token sets no helper" {
