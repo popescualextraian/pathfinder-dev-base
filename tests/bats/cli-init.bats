@@ -59,6 +59,18 @@ setup() {
   [ "$(cat "$PROJ/.agentic/.env.example")" = 'GH_TOKEN=keep' ]
 }
 
+@test "init --env-example restores the full template only when it is missing" {
+  bash -c "cd '$PROJ' && bash '$A' init" >/dev/null
+  rm "$PROJ/.agentic/.env.example"
+  run bash -c "cd '$PROJ' && bash '$A' init --env-example"
+  [ "$status" -eq 0 ]
+  diff -q "$REPO_ROOT/templates/dot-agentic/.env.example" "$PROJ/.agentic/.env.example"
+  echo 'MINE=1' >> "$PROJ/.agentic/.env.example"
+  run bash -c "cd '$PROJ' && bash '$A' init --env-example"
+  [ "$status" -eq 0 ]
+  grep -qx 'MINE=1' "$PROJ/.agentic/.env.example"
+}
+
 @test "init without a remote uses the folder name and github.com" {
   git -C "$PROJ" remote remove origin
   run bash -c "cd '$PROJ' && bash '$A' init"

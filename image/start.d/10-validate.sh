@@ -14,10 +14,17 @@ if [ -z "$dir" ]; then
 else
   config_resolve "$dir" > "$tmp" || { say "could not read $dir/agentic.yaml"; exit 1; }
 fi
+errfile="$AGENTIC_STATE/config-errors.txt"
 if ! errs="$(config_validate "$tmp")"; then
   printf '%s\n' "$errs"
-  say "agentic.yaml is invalid"
-  exit 1
+  if [ "${AGENTIC_SETUP:-}" != 1 ]; then say "agentic.yaml is invalid"; exit 1; fi
+  # agentic setup exists to fix the config: start on the defaults and hand the errors to the skill.
+  printf '%s\n' "$errs" > "$errfile"
+  config_resolve | jq -c '.project = "default"' > "$tmp"
+  say "agentic.yaml is invalid; starting on the defaults so /agentic-setup can fix it ($errfile)"
+  rc=2
+else
+  rm -f "$errfile"
 fi
 cp "$tmp" "$RESOLVED"
 printf '%s\n' "$dir" > "$AGENTIC_STATE/config-dir"

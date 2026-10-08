@@ -61,6 +61,7 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   run ag setup
   [ "$status" -eq 0 ]
   [ "$(tail -n 2 "$DOCKER_LOG" | tr '\n' ' ')" = "claude /agentic-setup " ]
+  grep -qx 'AGENTIC_SETUP=1' "$DOCKER_LOG"
 }
 
 @test "setup with a Claude login on disk counts as authenticated" {

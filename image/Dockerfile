@@ -104,6 +104,7 @@ COPY derive /opt/agentic/derive
 COPY config /opt/agentic/config
 COPY schema /opt/agentic/schema
 COPY skills /opt/agentic/skills
+COPY templates /opt/agentic/templates
 COPY --chmod=755 image/entrypoint.sh /opt/agentic/entrypoint.sh
 COPY image/profile.d/agentic.sh /etc/profile.d/agentic.sh
 RUN ln -sf /opt/agentic/bin/* /usr/local/bin/ \

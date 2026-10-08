@@ -12,7 +12,8 @@ source "$AGENTIC_ROOT/lib/host/detect.sh"
 usage() {
   cat <<'EOF'
 agentic <command> [options]          run inside a project repository
-  init [--force]                     write .agentic/ for this repository, with detected tools
+  init [--force | --env-example]     write .agentic/ for this repository, with detected tools;
+                                     --env-example restores a missing .env.example template
   build [--refresh-plugins] [--no-cache]
                                      build the base if needed, then agentic-<project>:local
   login [claude|copilot]             log a harness in for this project (once)
@@ -27,7 +28,7 @@ EOF
 
 # base_hash: a hash of everything the base image is built from.
 base_hash() {
-  (cd "$AGENTIC_ROOT" && find image derive config schema skills -type f -print0 | sort -z \
+  (cd "$AGENTIC_ROOT" && find image derive config schema skills templates -type f -print0 | sort -z \
     | xargs -0 sha256sum | sha256sum | cut -c1-16)
 }
 
@@ -77,6 +78,12 @@ cmd_init() {
   shopt -u patsub_replacement 2>/dev/null || true   # & in a URL stays literal
   [ "${1:-}" = --force ] && force=1
   root="$(project_root)"; cfg="$root/.agentic"
+  if [ "${1:-}" = --env-example ]; then
+    if [ -e "$cfg/.env.example" ]; then echo ".agentic/.env.example exists; left unchanged"; return 0; fi
+    mkdir -p "$cfg"
+    cp "$AGENTIC_ROOT/templates/dot-agentic/.env.example" "$cfg/.env.example"
+    echo "wrote $cfg/.env.example"; return 0
+  fi
   if [ -f "$cfg/agentic.yaml" ] && [ "$force" = 0 ]; then
     die ".agentic/agentic.yaml already exists; use --force to overwrite it"
   fi
@@ -182,7 +189,7 @@ cmd_setup() {
   if ! harness_authenticated "$h"; then auth_help "$h"; exit 1; fi
   build_run_args "$img"
   if [ "$h" = copilot ]; then set -- copilot -i "/agentic-setup"; else set -- claude "/agentic-setup"; fi
-  docker run --rm -it "${RUN_ARGS[@]}" "$img" "$@"
+  docker run --rm -it "${RUN_ARGS[@]}" -e AGENTIC_SETUP=1 "$img" "$@"
 }
 
 WSL_ARGS=(-e DISPLAY=:0 -e WAYLAND_DISPLAY=/run/wslg/wayland-0 -e TMUX_TMPDIR=/home/dev

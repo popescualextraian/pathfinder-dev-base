@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# The only way the setup skill touches .agentic/.env: key names in, keys appended, values never shown.
+# Usage: agentic-env names [--example]
+#        agentic-env add [--example] KEY [VALUE] [--comment TEXT]
+# add appends KEY=VALUE when KEY is missing and never changes an existing key. With --example it
+# writes KEY= (names only) to .env.example. Values that docker --env-file would mangle are refused.
+set -euo pipefail
+dir="${AGENTIC_WORK:-/work}/.agentic"
+usage() { echo "usage: agentic-env names [--example] | add [--example] KEY [VALUE] [--comment TEXT]" >&2; exit 2; }
+cmd="${1:-}"; [ "$#" -gt 0 ] && shift
+file="$dir/.env"; name=".agentic/.env"; example=0
+args=(); comment=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --example) example=1; file="$dir/.env.example"; name=".agentic/.env.example" ;;
+    --comment) [ "$#" -ge 2 ] || usage; comment="$2"; shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
+done
+
+case "$cmd" in
+  names)
+    [ -f "$file" ] || exit 0
+    sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' "$file" ;;
+  add)
+    if [ "${#args[@]}" -lt 1 ] || [ "${#args[@]}" -gt 2 ]; then usage; fi
+    key="${args[0]}"; value="${args[1]:-}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "agentic-env: invalid key name" >&2; exit 2; }
+    case "$value" in
+      *$'\n'*|*$'\r'*) echo "agentic-env: a value must be one line" >&2; exit 2 ;;
+      \"*|\'*) echo "agentic-env: no quotes; docker keeps them as part of the value" >&2; exit 2 ;;
+    esac
+    [ "$example" = 1 ] && value=""
+    mkdir -p "$dir"
+    if [ -f "$file" ] && grep -qE "^$key=" "$file"; then
+      echo "$key is already set in $name; left unchanged"; exit 0
+    fi
+    if [ ! -f "$file" ]; then (umask 077; : > "$file"); fi
+    if [ -s "$file" ] && [ -n "$(tail -c 1 "$file")" ]; then echo >> "$file"; fi
+    { [ -z "$comment" ] || echo "# $comment"; echo "$key=$value"; } >> "$file"
+    echo "added $key to $name" ;;
+  *) usage ;;
+esac

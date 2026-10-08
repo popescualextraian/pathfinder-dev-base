@@ -103,6 +103,19 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ "$(jq -r .project "$AGENTIC_STATE/config.json")" = old ]
 }
 
+@test "10 under agentic setup warns on an invalid config, records the errors and starts with defaults" {
+  config $'version: 1\nproject: demo\nfoo: 1'
+  AGENTIC_SETUP=1 run bash "$S/10-validate.sh"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *".foo: unknown key"* ]]
+  grep -q '.foo: unknown key' "$AGENTIC_STATE/config-errors.txt"
+  [ "$(cat "$AGENTIC_STATE/config-dir")" = "$AGENTIC_CONFIG_MOUNT" ]
+  config $'version: 1\nproject: demo'
+  AGENTIC_SETUP=1 run bash "$S/10-validate.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$AGENTIC_STATE/config-errors.txt" ]
+}
+
 @test "10 without any config warns and uses the defaults" {
   run bash "$S/10-validate.sh"
   [ "$status" -eq 2 ]

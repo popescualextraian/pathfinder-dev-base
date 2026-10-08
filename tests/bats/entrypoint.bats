@@ -36,6 +36,8 @@ step() { printf '#!/usr/bin/env bash\nsource "$AGENTIC_DIR/lib/common.sh"\n%s\n'
   [ "$status" -eq 1 ]
   [[ "$output" == *"broken config"* ]]
   [[ "$output" == *"start step 10-bad failed"* ]]
+  [[ "$output" == *"AGENTIC_DEBUG=1"* ]]
+  [[ "$output" != *"see /"* ]]
   [ ! -f "$HOME/ran" ]
 }
 

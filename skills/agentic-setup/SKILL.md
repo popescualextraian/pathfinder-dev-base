@@ -11,14 +11,27 @@ every field: `/opt/agentic/schema/agentic.schema.json` (descriptions included).
 
 ## Rules
 
+- Work autonomously. Make the changes inside `/work/.agentic/` yourself; do not ask permission
+  for each edit. Ask only for facts you cannot find (hosts, URLs, tokens, preferences), one
+  question at a time, multiple choice when the options are clear.
+- Add and adjust; never take away. Never delete a file, never remove or shorten existing lines,
+  values or comments the user wrote. If something existing is wrong, fix that line and say so
+  in the hand-over. Leave the user's own files alone; mention a file only if it looks like a
+  mistaken copy of one of ours.
 - Write only inside `/work/.agentic/`. Never touch `CLAUDE.md`, `AGENTS.md` or `.claude/`; if
   project rules would help, show the text and let the user add it.
-- Never read .agentic/.env. Secrets go into `.agentic/.env.example` as names only, and into the
-  config as `${NAME}` references.
+- Secrets: never read `.agentic/.env` and never print a value from it. Touch it only through
+  `agentic-env`: `agentic-env names` lists the keys that are set, `agentic-env add KEY [VALUE]
+  --comment "where it comes from"` appends a missing key and never changes an existing one.
+  Add values you created yourself (for example the user and password of a local database you set
+  up in `hooks/on-start.sh`); add real tokens with an empty value and a comment saying where the
+  user gets them. Reference secrets in `agentic.yaml` as `${NAME}`.
+- `.env.example` is the full template plus project additions. Never rewrite it; add a project name
+  with `agentic-env add --example KEY --comment "..."`. If it is missing, tell the user to run
+  `agentic init --env-example` on the host, which restores the full template.
 - Never guess company hosts or URLs (Jira, Confluence, git host, MCP servers). Ask.
 - Never commit, never run `agentic build` (you are inside the container; the build runs on the
   host).
-- Ask one question at a time. Use a multiple-choice question when the options are clear.
 
 ## What the image already has
 
@@ -35,8 +48,8 @@ from `agentic.yaml` are not in it yet.
 | File | What it is | Read by |
 |---|---|---|
 | `agentic.yaml` | the project config | build and every container start |
-| `.env` | secrets and personal settings (git-ignored); never read it | `docker run --env-file` |
-| `.env.example` | template `agentic init` wrote; names only, no values | nobody (documentation) |
+| `.env` | secrets and personal settings (git-ignored); never read it, change it only with `agentic-env` | `docker run --env-file` |
+| `.env.example` | full template from `agentic init` plus project names; never values | nobody (documentation for teammates) |
 | `Dockerfile.extra` | extra Dockerfile lines, run as root at build | build |
 | `hooks/on-build.sh`, `hooks/on-start.sh` | user-level installs at build; tasks at every start | build; start |
 | `certs/*.crt` | CA certificates (PEM), trusted everywhere in the image | build |
@@ -48,12 +61,16 @@ they look like a mistaken copy of one of the files above.
 
 ## Procedure
 
+0. **Fix a broken config first**: if `~/.agentic/config-errors.txt` exists, `agentic.yaml` is
+   invalid and this session started on the defaults. Fix every error listed there, run
+   `agentic-config validate /work/.agentic` until it is clean, and tell the user a restart of
+   `agentic setup` picks the fixed config up.
 1. **Read**: `.agentic/agentic.yaml`, `.agentic/detect-report.md`, build files (`pom.xml`,
    `build.gradle*`, `package.json`, `pyproject.toml`, `*.tf`, `go.mod`, `*.csproj`), CI files
    (`.gitlab-ci.yml`, `.github/workflows/*`), Dockerfiles and compose files, the README, and
    any existing agent instruction files. For an empty repository, skip to step 3 and ask for
    the stack.
-2. **Find gaps you can see**, and propose each fix with its reason. Typical ones:
+2. **Find gaps you can see** and fix them, noting each reason for the hand-over. Typical ones:
    - a module targets a JDK that `tools.java.versions` lacks;
    - the Maven wrapper pins a different Maven than `tools.maven`;
    - tests use a compose file or Testcontainers while `docker.socket` is false (explain that
@@ -82,5 +99,6 @@ they look like a mistaken copy of one of the files above.
    means the build will accept the config.
 6. **Hand over**: summarise what changed; say whether a rebuild is needed (tools, certs,
    plugins, `Dockerfile.extra`, `on-build.sh`, `docker.socket` need one; MCP servers, skills
-   and `on-start.sh` do not); list the variables to put into `.agentic/.env`; and tell the user
+   and `on-start.sh` do not); list every key you added with `agentic-env` and which ones still
+   need a value from the user (never the values); and tell the user
    to run, on the host, `agentic build` (if needed) and `agentic doctor`.

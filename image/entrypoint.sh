@@ -24,7 +24,7 @@ for s in "$steps"/[0-9][0-9]-*.sh; do
     0) ;;
     2) echo "agentic: $name: $(tail -n 1 "$out" | sed 's/^agentic: //')" >&2 ;;
     *) cat "$out" >&2
-       echo "agentic: start step $name failed (rc=$rc); see $log" >&2
+       echo "agentic: start step $name failed (rc=$rc); its output is above (AGENTIC_DEBUG=1 shows every step)" >&2
        rm -f "$out"; exit 1 ;;
   esac
   rm -f "$out"

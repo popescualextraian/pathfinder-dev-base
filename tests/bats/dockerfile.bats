@@ -6,7 +6,7 @@ D="$REPO_ROOT/image/Dockerfile"
 @test "the Dockerfile copies every part of the /opt/agentic contract" {
   for pair in "image/lib /opt/agentic/lib" "image/start.d /opt/agentic/start.d" "image/worker.d /opt/agentic/worker.d" \
               "image/tools /opt/agentic/tools" "image/bin /opt/agentic/bin" "derive /opt/agentic/derive" \
-              "config /opt/agentic/config" "schema /opt/agentic/schema" "skills /opt/agentic/skills" \
+              "config /opt/agentic/config" "schema /opt/agentic/schema" "skills /opt/agentic/skills" "templates /opt/agentic/templates" \
               "image/entrypoint.sh /opt/agentic/entrypoint.sh" "image/profile.d/agentic.sh /etc/profile.d/agentic.sh"; do
     grep -Eq "^COPY( --chmod=[0-9]+)? $pair\$" "$D" || { echo "missing: COPY $pair"; false; }
   done

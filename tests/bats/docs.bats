@@ -29,7 +29,9 @@ load helpers
   grep -qx 'name: agentic-setup' "$f"
   grep -q '^description: ' "$f"
   grep -q 'agentic-config validate' "$f"
-  grep -q 'Never read .agentic/.env' "$f"
+  grep -q 'agentic-env' "$f"
+  grep -q 'config-errors.txt' "$f"
+  grep -q 'never read' "$f"
   grep -q '/opt/agentic/inventory.txt' "$f"
   grep -q 'command -v' "$f"
 }
