@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Attach point of the dev container: the start steps' environment, then the tmux session main.
+# docker exec skips the entrypoint, so the exports are applied here.
+set -euo pipefail
+state="${AGENTIC_STATE:-$HOME/.agentic}"
+# shellcheck disable=SC1091
+if [ -f "$state/env" ]; then source "$state/env"; fi
+exec tmux new-session -A -s main -c "${1:-${AGENTIC_WORK:-/work}}"
