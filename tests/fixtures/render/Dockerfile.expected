@@ -25,5 +25,8 @@ ARG AGENTIC_PLUGINS_REFRESH=0
 RUN agentic-install-plugins '{"claude":["superpowers@claude-plugins-official"],"marketplaces":["anthropics/claude-plugins-official"]}'
 COPY --chown=dev hooks/on-build.sh /tmp/agentic-on-build.sh
 RUN bash /tmp/agentic-on-build.sh && rm -f /tmp/agentic-on-build.sh
+USER root
+RUN agentic-inventory > /opt/agentic/inventory.txt
+USER dev
 LABEL agentic.project="demo" agentic.config.hash="HASH" agentic.docker_socket="true" agentic.harness="claude"
 WORKDIR /work

@@ -118,6 +118,11 @@ RUN mkdir -p /home/dev/.claude \
  && ln -sfn /opt/agentic/claude-plugins /home/dev/.claude/plugins \
  && agentic-install-plugins "$(yq -o=json -I=0 '{"claude": .plugins.claude, "marketplaces": .plugins.marketplaces}' /opt/agentic/config/defaults.yaml)"
 
+# What this image has, for the setup skill; derived images rewrite it
+USER root
+RUN agentic-inventory > /opt/agentic/inventory.txt
+USER dev
+
 WORKDIR /work
 ENTRYPOINT ["/opt/agentic/entrypoint.sh"]
 CMD ["bash"]

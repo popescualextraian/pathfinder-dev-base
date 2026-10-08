@@ -30,6 +30,8 @@ load helpers
   grep -q '^description: ' "$f"
   grep -q 'agentic-config validate' "$f"
   grep -q 'Never read .agentic/.env' "$f"
+  grep -q '/opt/agentic/inventory.txt' "$f"
+  grep -q 'command -v' "$f"
 }
 
 @test "the README names the CA file rules and how private repos authenticate" {

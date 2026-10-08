@@ -74,10 +74,35 @@ write() { printf '%s\n' "$2" > "$1"; }
   [[ "$output" == *".tools.terraform: matches none of the allowed forms"* ]]
 }
 
-@test "presets unknown to the base pass the schema (an overlay may provide them)" {
+@test "a preset this image lacks is reported by validate, as the build would" {
+  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  hello: "1.0"'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".tools.hello: no preset hello in this image"* ]]
+}
+
+@test "a preset an overlay adds to the image passes validate" {
+  rm "$AGENTIC_DIR/tools"; cp -r "$REPO_ROOT/image/tools" "$AGENTIC_DIR/tools"
+  printf '#!/usr/bin/env bash\n' > "$AGENTIC_DIR/tools/hello.sh"
   write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  hello: "1.0"'
   run "$AC" validate "$P"
   [ "$status" -eq 0 ]
+}
+
+@test "a top-level key placed under tools gets a hint" {
+  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  certs: certs'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".tools.certs: no preset certs in this image; certs is a top-level key, not a tool"* ]]
+}
+
+@test "build paths outside .agentic/ are reported by validate" {
+  write "$P/agentic.yaml" $'version: 1\nproject: demo\ncerts: certs\ntools:\n  extra_dockerfile: .agentic/../x\nhooks:\n  on_build: /tmp/b.sh'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".certs: certs must be inside .agentic/"* ]]
+  [[ "$output" == *".tools.extra_dockerfile: .agentic/../x must be inside .agentic/"* ]]
+  [[ "$output" == *".hooks.on_build: /tmp/b.sh must be inside .agentic/"* ]]
 }
 
 @test "a literal secret is rejected, a reference is accepted" {

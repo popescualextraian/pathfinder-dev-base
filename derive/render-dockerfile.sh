@@ -100,5 +100,8 @@ if [ -n "$onbuild" ]; then
   echo "COPY --chown=dev $onbuild /tmp/agentic-on-build.sh"
   echo "RUN bash /tmp/agentic-on-build.sh && rm -f /tmp/agentic-on-build.sh"
 fi
+echo "USER root"
+echo "RUN agentic-inventory > /opt/agentic/inventory.txt"
+echo "USER dev"
 echo "LABEL agentic.project=\"$(cfg .project)\" agentic.config.hash=\"$hash\" agentic.docker_socket=\"$socket\" agentic.harness=\"$(cfg .harness.default)\""
 echo "WORKDIR /work"

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Lists what this image already has: commands with their version, tool presets and the versions
+# installed side by side, baked plugins and skills. Written to /opt/agentic/inventory.txt at build
+# time (base and derived image); the /agentic-setup skill reads it instead of guessing.
+set -uo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+opt="${AGENTIC_OPT:-/opt}"
+plugins="${AGENTIC_PLUGINS_DIR:-$AGENTIC_DIR/claude-plugins}"
+
+# version CMD: the first line the command prints about its version, stdout or stderr.
+version() {
+  case "$1" in
+    java) timeout 10 java -version 2>&1 ;;
+    tmux) timeout 10 tmux -V 2>&1 ;;
+    go) timeout 10 go version 2>&1 ;;
+    kubectl) timeout 10 kubectl version --client 2>&1 ;;
+    helm) timeout 10 helm version --short 2>&1 ;;
+    *) timeout 10 "$1" --version 2>&1 ;;
+  esac | sed -n '/[^[:space:]]/{p;q}'
+}
+
+echo "# Generated at build time by agentic-inventory. Everything listed is already installed."
+echo
+echo "## Commands"
+for c in git gh glab aws az docker node npm python3 uv pipx java mvn gradle terraform tflint checkov \
+         kubectl helm go dotnet psql jq yq rg tmux make claude copilot ccusage graphify mcp-atlassian \
+         playwright-mcp mcp-server-playwright Xvfb certutil; do
+  command -v "$c" >/dev/null 2>&1 || continue
+  case "$c" in
+    Xvfb|certutil|mcp-server-playwright) echo "- $c" ;;
+    *) v="$(version "$c")"; echo "- $c${v:+: $v}" ;;
+  esac
+done
+echo
+echo "## Tool presets (tools.<name> in agentic.yaml)"
+for f in "$AGENTIC_DIR"/tools/*.sh; do
+  n="$(basename "$f" .sh)"
+  [ "$n" = _lib ] || echo "- $n"
+done
+echo
+echo "## Preset versions installed"
+for f in "$AGENTIC_DIR"/tools/*.sh; do
+  n="$(basename "$f" .sh)"
+  [ "$n" = _lib ] && continue
+  if [ "$n" = python ]; then
+    vs="$(find "$opt/python" -mindepth 1 -maxdepth 1 -name 'cpython-*' -printf '%f\n' 2>/dev/null \
+          | sed -E 's/^cpython-([0-9]+\.[0-9]+).*/\1/' | sort -uV | paste -sd' ' -)"
+  else
+    vs="$(find "$opt/$n" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -V | paste -sd' ' -)"
+  fi
+  [ -n "$vs" ] && echo "- $n: $vs"
+done
+echo
+echo "## Claude plugins baked in"
+jq -r '.plugins // {} | keys[] | "- " + .' "$plugins/installed_plugins.json" 2>/dev/null
+echo
+echo "## Skills in the image"
+for d in "$AGENTIC_DIR"/skills/*/; do
+  [ -f "$d/SKILL.md" ] && echo "- $(basename "$d")"
+done
+exit 0

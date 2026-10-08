@@ -29,6 +29,24 @@ config_resolve() {
   yq eval-all -o=json -I=0 '. as $item ireduce ({}; . * ($item // {}))' "${files[@]}"
 }
 
+# config_image_errs FILE: what only this image can decide, checked as the build checks it: every
+# tool has a preset here, and build-time paths stay inside .agentic/ (the build context).
+config_image_errs() {
+  local f="$1" k key p top=" version project base_image repos git certs plugins mcp skills hooks harness docker "
+  while IFS= read -r k; do
+    [ -f "$AGENTIC_DIR/tools/$k.sh" ] && continue
+    if [[ "$top" == *" $k "* ]]; then echo ".tools.$k: no preset $k in this image; $k is a top-level key, not a tool"
+    else echo ".tools.$k: no preset $k in this image"; fi
+  done < <(jq -r '.tools // {} | to_entries[]
+    | select(.key != "apt" and .key != "extra_dockerfile" and .value != false and .value != null) | .key' "$f")
+  for key in .certs .tools.extra_dockerfile .hooks.on_build; do
+    p="$(jq -r "$key // empty" "$f")"
+    [ -n "$p" ] || continue
+    case "/$p/" in */../*) echo "$key: $p must be inside .agentic/"; continue ;; esac
+    case "$p" in .agentic/*) ;; *) echo "$key: $p must be inside .agentic/" ;; esac
+  done
+}
+
 # config_validate FILE: prints one error per line; exit 1 if there is any.
 config_validate() {
   local errs
@@ -36,5 +54,6 @@ config_validate() {
     include "schema-check"; include "config-rules";
     errs($s[0]; "") as $e
     | (if ($e | length) > 0 then $e else semantic_errs end) + secret_errs | .[]' "$1")" || return 1
+  if [ -z "$errs" ]; then errs="$(config_image_errs "$1")"; fi
   if [ -n "$errs" ]; then printf '%s\n' "$errs"; return 1; fi
 }

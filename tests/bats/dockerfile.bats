@@ -13,6 +13,10 @@ D="$REPO_ROOT/image/Dockerfile"
   grep -q 'ENTRYPOINT \["/opt/agentic/entrypoint.sh"\]' "$D"
 }
 
+@test "the base writes the inventory the setup skill reads" {
+  grep -q 'agentic-inventory > /opt/agentic/inventory.txt' "$D"
+}
+
 @test "the base copies no certificate into the image" {
   run grep -Ei '^COPY .*\.(crt|pem)' "$D"
   [ "$status" -ne 0 ]
