@@ -35,6 +35,17 @@ setup() {
   [[ "$output" == *"agentic build"* ]]
 }
 
+@test "init tolerates an unreadable directory in the repository" {
+  mkdir -p "$PROJ/secret/inner"; touch "$PROJ/secret/inner/package.json"
+  chmod 000 "$PROJ/secret"
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  chmod 755 "$PROJ/secret"
+  [ "$status" -eq 0 ]
+  grep -q 'pom.xml' "$PROJ/.agentic/detect-report.md"
+  grep -q '^Notes:' "$PROJ/.agentic/detect-report.md"
+  [[ "$output" == *"next:"* ]]
+}
+
 @test "init refuses to overwrite agentic.yaml without --force, and keeps other files" {
   bash -c "cd '$PROJ' && bash '$A' init" >/dev/null
   echo 'GH_TOKEN=keep' > "$PROJ/.agentic/.env.example"

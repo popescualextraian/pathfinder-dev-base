@@ -7,10 +7,11 @@ DEFAULT_HELM=3.16.1
 DEFAULT_MAVEN=3.9.9
 
 # _pruned ROOT FIND-TESTS...: matching files under ROOT, skipping vendored and generated trees.
+# Unreadable directories are skipped silently; find's status 1 for them is not a failure.
 _pruned() {
   local root="$1"; shift
   find "$root" -maxdepth 5 \( -name .git -o -name node_modules -o -name .terraform -o -name target \
-    -o -name build -o -name dist -o -name .agentic -o -name .venv \) -prune -o -type f "$@" -print 2>/dev/null
+    -o -name build -o -name dist -o -name .agentic -o -name .venv \) -prune -o -type f "$@" -print 2>/dev/null || true
 }
 # _files ROOT NAME: files called NAME, skipping vendored and generated trees.
 _files() { _pruned "$1" -name "$2"; }
