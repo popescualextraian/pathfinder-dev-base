@@ -10,6 +10,12 @@ setup() {
   mkdir -p "$PROJ/.agentic"; git init -q "$PROJ"
   printf 'version: 1\nproject: demo\n' > "$PROJ/.agentic/agentic.yaml"
   A="$REPO_ROOT/bin/agentic"
+  export AGENTIC_WSLG_DIR="$BATS_TEST_TMPDIR/no-wslg"   # tests that want WSLg create it
+}
+
+fake_wslg() {
+  export AGENTIC_WSLG_DIR="$BATS_TEST_TMPDIR/wslg"; mkdir -p "$AGENTIC_WSLG_DIR"
+  python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$AGENTIC_WSLG_DIR/wayland-0"
 }
 
 ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
@@ -117,6 +123,33 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   grep -qx 'DISPLAY=:0' "$DOCKER_LOG"
   grep -qx 'WAYLAND_DISPLAY=/run/wslg/wayland-0' "$DOCKER_LOG"
   grep -qx '/tmp:/tmp' "$DOCKER_LOG"
+}
+
+@test "on WSLg, shell, setup, login and dev get the display, the Wayland clipboard and the shared /tmp" {
+  fake_wslg
+  printf 'ANTHROPIC_API_KEY=k\n' > "$PROJ/.agentic/.env"
+  for cmd in "shell true" setup "login claude" dev; do
+    : > "$DOCKER_LOG"
+    run ag $cmd
+    call="$(docker_sub run)"
+    grep -qx 'WAYLAND_DISPLAY=/run/wslg/wayland-0' <<<"$call" || { echo "$cmd: no Wayland"; false; }
+    grep -qx "$AGENTIC_WSLG_DIR:/run/wslg" <<<"$call" || { echo "$cmd: no socket mount"; false; }
+    grep -qx '/tmp:/tmp' <<<"$call" || { echo "$cmd: no shared /tmp"; false; }
+    grep -qx 'DISPLAY=:0' <<<"$call" || { echo "$cmd: no display"; false; }
+  done
+}
+
+@test "without WSLg nothing host-specific is added" {
+  run ag shell true
+  run grep -q WAYLAND_DISPLAY "$DOCKER_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "AGENTIC_HOST_PROFILE=none keeps WSLg out" {
+  fake_wslg
+  AGENTIC_HOST_PROFILE=none run ag shell true
+  run grep -q WAYLAND_DISPLAY "$DOCKER_LOG"
+  [ "$status" -ne 0 ]
 }
 
 @test "dev refuses to start before the first build" {

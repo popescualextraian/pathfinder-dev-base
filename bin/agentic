@@ -20,7 +20,7 @@ agentic <command> [options]          run inside a project repository
   setup                              refine .agentic/ with the /agentic-setup skill
   shell [CMD...]                     throwaway container (removed on exit)
   doctor                             check the configured container: steps, tools, logins, MCP, certificates
-  dev [stop|recreate|status] [--host-profile wsl]
+  dev [stop|recreate|status] [--host-profile wsl|none]
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
   build-base [--force]               build agentic-dev-base:local (make build)
 EOF
@@ -138,7 +138,8 @@ cmd_shell() {
   img="$(run_image)"
   if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
   build_run_args "$img"
-  docker run --rm "${tty[@]}" "${RUN_ARGS[@]}" "$img" "$@"
+  host_args
+  docker run --rm "${tty[@]}" "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" "$@"
 }
 
 # harness_authenticated claude|copilot: a login on disk or a token in .env.
@@ -177,7 +178,8 @@ cmd_login() {
   if harness_authenticated "$h"; then say "$h already has a login or token for $(project_name); starting it anyway"; fi
   echo "Starting $h. Run /login, follow the instructions, then /exit. The login is kept for this project."
   build_run_args "$img"
-  docker run --rm -it "${RUN_ARGS[@]}" "$img" "$h"
+  host_args
+  docker run --rm -it "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" "$h"
 }
 
 cmd_setup() {
@@ -189,19 +191,31 @@ cmd_setup() {
   if ! harness_authenticated "$h"; then auth_help "$h"; exit 1; fi
   build_run_args "$img"
   if [ "$h" = copilot ]; then set -- copilot -i "/agentic-setup"; else set -- claude "/agentic-setup"; fi
-  docker run --rm -it "${RUN_ARGS[@]}" -e AGENTIC_SETUP=1 "$img" "$@"
+  host_args
+  docker run --rm -it "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" -e AGENTIC_SETUP=1 "$img" "$@"
 }
 
-WSL_ARGS=(-e DISPLAY=:0 -e WAYLAND_DISPLAY=/run/wslg/wayland-0 -e TMUX_TMPDIR=/home/dev
-  -v /mnt/wslg/runtime-dir:/run/wslg -v /tmp:/tmp)
+# host_args [wsl]: host conveniences for interactive containers, in HOST_ARGS. On WSL with WSLg: the
+# display, the Wayland clipboard (Claude Code pastes images through wl-paste) and the host /tmp
+# (PyCharm pastes an image as a path to a file there). Detected automatically, forced with "wsl";
+# AGENTIC_HOST_PROFILE=none turns it off. Tasks never need any of it.
+host_args() {
+  local wslg="${AGENTIC_WSLG_DIR:-/mnt/wslg/runtime-dir}"
+  HOST_ARGS=()
+  if [ "${AGENTIC_HOST_PROFILE:-auto}" = none ]; then return 0; fi
+  if [ "${1:-}" = wsl ] || [ -S "$wslg/wayland-0" ]; then
+    HOST_ARGS=(-e DISPLAY=:0 -e WAYLAND_DISPLAY=/run/wslg/wayland-0 -e TMUX_TMPDIR=/home/dev
+      -v "$wslg:/run/wslg" -v /tmp:/tmp)
+  fi
+}
 
 dev_start() {
-  local name="$1" img="$2" wsl="$3" extra=()
+  local name="$1" img="$2" wsl="$3"
   image_exists "$img" || die "$img is not built; run agentic build"
   build_run_args "$img"
-  if [ "$wsl" = 1 ]; then extra=("${WSL_ARGS[@]}"); fi
+  if [ "$wsl" = 1 ]; then host_args wsl; else host_args; fi
   docker run -d --name "$name" --restart unless-stopped --label agentic.kind=dev \
-    "${RUN_ARGS[@]}" "${extra[@]}" "$img" sleep infinity >/dev/null
+    "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" sleep infinity >/dev/null
 }
 
 dev_status() {
@@ -221,7 +235,13 @@ cmd_dev() {
   while [ $# -gt 0 ]; do
     case "$1" in
       attach|stop|recreate|status) action="$1" ;;
-      --host-profile) [ "${2:-}" = wsl ] || die "only --host-profile wsl is supported"; wsl=1; shift ;;
+      --host-profile)
+        case "${2:-}" in
+          wsl) wsl=1 ;;
+          none) export AGENTIC_HOST_PROFILE=none ;;
+          *) die "--host-profile takes wsl or none" ;;
+        esac
+        shift ;;
       *) die "unknown option $1" ;;
     esac
     shift

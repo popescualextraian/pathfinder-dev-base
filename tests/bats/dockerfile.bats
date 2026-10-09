@@ -17,6 +17,13 @@ D="$REPO_ROOT/image/Dockerfile"
   grep -q 'agentic-inventory > /opt/agentic/inventory.txt' "$D"
 }
 
+@test "the base has wl-clipboard (Claude Code pastes images through wl-paste) and a tmux config" {
+  grep -q 'wl-clipboard' "$D"
+  grep -Eq '^COPY image/tmux.conf /etc/tmux.conf$' "$D"
+  grep -q 'history-limit' "$REPO_ROOT/image/tmux.conf"
+  grep -q 'set-clipboard on' "$REPO_ROOT/image/tmux.conf"
+}
+
 @test "the base copies no certificate into the image" {
   run grep -Ei '^COPY .*\.(crt|pem)' "$D"
   [ "$status" -ne 0 ]

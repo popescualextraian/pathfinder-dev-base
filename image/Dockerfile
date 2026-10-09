@@ -39,7 +39,7 @@ RUN --mount=type=bind,from=agentic-ca,target=/tmp/agentic-ca \
 # OS packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl wget gnupg git openssh-client bash make build-essential unzip zip tar xz-utils \
-      jq ripgrep tmux less procps python3 python3-venv pipx libnss3-tools xvfb lsb-release \
+      jq ripgrep tmux less procps python3 python3-venv pipx libnss3-tools xvfb lsb-release wl-clipboard \
  && rm -rf /var/lib/apt/lists/*
 
 # gh, Docker CLI, Azure CLI from their vendor repositories
@@ -107,6 +107,7 @@ COPY skills /opt/agentic/skills
 COPY templates /opt/agentic/templates
 COPY --chmod=755 image/entrypoint.sh /opt/agentic/entrypoint.sh
 COPY image/profile.d/agentic.sh /etc/profile.d/agentic.sh
+COPY image/tmux.conf /etc/tmux.conf
 RUN ln -sf /opt/agentic/bin/* /usr/local/bin/ \
  && printf '%s\n' '[ -f /etc/profile.d/agentic.sh ] && . /etc/profile.d/agentic.sh' \
       '[ -f "$HOME/.agentic/env" ] && . "$HOME/.agentic/env"' >> /etc/bash.bashrc \
