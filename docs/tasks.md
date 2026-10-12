@@ -24,6 +24,11 @@ question. A text that starts with `-` goes after `--`. `send ID "text"` is a new
 [--transcript|--bridge|--start]` shows the files; `shell ID` opens a shell in the container;
 `takeover ID` stops the task and continues its session interactively.
 
+`follow ID [--since N] [--raw] [--forever]` streams the events after `N` (default: from the start)
+over the WebSocket; `--raw` prints the JSON objects, `--forever` keeps streaming instead of
+exiting once the task waits, idles, stops or fails. `status [ID] [--all] [--json]` lists the tasks
+of this project (`--all`: every project; `--json`: one JSON object, or an array for a list).
+
 `run` options: `--prompt-file F`, `--agent claude|copilot`, `--model M`, `--repo R` (repeatable),
 `--base REF`, `--branch B`, `--allow push|open-pr|deploy:<target>` (repeatable), `--id ID`,
 `--keep-on-failure`, `--json`. `run` validates before it creates anything and rolls back on any
@@ -49,13 +54,18 @@ check. Remote branches stay.
  stop ─▶ stopped      agent exits or ACP error ─▶ failed      container gone without stop ─▶ interrupted (host)
 ```
 
+Further transitions: `idle → waiting` when `agentic-ask` is called while no turn runs; `running →
+waiting` when the agent asks for permission mid-turn, back to `running` when the last pending
+permission is answered; `suspended`, `interrupted` and `failed → starting → running` on a prompt
+or answer (the agent is respawned and the session loaded); `stopped` is final.
+
 - **Start.** Without `state.json` the bridge creates the record, spawns the agent, opens a
   session, applies bypass and sends `prompt.md` (else `AGENTIC_PROMPT`); `starting → running`.
   With a record the bridge starts lazily: it serves the API and spawns nothing until a prompt or
   answer arrives, so a plain `docker start` spends no tokens. A record in `starting`, `running`,
   `waiting` or `idle` found at start is an unclean end: the bridge sets `interrupted` and waits.
 - **Turn end.** `session/prompt` returns. With an open question the task is `waiting`, else
-  `idle`. The summary is the turn's final agent message (300 characters at most). If the inbox is
+  `idle`. The summary is the agent's text after its last tool call in the turn (300 characters at most). If the inbox is
   not empty, its items are joined into the next prompt at once.
 - **Prompt.** Accepted in `idle`, `waiting`, `suspended`, `interrupted` and `failed`; 409 in
   `starting`, `running`, `stopped`. In `suspended`, `interrupted` or `failed` the bridge spawns
@@ -76,10 +86,12 @@ check. Remote branches stay.
   emits an `error` event saying so.
 - **Interrupted.** `agentic resume ID` starts the container and sends `You were interrupted. Check
   git status and continue.`
-- **Cancel.** Accepted in `running` with a prompt outstanding, and in `waiting` (it answers every
-  pending permission question as cancelled, then cancels); otherwise 409. The task stays as it is
-  until the prompt returns `cancelled`, then follows the turn-end rule. Repeating a cancel is
-  harmless.
+- **Cancel.** Accepted only while a prompt is outstanding: in `running`, or in `waiting` on a
+  permission request raised mid-turn (every pending permission question is answered as cancelled,
+  then the turn is cancelled). Otherwise 409 `no turn in progress`; so a task that is `waiting`
+  on an `agentic-ask` question after its turn ended cannot be cancelled (answer it, or stop it).
+  The task stays as it is until the prompt returns `cancelled`, then follows the turn-end rule.
+  Repeating a cancel is harmless.
 - **Stop.** Cancels a running turn, closes the session where supported, ends the agent, sets
   `stopped`, `stopped_by_user = true`, and the bridge exits 0. No restart policy.
 - **Failed.** The agent process exits outside a stop or suspension, or an ACP call fails (a
@@ -122,17 +134,18 @@ on the host anyway.
 |---|---|---|---|
 | `POST /prompt` | `{text}` | 202, status | 400 empty, 409 state |
 | `POST /answer` | `{question?, text, grant?: [..]}` (default: the oldest open question) | 202, status | 400 empty or bad grant, 404 unknown question, 409 nothing open or stopped |
-| `POST /cancel` | none | 202, status | 409 not cancellable |
+| `POST /cancel` | none | 202, status | 409 `no turn in progress` |
 | `POST /stop` | none | 202, status | none |
 | `GET /status` | none | 200, status | none |
-| `GET /events?since=SEQ&limit=N` | none | 200, `application/x-ndjson`, events with `seq > SEQ` | 400 |
-| `WS /events?since=SEQ` | none | the backlog, then live events, one JSON object per text frame; ping every 30 s | none |
+| `GET /events?since=SEQ&limit=N` | none | 200, `application/x-ndjson`, events with `seq > SEQ`; `since` defaults to 0, `limit` to 1000 (1 to 1000) | 400 |
+| `WS /events?since=SEQ` | none | the backlog, then live events, one JSON object per text frame; ping every 30 s | upgrade refused with 400 (bad target), 401, 403 (Host, Origin, or the agent token), 404 (other path) |
 | `POST /ask` (agent token) | `{text, options?, recommend?}` | 201 `{id}` | 400 empty, 409 stopped |
 | `POST /gate` (agent token) | `{rule, command}` | 204 | none |
 
-Grants: `push`, `open-pr`, `deploy:<target>` (`deploy:[A-Za-z0-9_.-]+`). Errors share one body:
-`{"error":{"code":"<bad_request|unauthorized|forbidden|not_found|conflict|starting>","message":"…"}}`;
-401 carries no detail; 503 `starting` until the bridge can take commands.
+The agent token on any other route gets 403; an unknown route gets 404. Grants: `push`, `open-pr`, `deploy:<target>` (`deploy:[A-Za-z0-9_.-]+`). Errors share one body:
+`{"error":{"code":"<bad_request|unauthorized|forbidden|not_found|conflict|starting|internal>","message":"…"}}`;
+401 carries the code `unauthorized` and no detail; 500 `internal` for an unexpected failure; 503
+`starting` until the bridge can take commands.
 
 ### The status object
 
@@ -230,8 +243,10 @@ The gate runs as a `PreToolUse` hook (`hook.sh`, installed by start step `45-hoo
   (comma-separated; each entry validated against the grant pattern).
 - **Dispatch.** On `pretooluse`, `hook.sh` runs `gate.sh`, `ask-guard.sh`, then
   `hooks.d/pretooluse/*.sh` of the image (`/opt/agentic/hooks.d/`) and of the project
-  (`/agentic-config/hooks.d/`); any other event runs only its `hooks.d/<event>/` scripts. A guard
-  that exits anything but 0 or 2 blocks. The payload arrives on stdin.
+  (`/agentic-config/hooks.d/`); any other event runs only its `hooks.d/<event>/` scripts, whose result is ignored. The payload
+  arrives on stdin. `gate.sh` and `ask-guard.sh` block on any exit but 0 (2 is the refusal); a
+  `hooks.d/pretooluse` script blocks only by exiting 2 (its stderr is the reason), any other exit
+  is ignored.
 - **Block format.** Claude: exit 2, the reason on stderr. Copilot: stdout
   `{"permissionDecision":"deny","permissionDecisionReason":"<reason>"}`, exit 0. Reason: `agentic
   gate: <why>; not allowed in this task. Use agentic-ask if you need it.`
@@ -245,7 +260,7 @@ The gate runs as a `PreToolUse` hook (`hook.sh`, installed by start step `45-hoo
 Every `state` event is appended as one line to `/events/events.jsonl` when `/events` is mounted.
 On `waiting`, `idle`, `failed` and `stopped`, when `AGENTIC_NOTIFY_WEBHOOK` is set, the bridge
 POSTs `{"task","project","state","question":{id,text,options,recommendation}|null,"summary",
-"reply":"agentic answer <ID> Q<n> \"…\"","ts"}` (5 s timeout, one retry). A failure goes to
+"reply":"agentic answer <ID> Q<n> \"…\"" (or `agentic send <ID> \"…\"` when no question is open),"ts"}` (5 s timeout, one retry). A failure goes to
 `bridge.log` and an `error` event; it never blocks. The host appends `interrupted` when `status`
 first derives it.
 
@@ -281,7 +296,8 @@ Read by the image and the host:
 |---|---|---|
 | `AGENTIC_GATE` | `1` for `agentic-bridge` and worker mode, else `0` | installs the hooks and turns the gate on |
 | `AGENTIC_GATE_PROTECTED` | `prod production` | words that always block a deploy-like command |
-| `AGENTIC_MAX_RUNNING` | `3` | cap on running task containers per host (`run`, `send`, `resume` refuse at the cap) |
+| `AGENTIC_MAX_RUNNING` | `3` | cap on running task containers per host; `run`, and any verb that has to start a task's container (`send`, `answer`, `resume`, `stop`, `takeover`), refuse at the cap; a verb on an already running container does not count |
+| `AGENTIC_WORKSPACES` | `~/agentic-workspaces` | host directory holding the per-project workspaces (see Files) |
 | `AGENTIC_START_TIMEOUT` | `120` | seconds the host waits for the bridge to leave `starting` |
 | `AGENTIC_BRANCH_PREFIX` | `agentic/` | prefix of the generated branch name |
 | `AGENTIC_TASK_DOCKER_ARGS` | none | extra `docker run` arguments (test hook) |
@@ -298,7 +314,7 @@ state, including the harness sessions, is on the `/task` volume, so a suspended 
 new container.
 
 `AGENTIC_MAX_RUNNING` (default 3) caps running task containers per host, because all tasks share
-one account's rate limits. `run` and starting a suspended or interrupted task refuse at the cap
+one account's rate limits. `run` and starting a suspended, interrupted or failed task refuse at the cap
 with a clear message; there is no queue in version 1.
 
 **Outbound mode (designed, not built).** With `AGENTIC_RELAY_URL` the bridge would dial a relay
