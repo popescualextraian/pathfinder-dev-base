@@ -182,3 +182,34 @@ task_status_json() {
   [ "$st" != interrupted ] || note_interrupted "$1"
   jq -c --arg s "$st" --argjson n "$(open_questions "$1")" 'del(.inbox) | .state = $s | .open_questions = $n' "$(task_dir "$1")/state.json"
 }
+
+# plain: stdin without control characters (terminal escapes) other than newline and tab.
+plain() { tr -d '\000-\010\013-\037\177'; }
+
+# ensure_running ID: starts the container of a task that is not stopped and waits for its bridge.
+ensure_running() {
+  local id="$1" st
+  [ "$(container_status "$id")" = running ] && return 0
+  st="$(task_state "$id")"
+  [ "$st" != stopped ] || die "task $id is stopped"
+  case "$(container_status "$id")" in
+    missing) die "task $id has no container (state: $st)" ;;
+    unknown) die "docker did not answer for task $id" ;;
+  esac
+  check_cap
+  docker start "$(task_container "$id")" >/dev/null || die "could not start the container of $id"
+  wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}" || die "the bridge of $id did not come up; see agentic logs $id --start"
+}
+
+# bridge_result ID: the new state after a 2xx answer; otherwise the bridge's message and HTTP code.
+bridge_result() {
+  local why
+  case "$BRIDGE_CODE" in
+    2*) jq -r --arg id "$1" '"\($id): \(.state)\(if (.reason // "") != "" then " (" + .reason + ")" else "" end)"' <<<"$BRIDGE_BODY" | plain ;;
+    *) why="$(jq -r '.error.message // "request failed"' <<<"$BRIDGE_BODY" 2>/dev/null | plain)" || why=""
+       die "${why:-request failed} (HTTP $BRIDGE_CODE)" ;;
+  esac
+}
+
+# need_running ID: dies unless the task's container runs.
+need_running() { [ "$(container_status "$1")" = running ] || die "task $1 is not running (state: $(task_state "$1"))"; }

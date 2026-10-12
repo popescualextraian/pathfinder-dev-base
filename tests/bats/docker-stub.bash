@@ -2,7 +2,7 @@
 # Controls: DOCKER_LABEL (image inspect -f output), DOCKER_IMAGE_EXISTS (1/0),
 # DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output),
 # DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PS (docker ps ids, space-separated),
-# DOCKER_DOWN (inspect .State.Status fails like an unreachable daemon).
+# `docker start` makes later status inspects say running. DOCKER_DOWN (inspect .State.Status fails like an unreachable daemon).
 install_docker_stub() {
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat > "$BATS_TEST_TMPDIR/bin/docker" <<'EOF'
@@ -13,11 +13,13 @@ case "$1" in
     if [ "$3" = -f ]; then echo "${DOCKER_LABEL:-}"; exit 0; else [ "${DOCKER_IMAGE_EXISTS:-1}" = 1 ]; exit $?; fi ;;
   inspect)
     if [[ "$*" == *State.Status* ]]; then
+      if [ -f "$BATS_TEST_TMPDIR/docker.status" ]; then cat "$BATS_TEST_TMPDIR/docker.status"; exit 0; fi
       if [ -n "${DOCKER_DOWN:-}" ]; then echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock" >&2; exit 1; fi
       [ -n "${DOCKER_STATUS:-}" ] || { echo "Error: No such object: stub" >&2; exit 1; }
       echo "$DOCKER_STATUS"; exit 0
     fi
     [ -n "${DOCKER_RUNNING:-}" ] && echo "$DOCKER_RUNNING" || exit 1 ;;
+  start) echo running > "$BATS_TEST_TMPDIR/docker.status" ;;
   port) [ -n "${DOCKER_PORT:-}" ] && echo "127.0.0.1:$DOCKER_PORT" ;;
   ps) [ -z "${DOCKER_PS:-}" ] || printf '%s\n' $DOCKER_PS ;;
   run) if [ -n "${DOCKER_RUN_OUT:-}" ]; then printf '%s\n' "$DOCKER_RUN_OUT"; fi; exit "${DOCKER_RUN_RC:-0}" ;;
