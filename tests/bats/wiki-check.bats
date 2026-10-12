@@ -152,3 +152,28 @@ has() { grep -qxF -- "$1" <<<"$output"; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"agentic-wiki: 2 problem(s)"* ]]
 }
+
+@test "a failed rebuild of the generated files is a problem, not a pass" {
+  rm "$D/index.md"; mkdir "$D/index.md"
+  chk
+  [ "$status" -eq 1 ]
+  has 'docs/wiki: could not rebuild the generated files; run agentic-wiki build to see why'
+}
+
+@test "a CRLF checkout passes, and build and sync keep one block each" {
+  find "$W" -type f \( -name '*.md' -o -name '*.yaml' \) -exec sed -i 's/$/\r/' {} +
+  chk
+  [ "$output" = "wiki: ok" ]
+  run "$WK" -C "$W" build
+  run "$WK" -C "$W" sync
+  [ "$(grep -c 'generated:used-by:start' "$D/components/common.md")" = 1 ]
+  [ "$(grep -c 'generated:wiki-index:start' "$W/.github/copilot-instructions.md")" = 1 ]
+  chk
+  [ "$output" = "wiki: ok" ]
+}
+
+@test "a hand-written instruction file with a mirror's name is reported" {
+  printf '# Mine\n' > "$W/.github/instructions/api.instructions.md"
+  chk
+  has '.github/instructions/api.instructions.md: hand-written file has the name of the mirror of .claude/rules/api.md; move its content into the rule and delete it'
+}

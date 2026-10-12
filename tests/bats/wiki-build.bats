@@ -83,3 +83,8 @@ setup() {
   [ "$status" -eq 2 ]
   [[ "$output" == usage:* ]]
 }
+
+@test "a parent page lists its sub-components" {
+  run "$WK" -C "$W" build
+  [ "$(sed -n '/generated:parts:start/,/generated:parts:end/p' "$W/docs/wiki/components/api.md")" = $'<!-- generated:parts:start -->\n## Parts\n\n- [Routes](api/routes.md): The route table of the API.\n<!-- generated:parts:end -->' ]
+}

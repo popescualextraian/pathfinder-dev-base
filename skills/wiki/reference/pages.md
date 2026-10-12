@@ -59,6 +59,8 @@ the code.
 
 ## Generated content
 
-`index.md`, `decisions/index.md` and `reuse.md` are generated whole. The "Used by" section of a
-component page sits between `<!-- generated:used-by:start -->` and
-`<!-- generated:used-by:end -->`. Never edit them; `agentic-wiki check` reports any difference.
+`index.md`, `decisions/index.md` and `reuse.md` are generated whole. A component page ends with
+two generated sections: "Parts" lists its sub-components (the index lists only top-level
+components, so this is how agents reach the others), and "Used by" is the reverse of `depends_on`.
+They sit between `<!-- generated:<name>:start -->` and `<!-- generated:<name>:end -->`. Never
+edit them; `agentic-wiki check` reports any difference.

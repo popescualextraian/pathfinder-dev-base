@@ -142,7 +142,8 @@ Body sections, each left out when empty:
 - **Pitfalls:** known traps.
 - **Outside the repo:** external systems and consumers.
 
-Generated at the end: "Used by", the reverse of other components' `depends_on`.
+Generated at the end: "Parts", the sub-components (the index lists only top-level components), and
+"Used by", the reverse of other components' `depends_on`.
 
 Limits, enforced by `check`: at most 80 lines; no table longer than 10 rows; no more than 10 lines
 naming paths. A part gets its own page only when it has its own folder or file boundary.

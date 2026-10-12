@@ -48,18 +48,19 @@ wiki_model() {
 }
 
 # wiki_put_block FILE NAME: replaces the generated block NAME with stdin, appends it when it is
-# missing, and removes it when stdin is empty. Everything outside the block is kept.
+# missing, and removes it when stdin is empty. Everything outside the block is kept; a CRLF file
+# is rewritten with LF.
 wiki_put_block() {
   local file="$1" start="<!-- generated:$2:start -->" end="<!-- generated:$2:end -->" content
   content="$(cat)"
-  if [ -f "$file" ] && grep -qxF -- "$start" "$file"; then
-    S="$start" E="$end" C="$content" awk '
+  if [ -f "$file" ] && tr -d '\r' < "$file" | grep -qxF -- "$start"; then
+    tr -d '\r' < "$file" | S="$start" E="$end" C="$content" awk '
       $0 == ENVIRON["S"] { skip = 1; if (ENVIRON["C"] != "") { print; print ENVIRON["C"]; print ENVIRON["E"] } next }
       $0 == ENVIRON["E"] { skip = 0; next }
-      !skip { print }' "$file" > "$file.tmp"
+      !skip { print }' > "$file.tmp"
     mv "$file.tmp" "$file"
   elif [ -n "$content" ]; then
-    { if [ -s "$file" ]; then cat "$file"; echo; fi
+    { if [ -s "$file" ]; then tr -d '\r' < "$file"; echo; fi
       printf '%s\n%s\n%s\n' "$start" "$content" "$end"; } > "$file.tmp"
     mv "$file.tmp" "$file"
   fi
@@ -68,4 +69,10 @@ wiki_put_block() {
 # rule_globs FILE: the rule's paths joined by commas; empty when it has none.
 rule_globs() {
   { wiki_fm "$1" || echo '{}'; } | jq -r '.paths // empty | if type == "array" then join(",") else . end'
+}
+
+# rule_mirror REL: the Copilot mirror of .claude/rules/REL, relative to ROOT.
+rule_mirror() {
+  local name="${1%.md}"
+  echo ".github/instructions/${name//\//-}.instructions.md"
 }

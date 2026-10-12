@@ -34,3 +34,9 @@ The public routes are fixed for clients; a breaking change needs a new version p
 ## Pitfalls
 
 - Amounts reach the API as integer cents; format them with `format_money`, never by hand.
+
+<!-- generated:parts:start -->
+## Parts
+
+- [Routes](api/routes.md): The route table of the API.
+<!-- generated:parts:end -->

@@ -59,3 +59,10 @@ setup() {
   run "$WK" -C "$W" sync
   diff -r "$REPO_ROOT/tests/fixtures/wiki/good/dot-github" "$W/.github"
 }
+
+@test "sync never overwrites a hand-written instruction file with a mirror's name" {
+  printf '# Mine\n' > "$W/.github/instructions/api.instructions.md"
+  run "$WK" -C "$W" sync
+  [ "$(cat "$W/.github/instructions/api.instructions.md")" = '# Mine' ]
+  [[ "$output" == *"left .github/instructions/api.instructions.md alone: it is hand-written"* ]]
+}

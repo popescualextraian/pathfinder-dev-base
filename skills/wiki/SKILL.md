@@ -40,8 +40,8 @@ over-claim. The code wins over the wiki.
 
 `agentic-wiki` does everything a script can decide. Run it from anywhere in the repository.
 
-- `agentic-wiki build`: writes `index.md`, `decisions/index.md`, `reuse.md` and the "Used by"
-  blocks from the pages.
+- `agentic-wiki build`: writes `index.md`, `decisions/index.md`, `reuse.md` and the "Parts" and
+  "Used by" blocks from the pages.
 - `agentic-wiki sync`: mirrors `.claude/rules/` to `.github/instructions/` for Copilot and puts the
   index into `.github/copilot-instructions.md`.
 - `agentic-wiki check`: validates pages, sources, links, sizes, CLAUDE.md, rules and generated
@@ -67,8 +67,8 @@ Once per repository.
    glossary the code and the documents support. Seeded pages are `status: draft`.
 4. Route every statement of the existing instruction files with the test. Rewrite CLAUDE.md from
    `templates/CLAUDE.template.md`, keeping every instruction that passes. Turn area instructions
-   into rules from `templates/rule.md`. A hand-written `.github/instructions/` file whose content
-   you moved into a rule is replaced by its mirror.
+   into rules from `templates/rule.md`. Delete a hand-written `.github/instructions/` file once its
+   content is in a rule; `sync` never overwrites a hand-written file.
 5. Run `build`, `sync`, `check` until it passes.
 6. Summarise: pages written, statements moved (from → to), statements dropped because the code
    says them (with the reason), and "Needs a human".
