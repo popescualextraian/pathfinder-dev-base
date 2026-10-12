@@ -6,6 +6,13 @@ CLI, Playwright with Chromium) and recommended extras (Atlassian, Playwright and
 servers, the Superpowers plugin, the `/agentic-setup` skill). Each project adds its own layer
 from `.agentic/agentic.yaml`.
 
+## Direction
+
+The project is heading towards **pathfinder-dev-base**: a generic, company-neutral toolbox for
+running coding agents in containers. It provides a base image, configuration skills, built-in
+core skills, agent scheduling, ACP support, automatic task execution and more. Agent
+scheduling, ACP and automatic task execution are planned, not yet available.
+
 ## Prerequisites
 
 bash, git and Docker. Clone this repository once and put `bin/agentic` on your PATH.

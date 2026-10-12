@@ -14,7 +14,8 @@ A generic container toolbox for agentic development: base image, per-project der
 - No secret in an image layer, `~/.claude.json`, `~/.agentic/env` or a log.
 - bash style: `set -euo pipefail`, short comments, shellcheck-clean, a bats test for every
   behaviour, written first.
-- No `Co-Authored-By` or other attribution lines in commits. No remote; do not push.
+- No `Co-Authored-By` or other attribution lines in commits. Remote `origin` is public GitHub;
+  push only `main`, only when asked.
 
 ## Commands
 
