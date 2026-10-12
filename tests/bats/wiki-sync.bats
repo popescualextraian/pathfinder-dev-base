@@ -66,3 +66,11 @@ setup() {
   [ "$(cat "$W/.github/instructions/api.instructions.md")" = '# Mine' ]
   [[ "$output" == *"left .github/instructions/api.instructions.md alone: it is hand-written"* ]]
 }
+
+@test "sync keeps one index block in a copilot-instructions.md larger than a pipe buffer" {
+  run "$WK" -C "$W" sync
+  append_filler "$W/.github/copilot-instructions.md"
+  run "$WK" -C "$W" sync
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'generated:wiki-index:start' "$W/.github/copilot-instructions.md")" = 1 ]
+}

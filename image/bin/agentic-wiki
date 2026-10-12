@@ -239,7 +239,7 @@ check_context() {
   else
     n="$(wc -l < "$ROOT/CLAUDE.md")"
     if [ "$n" -gt 130 ]; then echo "CLAUDE.md: $n lines, limit 130"; fi
-    if ! tr -d '\r' < "$ROOT/CLAUDE.md" | grep -qxF '@docs/wiki/index.md'; then echo "CLAUDE.md: no @docs/wiki/index.md line"; fi
+    if ! grep -qxF '@docs/wiki/index.md' < <(tr -d '\r' < "$ROOT/CLAUDE.md"); then echo "CLAUDE.md: no @docs/wiki/index.md line"; fi
   fi
   if [ ! -d "$ROOT/.claude/rules" ]; then return 0; fi
   while IFS= read -r f; do

@@ -88,3 +88,14 @@ setup() {
   run "$WK" -C "$W" build
   [ "$(sed -n '/generated:parts:start/,/generated:parts:end/p' "$W/docs/wiki/components/api.md")" = $'<!-- generated:parts:start -->\n## Parts\n\n- [Routes](api/routes.md): The route table of the API.\n<!-- generated:parts:end -->' ]
 }
+
+@test "a page larger than a pipe buffer parses under errexit and keeps one Used by block" {
+  append_filler "$W/docs/wiki/components/common.md"
+  run bash -c 'set -euo pipefail; ROOT="$1"; source "$2"; wiki_fm "$1/docs/wiki/components/common.md" | jq -r .kind' \
+    _ "$W" "$REPO_ROOT/image/lib/wiki.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = component ]
+  run "$WK" -C "$W" build
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'generated:used-by:start' "$W/docs/wiki/components/common.md")" = 1 ]
+}

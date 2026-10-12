@@ -177,3 +177,9 @@ has() { grep -qxF -- "$1" <<<"$output"; }
   chk
   has '.github/instructions/api.instructions.md: hand-written file has the name of the mirror of .claude/rules/api.md; move its content into the rule and delete it'
 }
+
+@test "a CLAUDE.md larger than a pipe buffer still has its index import found" {
+  append_filler "$W/CLAUDE.md"
+  chk
+  ! has 'CLAUDE.md: no @docs/wiki/index.md line'
+}

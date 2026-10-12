@@ -31,3 +31,10 @@ wiki_repo() {
   if [ -d "$W/dot-github" ]; then mv "$W/dot-github" "$W/.github"; fi
   export W
 }
+
+# FILE gets about 300 KB of filler lines appended: more than a pipe buffer, so a reader that stops
+# early makes its writer die of SIGPIPE.
+append_filler() {
+  local i
+  for i in $(seq 100); do printf 'filler %03d %s\n' "$i" "$(printf 'x%.0s' $(seq 3000))"; done >> "$1"
+}

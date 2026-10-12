@@ -2,3 +2,4 @@
 *.log
 .agentic/.env
 .agentic/.build/
+/.worktrees/
