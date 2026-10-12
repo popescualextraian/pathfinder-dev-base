@@ -59,11 +59,12 @@ belongs: `skills/wiki/reference/routing.md`.
 
 ## Philosophy
 
-The aim is more autonomy and speed with the same quality, reached through ten pillars: the
-developer becomes architect and owner, one container with every tool, remote runs, agentic
+The aim is more autonomy and speed with the same quality, reached through seventeen pillars:
+the developer becomes architect and owner, one container with every tool, remote runs, agentic
 colleagues on a schedule, spec-driven development, a strong plan, knowledge in Markdown, an
-agent-maintained wiki, agents that test their own work, and steering instead of coding. See
-[`docs/philosophy.md`](docs/philosophy.md).
+agent-maintained wiki, agents that test their own work, steering instead of coding, guardrails,
+feedback loops, agent review, isolated parallel work, deterministic checks, context as code,
+and measurement. See [`docs/philosophy.md`](docs/philosophy.md).
 
 ## Private repositories
 

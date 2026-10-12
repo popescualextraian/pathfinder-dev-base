@@ -3,7 +3,7 @@
 What we are building for, and why the toolbox looks the way it does.
 
 The goal: each step brings more autonomy and more speed, while the quality stays the same or
-gets better. We get there through a set of pillars. Each one moves you up a level, and each one
+gets better. We get there through seventeen pillars. Each one moves you up a level, and each one
 builds on the ones before it.
 
 | # | Pillar | In this repository |
@@ -18,6 +18,13 @@ builds on the ones before it.
 | 7 | A minimal, agent-maintained wiki | in progress: the wiki skill |
 | 8 | The agent tests its own work | available: test tools and Playwright in the image |
 | 9 | Steer the agent, don't write code | dev mode now; autonomous mode planned |
+| 10 | Guardrails, not supervision | partly available: sandbox, secret handling; action gate planned |
+| 11 | Feedback loops | available locally; CI access depends on the project |
+| 12 | Review before the human | available: Superpowers code review |
+| 13 | Isolated parallel work | planned: tasks and worktrees |
+| 14 | Deterministic first | design principle, applied throughout |
+| 15 | Context as code | available: `.agentic/`, `CLAUDE.md`, skills |
+| 16 | Measure | planned: task records |
 
 ## Pillar 0: the developer becomes architect and owner
 
@@ -109,17 +116,44 @@ Your job is to steer: set the direction, review, correct. Not to type the code.
 Scale up step by step. Start with one task. The next day, continue it and add a second one in
 parallel. The limit is your attention, not the agent.
 
-## Further pillars to consider
+## Pillar 10: guardrails, not supervision
 
-These ideas come up often in agentic development. Each one fits next to a pillar above, and some
-are already part of the design.
+An agent that runs alone, at night or on a schedule, cannot be watched. It needs guardrails
+instead. The container is the sandbox. Rules that must hold are enforced in shell, not in
+prompts. Outward-facing actions, such as pushing or posting, pass a gate. No secret ends up in
+an image or a log. This is what makes pillars 2 and 3 safe.
 
-| Idea | Fits with | Status here |
-|---|---|---|
-| **Guardrails, not supervision.** The container is the sandbox; rules that must hold are enforced in shell, not prompts; outward actions pass a gate; no secrets in images or logs. This is what makes pillars 2 and 3 safe. | 1, 2, 3 | partly available (sandbox, secret handling); action gate planned |
-| **Feedback loops.** The agent sees the result of what it did: build output, CI results, logs, the running app. Fast, readable feedback beats a smarter model. | 1, 8 | available locally; CI access depends on the project |
-| **Review before the human.** A second agent reviews the work against the plan before you see it, so your review starts from a cleaner result. | 8, 9 | available as skills (Superpowers code review) |
-| **Isolated parallel work.** One task per worktree and branch, so parallel tasks never step on each other. This is what makes pillar 9's "add a second task" safe. | 9 | planned (tasks and worktrees) |
-| **Deterministic first.** A script decides wherever a script can; the model is used only for judgement. This makes runs cheaper, faster and repeatable. | 4, 8 | design principle, applied throughout |
-| **Context as code.** `CLAUDE.md`, skills and the project's `.agentic/` are versioned with the code, so the whole team gets the same agent. | 1, 6 | available |
-| **Measure.** Track time, cost, and how often a task passes without rework. Then you know whether a change to the setup helped. | all | planned (task records) |
+## Pillar 11: feedback loops
+
+The agent must see the result of what it did: build output, test results, CI, logs, the running
+app. Fast, readable feedback beats a smarter model. Every tool from pillar 1 that shows a result
+is part of the loop.
+
+## Pillar 12: review before the human
+
+Before you see the work, a second agent reviews it against the plan and the rules. Your review
+then starts from a cleaner result, and you spend your time on design, not on typos and missed
+cases.
+
+## Pillar 13: isolated parallel work
+
+One task gets one worktree and one branch. Parallel tasks never step on each other, and a task
+that goes wrong is thrown away without touching the others. This is what makes pillar 9's
+"add a second task" safe.
+
+## Pillar 14: deterministic first
+
+A script decides wherever a script can; the model is used only for judgement. Checks, builds,
+formatting and gates are scripts. Runs become cheaper, faster and repeatable, and a rule holds
+every time, not most of the time.
+
+## Pillar 15: context as code
+
+`CLAUDE.md`, skills, the wiki and the project's `.agentic/` are versioned with the code and
+reviewed like code. The whole team gets the same agent with the same knowledge, and an
+improvement made by one developer reaches everyone.
+
+## Pillar 16: measure
+
+Track time, cost and how often a task passes without rework. Then you know whether a change to
+the setup, the plan template or a skill really helped, instead of guessing.
