@@ -48,3 +48,10 @@ commit() {
   [ "$status" -eq 2 ]
   [[ "$output" != *usage:* ]]
 }
+
+@test "commands find the repository root from a subdirectory" {
+  cd "$W/src/api"
+  run "$WK" check
+  [ "$status" -eq 0 ]
+  [ "$output" = "wiki: ok" ]
+}

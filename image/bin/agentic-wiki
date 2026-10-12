@@ -8,7 +8,7 @@ AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
 source "$AGENTIC_DIR/lib/wiki.sh"
 usage() { echo "usage: agentic-wiki [-C DIR] build | sync | check | affected <git diff range>" >&2; exit 2; }
 
-ROOT="$PWD"
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 if [ "${1:-}" = -C ]; then
   [ "$#" -ge 2 ] || usage
   ROOT="$(cd "$2" && pwd)"; shift 2
