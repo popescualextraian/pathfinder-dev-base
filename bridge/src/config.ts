@@ -36,6 +36,7 @@ function token(env: NodeJS.ProcessEnv, name: string): string {
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const tokens = { task: token(env, "AGENTIC_TASK_TOKEN"), agent: token(env, "AGENTIC_AGENT_TOKEN") };
+  if (tokens.task === tokens.agent) throw new ConfigError("AGENTIC_TASK_TOKEN and AGENTIC_AGENT_TOKEN must differ");
   const agent = env.AGENTIC_AGENT ?? "claude";
   if (agent !== "claude" && agent !== "copilot") throw new ConfigError(`AGENTIC_AGENT must be claude or copilot, not ${agent}`);
   const idle = Number(env.AGENTIC_IDLE_TIMEOUT ?? "900");

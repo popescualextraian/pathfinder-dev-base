@@ -25,6 +25,24 @@ describe("checkAccess", () => {
       expect(checkAccess({ host, authorization: `Bearer ${tokens.task}` }, tokens, access)).toEqual({ scope: "task" });
     }
   });
+  it("compares case-insensitively and rejects look-alike or malformed hosts", () => {
+    const auth = `Bearer ${tokens.task}`;
+    for (const host of ["LOCALHOST:1", "[::1]", "[::1]:8765", "Bridge.Internal"]) {
+      expect(checkAccess({ host, authorization: auth }, tokens, access)).toEqual({ scope: "task" });
+    }
+    for (const host of ["[::1]evil", "localhost.evil.com", "127.0.0.1.evil", "localhost:abc", "", "a b"]) {
+      expect(checkAccess({ host, authorization: auth }, tokens, access)).toMatchObject({ status: 403 });
+    }
+    expect(checkAccess({ authorization: auth }, tokens, access)).toMatchObject({ status: 403 });
+    expect(checkAccess({ host: "evil.com", authorization: auth }, tokens, { hosts: [""], origins: [""] })).toMatchObject({ status: 403 });
+    expect(checkAccess({ host: "localhost", origin: "HTTP://UI.example.com", authorization: auth }, tokens, { hosts: [], origins: ["http://ui.example.com"] })).toEqual({ scope: "task" });
+    expect(checkAccess({ host: "localhost", origin: "", authorization: auth }, tokens, { hosts: [], origins: [""] })).toMatchObject({ status: 403 });
+  });
+  it("refuses malformed Authorization headers", () => {
+    for (const authorization of ["", "Bearer", "Bearer ", "Basic abc", tokens.task, `bearer ${tokens.task}`]) {
+      expect(checkAccess({ host: "localhost", authorization }, tokens, access)).toMatchObject({ status: 401 });
+    }
+  });
   it("refuses other hosts and unlisted origins with 403", () => {
     expect(checkAccess({ host: "evil.example.com", authorization: `Bearer ${tokens.task}` }, tokens, access)).toMatchObject({ status: 403 });
     expect(checkAccess({ host: "127.0.0.1:1", origin: "http://evil.example.com", authorization: `Bearer ${tokens.task}` }, tokens, access)).toMatchObject({ status: 403 });
@@ -56,7 +74,7 @@ describe("handle", () => {
     expect(handle(req("POST", "/prompt", "{"), t, tokens, access)).toMatchObject({ status: 400, json: { error: { message: "body is not JSON" } } });
     expect(handle(req("POST", "/prompt", { text: 3 }), t, tokens, access)).toMatchObject({ status: 400 });
     expect(handle(req("POST", "/answer", { text: "x", grant: "push" }), t, tokens, access)).toMatchObject({ status: 400 });
-    expect(handle(req("POST", "/prompt", "x".repeat(1048577)), t, tokens, access)).toMatchObject({ status: 400, json: { error: { message: "body too large" } } });
+    expect(handle(req("POST", "/prompt", "x".repeat(1048577)), t, tokens, access)).toMatchObject({ status: 413, json: { error: { message: "body too large" } } });
   });
 
   it("routes answer, cancel and stop", () => {

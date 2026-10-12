@@ -18,6 +18,13 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...base, AGENTIC_IDLE_TIMEOUT: "soon" })).toThrow("AGENTIC_IDLE_TIMEOUT");
   });
 
+  it("refuses identical task and agent tokens and drops empty list entries", () => {
+    const same = "same-token-0123456789";
+    expect(() => loadConfig({ AGENTIC_TASK_TOKEN: same, AGENTIC_AGENT_TOKEN: same })).toThrow(/AGENTIC_TASK_TOKEN.*AGENTIC_AGENT_TOKEN/);
+    expect(loadConfig({ ...base, AGENTIC_BRIDGE_HOSTS: ",a, ,", AGENTIC_BRIDGE_ORIGINS: ",," }).hosts).toEqual(["a"]);
+    expect(loadConfig({ ...base, AGENTIC_BRIDGE_ORIGINS: ",," }).origins).toEqual([]);
+  });
+
   it("parses lists and the ACP command", () => {
     const c = loadConfig({ ...base, AGENTIC_ALLOWED_ACTIONS: "push, open-pr", AGENTIC_BRIDGE_HOSTS: "a:1,b", AGENTIC_ACP_CMD: '["node","/f.mjs"]', AGENTIC_IDLE_TIMEOUT: "3" });
     expect(c.allowed).toEqual(["push", "open-pr"]);

@@ -26,7 +26,11 @@ const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const STATUS = { conflict: 409, not_found: 404, bad_request: 400 } as const;
 
 const err = (status: number, code: string, message: string): ApiResponse => ({ status, json: { error: { code, message } } });
-const hostname = (h: string): string => (h.startsWith("[") ? h.slice(0, h.indexOf("]") + 1) : h.split(":")[0] ?? "");
+// hostname: the lower-case name of a Host header or list entry without its port, or null if malformed.
+function hostname(h: string): string | null {
+  const m = /^(\[[0-9a-f:.]+\]|[a-z0-9._-]+)(?::\d{1,5})?$/i.exec(h.trim());
+  return m?.[1] ? m[1].toLowerCase() : null;
+}
 
 // same: constant-time comparison; hashing first hides the length too.
 function same(a: string, b: string): boolean {
@@ -37,8 +41,10 @@ function same(a: string, b: string): boolean {
 
 export function checkAccess(headers: Record<string, string | undefined>, tokens: Tokens, opts: AccessOptions): { scope: "task" | "agent" } | ApiResponse {
   const host = hostname(headers.host ?? "");
-  if (!LOOPBACK.has(host) && !opts.hosts.map(hostname).includes(host)) return err(403, "forbidden", "host not allowed");
-  if (headers.origin !== undefined && !opts.origins.includes(headers.origin)) return err(403, "forbidden", "origin not allowed");
+  const listed = opts.hosts.filter((h) => h.trim()).map(hostname);
+  if (host === null || (!LOOPBACK.has(host) && !listed.includes(host))) return err(403, "forbidden", "host not allowed");
+  const origins = opts.origins.filter((o) => o.trim()).map((o) => o.trim().toLowerCase());
+  if (headers.origin !== undefined && !origins.includes(headers.origin.trim().toLowerCase())) return err(403, "forbidden", "origin not allowed");
   const bearer = /^Bearer (.+)$/.exec(headers.authorization ?? "");
   if (bearer?.[1] && same(bearer[1], tokens.task)) return { scope: "task" };
   if (bearer?.[1] && same(bearer[1], tokens.agent)) return { scope: "agent" };
@@ -58,7 +64,7 @@ export function handle(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts:
   const route = `${req.method} ${req.path}`;
   if (access.scope === "agent" && route !== "POST /ask" && route !== "POST /gate") return err(403, "forbidden", "this token may only ask");
   if (!target.ready()) return err(503, "starting", "the bridge is starting");
-  if (req.body.length > MAX_BODY) return err(400, "bad_request", "body too large");
+  if (Buffer.byteLength(req.body) > MAX_BODY) return err(413, "bad_request", "body too large");
   let body: Record<string, unknown> = {};
   if (req.method === "POST" && req.body.trim()) {
     try {
