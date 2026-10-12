@@ -59,7 +59,7 @@ belongs: `skills/wiki/reference/routing.md`.
 
 ## Private repositories
 
-Repositories (`AGENTIC_REPO_URL`, `repos:`) clone over https with `GIT_TOKEN` or `GH_TOKEN` from
+The repository (`AGENTIC_REPO_URL`) clones over https with `GIT_TOKEN` or `GH_TOKEN` from
 `.agentic/.env`. Never put a token in the URL itself (`https://user:token@...`): URLs end up in
 configs and logs. `git@host:` and `ssh://git@host/` URLs are rewritten to https, because no SSH
 keys are mounted.

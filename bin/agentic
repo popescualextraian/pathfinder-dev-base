@@ -104,8 +104,7 @@ cmd_init() {
   while IFS= read -r line; do
     case "$line" in
       @TOOLS@) render_tools "$det" ;;
-      *) line="${line//@PROJECT@/$name}"; line="${line//@REPO_NAME@/$name}"
-         line="${line//@REPO_URL@/$url}"; line="${line//@GIT_HOST@/$host}"
+      *) line="${line//@PROJECT@/$name}"; line="${line//@GIT_HOST@/$host}"
          printf '%s\n' "$line" ;;
     esac
   done < "$AGENTIC_ROOT/templates/agentic.yaml.tmpl" > "$cfg/agentic.yaml"

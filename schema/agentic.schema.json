@@ -9,18 +9,6 @@
     "version": {"description": "Schema version. Always 1.", "enum": [1]},
     "project": {"description": "Project name. Names the image agentic-<project>:local and the workspace directory.", "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
     "base_image": {"description": "Image the derived image is built FROM: the base or an overlay built FROM the base.", "type": "string", "minLength": 1},
-    "repos": {
-      "description": "Repositories. The first is the primary one, at /work; the others are cloned to /workspaces/<name>.",
-      "type": "array",
-      "items": {
-        "type": "object", "required": ["name"], "additionalProperties": false,
-        "properties": {
-          "name": {"description": "Directory name.", "type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
-          "url": {"description": "Clone URL.", "type": "string"},
-          "ref": {"description": "Branch or tag to check out.", "type": "string"}
-        }
-      }
-    },
     "git": {
       "description": "Git settings.", "type": "object", "additionalProperties": false,
       "properties": {
