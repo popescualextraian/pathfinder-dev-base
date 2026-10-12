@@ -100,6 +100,8 @@ COPY image/lib /opt/agentic/lib
 COPY image/start.d /opt/agentic/start.d
 COPY image/worker.d /opt/agentic/worker.d
 COPY image/bin /opt/agentic/bin
+COPY image/task /opt/agentic/task
+COPY image/hooks.d /opt/agentic/hooks.d
 COPY derive /opt/agentic/derive
 COPY config /opt/agentic/config
 COPY schema /opt/agentic/schema

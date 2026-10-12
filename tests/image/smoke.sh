@@ -84,6 +84,11 @@ check "the project CA is trusted by curl, Node, Python and Java, and is in Chrom
 check "tmux keeps UTF-8 under a terminal" 'tmux new-session -d -s u -x 40 -y 5 "echo ●; sleep 8" && sleep 1 \
   && TERM=xterm-256color timeout 3 script -qec "tmux attach -t u" /tmp/out >/dev/null 2>&1 </dev/null; grep -q ● /tmp/out'
 
+step "with the gate on, git push is refused by the hook"
+out="$(docker run --rm -e AGENTIC_GATE=1 "$IMG" bash -lc \
+  'echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push\"}}" | bash /opt/agentic/task/hook.sh claude pretooluse; echo "rc=$?"' 2>&1)"
+[[ "$out" == *"git push is not in allowed_actions"* && "$out" == *"rc=2"* ]] || fail "gate in the image: got '$out'"
+
 step "worker mode hands over to the overlay's adapter"
 cfg_b64="$(base64 -w0 < "$proj/.agentic/agentic.yaml")"
 out="$(docker run --rm -e AGENTIC_WORKER_MODE=fake -e "AGENTIC_CONFIG_B64=$cfg_b64" "$IMG" one two 2>/dev/null)"
