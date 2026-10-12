@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end check of agentic-dev-base: an overlay, a derived project image, the container start,
 # CA trust, worker mode, a start without mounts, and doctor. Needs Docker, openssl and script(1).
-# The checks are single-quoted on purpose: they expand inside the container.
+# The checks are single-quoted on purpose: they expand inside the container. The task part touches
+# only containers labelled agentic.project=smoke-project, and raises AGENTIC_MAX_RUNNING by the
+# tasks already running on this host, so the developer's own tasks neither count nor get removed.
 # shellcheck disable=SC2016
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -131,20 +133,33 @@ step "detached tasks through bin/agentic, with the fake agent"
 export AGENTIC_TASK_DOCKER_ARGS="-v $root/bridge/test:/fake:ro -e AGENTIC_ACP_CMD=[\"node\",\"/fake/fake-agent.mjs\"] -e FAKE_AGENT_STATE=/task/home/fake -e FAKE_ASK=cli"
 ag() { (cd "$proj" && "$A" "$@"); }
 tasks="$AGENTIC_WORKSPACES/smoke-project/tasks"
+mine=(--filter label=agentic.kind=task --filter label=agentic.project=smoke-project)
+others="$(docker ps -q --filter label=agentic.kind=task --filter status=running | grep -c . || true)"
+export AGENTIC_MAX_RUNNING="$((others + ${AGENTIC_MAX_RUNNING:-3}))"
 wait_state() {
   local id="$1" s=""; shift
   for _ in $(seq 1 90); do
-    s="$(ag status "$id" --json 2>/dev/null | jq -r .state)"
+    s="$(ag status "$id" --json 2>/dev/null | jq -r .state)" || s=""
     if [[ " $* " == *" $s "* ]]; then return 0; fi
     sleep 1
   done
   echo "state of $id: $s" >&2; ag logs "$id" --bridge >&2 || true; return 1
 }
 
-trap 'docker ps -aq --filter label=agentic.kind=task | xargs -r docker rm -f >/dev/null; docker rm -f agentic-smoke-bridge >/dev/null 2>&1; rm -rf "$tmp"' EXIT
+# wait_exited ID: until the task's container has exited.
+wait_exited() {
+  for _ in $(seq 1 30); do
+    [ "$(docker inspect -f '{{.State.Status}}' "agentic-smoke-project-task-$1")" = exited ] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+trap 'docker ps -aq "${mine[@]}" | xargs -r docker rm -f >/dev/null; docker rm -f agentic-smoke-bridge >/dev/null 2>&1; rm -rf "$tmp"' EXIT
 id="$(AGENTIC_IDLE_TIMEOUT=6 ag run --allow open-pr "hello")"
 wait_state "$id" idle || fail "task: first turn"
-ag status | grep -q "^$id " || fail "task: not listed"
+out="$(ag status)"
+grep -q "^$id " <<<"$out" || fail "task: not listed"
 
 ag send "$id" "SHELL:git push origin HEAD" >/dev/null
 wait_state "$id" idle || fail "task: refused push"
@@ -157,11 +172,18 @@ ag answer "$id" Q1 "yes" --allow push >/dev/null
 wait_state "$id" idle || fail "task: answer"
 grep -q 'ran: git push origin HEAD' "$tasks/$id/transcript.md" || fail "task: the push was not retried through the gate after the grant"
 
-for _ in $(seq 1 30); do
-  [ "$(docker inspect -f '{{.State.Status}}' "agentic-smoke-project-task-$id")" = exited ] && break
-  sleep 1
-done
+ag send "$id" "ASK:Which DB?" >/dev/null
+wait_state "$id" waiting || fail "task: the second question did not make the task wait"
+wait_exited "$id" || fail "task: the container did not exit after the idle timeout"
 [ "$(ag status "$id" --json | jq -r .state)" = suspended ] || fail "task: not suspended after the idle timeout"
+out="$(ag status "$id")"
+grep -q '^Q2 (ask): Which DB?' <<<"$out" || fail "task: status of a suspended task does not list its open question"
+grep -qF "reply: agentic answer $id Q2" <<<"$out" || fail "task: status of a suspended task has no reply hint"
+if ag answer "$id" Q9 "x" >/dev/null 2>&1; then fail "task: an answer to an unknown question was accepted"; fi
+wait_exited "$id" || fail "task: a lazy boot without a prompt did not exit after the idle timeout"
+[ "$(ag status "$id" --json | jq -r .state)" = suspended ] || fail "task: a lazy boot changed the state"
+ag answer "$id" Q2 "pg" >/dev/null
+wait_state "$id" idle || fail "task: answer after suspension"
 ag send "$id" HISTORY >/dev/null
 wait_state "$id" idle || fail "task: resume after suspension"
 grep -Eq 'history: [1-9]' "$tasks/$id/transcript.md" || fail "task: the session was not loaded"
@@ -170,7 +192,8 @@ ag stop "$id" >/dev/null
 
 id2="$(AGENTIC_IDLE_TIMEOUT=300 ag run "second")"
 wait_state "$id2" idle || fail "task 2: first turn"
-ag follow "$id2" </dev/null | grep -q 'echo: second' || fail "task 2: follow"
+out="$(ag follow "$id2" </dev/null)" || fail "task 2: follow failed"
+grep -q 'echo: second' <<<"$out" || fail "task 2: follow"
 docker kill "agentic-smoke-project-task-$id2" >/dev/null
 [ "$(ag status "$id2" --json | jq -r .state)" = interrupted ] || fail "task 2: not interrupted after docker kill"
 ag resume "$id2" >/dev/null
@@ -179,7 +202,7 @@ grep -q 'echo: You were interrupted' "$tasks/$id2/transcript.md" || fail "task 2
 
 ag clean "$id" --force >/dev/null
 ag clean "$id2" --force >/dev/null
-[ -z "$(docker ps -aq --filter label=agentic.kind=task)" ] || fail "task: clean left a container"
+[ -z "$(docker ps -aq "${mine[@]}")" ] || fail "task: clean left a container"
 unset AGENTIC_TASK_DOCKER_ARGS
 
 step "doctor passes on the good setup"
