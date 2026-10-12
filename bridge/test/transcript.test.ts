@@ -20,6 +20,11 @@ describe("renderEvent", () => {
     expect(renderEvent(e("tool", { id: "t", title: "ls", kind: "execute", status: "running", output_tail: null }))).toBeNull();
   });
 
+  it("uses a longer fence when the output contains backticks", () => {
+    const out = renderEvent(e("tool", { id: "t", title: "cat", kind: "execute", status: "done", output_tail: "a\n```\nb" }));
+    expect(out).toBe("\n▸ cat — done\n````\na\n```\nb\n````\n");
+  });
+
   it("calls out questions, answers, gate refusals, states and errors", () => {
     expect(renderEvent(e("question", { id: "Q1", source: "ask", text: "Which DB?", options: ["pg", "sqlite"], recommendation: "pg" })))
       .toBe("\n**Question Q1** (ask): Which DB? Options: pg, sqlite. Recommended: pg.\n");

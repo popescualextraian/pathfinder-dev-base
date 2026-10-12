@@ -13,7 +13,10 @@ export function renderEvent(e: TaskEvent): string | null {
       if (d.status !== "done" && d.status !== "failed") return null;
       const head = `\n▸ ${str(d.title)} — ${d.status}\n`;
       const tail = str(d.output_tail).split("\n").filter((l, i, a) => l !== "" || i < a.length - 1).slice(-10).join("\n");
-      return tail ? `${head}\`\`\`\n${tail}\n\`\`\`\n` : head;
+      if (!tail) return head;
+      const run = Math.max(0, ...(tail.match(/`+/g) ?? []).map((m) => m.length));
+      const fence = "`".repeat(Math.max(3, run + 1));
+      return `${head}${fence}\n${tail}\n${fence}\n`;
     }
     case "question": {
       const opts = Array.isArray(d.options) && d.options.length ? ` Options: ${d.options.join(", ")}.` : "";

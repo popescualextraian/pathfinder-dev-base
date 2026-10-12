@@ -4,6 +4,7 @@ import {
   renameSync, writeSync,
 } from "node:fs";
 import { join } from "node:path";
+import { redactDeep } from "./redact.js";
 import type { Question, TaskEvent, TaskRecord } from "./types.js";
 
 export class StoreError extends Error {}
@@ -12,6 +13,7 @@ export class Store {
   private seq: number;
 
   constructor(readonly dir: string, private readonly redact: (s: string) => string = (s) => s) {
+    for (const f of ["events.jsonl", "questions.jsonl", "transcript.md"]) this.terminateLine(f);
     this.seq = this.readJsonl<TaskEvent>("events.jsonl").reduce((m, e) => Math.max(m, e.seq ?? 0), 0);
   }
 
@@ -46,7 +48,7 @@ export class Store {
     const tmp = `${p}.tmp`;
     const fd = openSync(tmp, "w", 0o644);
     try {
-      writeSync(fd, this.redact(JSON.stringify(r, null, 1)) + "\n");
+      writeSync(fd, JSON.stringify(redactDeep(r, this.redact), null, 1) + "\n");
       fsyncSync(fd);
     } finally {
       closeSync(fd);
@@ -55,10 +57,10 @@ export class Store {
   }
 
   appendEvent(e: Omit<TaskEvent, "seq">): TaskEvent {
-    const line = this.redact(JSON.stringify({ seq: this.seq + 1, ...e }));
-    appendFileSync(this.path("events.jsonl"), line + "\n");
+    const out = redactDeep({ seq: this.seq + 1, ...e }, this.redact) as TaskEvent;
+    appendFileSync(this.path("events.jsonl"), JSON.stringify(out) + "\n");
     this.seq += 1;
-    return JSON.parse(line) as TaskEvent;
+    return out;
   }
 
   readEvents(since: number, limit = 1000): TaskEvent[] {
@@ -66,7 +68,7 @@ export class Store {
   }
 
   appendQuestion(q: Question): void {
-    appendFileSync(this.path("questions.jsonl"), this.redact(JSON.stringify(q)) + "\n");
+    appendFileSync(this.path("questions.jsonl"), JSON.stringify(redactDeep(q, this.redact)) + "\n");
   }
 
   readQuestions(): Question[] {
@@ -84,6 +86,14 @@ export class Store {
     return existsSync(p) ? readFileSync(p, "utf8") : null;
   }
 
+  // A torn tail without a newline must not swallow the next append.
+  private terminateLine(name: string): void {
+    const p = this.path(name);
+    if (!existsSync(p)) return;
+    const b = readFileSync(p);
+    if (b.length > 0 && b[b.length - 1] !== 0x0a) appendFileSync(p, "\n");
+  }
+
   private readJsonl<T>(name: string): T[] {
     const p = this.path(name);
     if (!existsSync(p)) return [];
@@ -91,7 +101,8 @@ export class Store {
     for (const line of readFileSync(p, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
-        out.push(JSON.parse(line) as T);
+        const v: unknown = JSON.parse(line);
+        if (v !== null && typeof v === "object" && !Array.isArray(v)) out.push(v as T);
       } catch {
         // a torn or corrupt line is skipped (spec §5.2)
       }

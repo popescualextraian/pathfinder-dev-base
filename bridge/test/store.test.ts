@@ -58,6 +58,33 @@ describe("Store", () => {
     expect(readFileSync(join(dir, "state.json"), "utf8")).toBe("{");
   });
 
+  it("starts a fresh line after a torn tail without newline", () => {
+    writeFileSync(join(dir, "events.jsonl"), '{"seq":1,"ts":"t","task":"T-1","session":null,"agent":"claude","type":"state","data":{}}\n{"seq":2,"ts"');
+    writeFileSync(join(dir, "questions.jsonl"), '{"id":"Q');
+    const s = new Store(dir);
+    expect(s.appendEvent(ev()).seq).toBe(2);
+    expect(s.readEvents(0).map((e) => e.seq)).toEqual([1, 2]);
+    s.appendQuestion({ id: "Q9", source: "ask", text: "x", options: [], recommendation: null, asked: "t", status: "open" });
+    expect(s.readQuestions().map((q) => q.id)).toEqual(["Q9"]);
+  });
+
+  it("skips lines that parse to non-objects", () => {
+    writeFileSync(join(dir, "events.jsonl"), 'null\n3\n[1]\n');
+    const s = new Store(dir);
+    expect(s.readEvents(0)).toEqual([]);
+    expect(s.appendEvent(ev()).seq).toBe(1);
+  });
+
+  it("redacts secrets containing quotes or backslashes", () => {
+    const secret = 'pa"ss\\word-12345';
+    const s = new Store(dir, makeRedactor([secret]));
+    const e = s.appendEvent({ ...ev("message"), data: { text: `x ${secret} y` } });
+    expect(e.data.text).toBe("x [redacted] y");
+    expect(readFileSync(join(dir, "events.jsonl"), "utf8")).not.toContain("word-12345");
+    s.writeRecord(record({ summary: secret }));
+    expect(s.readRecord().summary).toBe("[redacted]");
+  });
+
   it("keeps the last line per question id", () => {
     const s = new Store(dir);
     const q: Question = { id: "Q1", source: "ask", text: "Which DB?", options: [], recommendation: null, asked: "t", status: "open" };
@@ -73,6 +100,8 @@ describe("Store", () => {
     expect(e.data.text).toBe("use [redacted]");
     s.writeRecord(record({ inbox: [{ kind: "prompt", text: "sk-ant-api03-0123456789abcdef" }] }));
     expect(readFileSync(join(dir, "state.json"), "utf8")).not.toContain("sk-ant-api03");
+    s.appendQuestion({ id: "Q1", source: "ask", text: "key task-token-0123456789?", options: [], recommendation: null, asked: "t", status: "open" });
+    expect(s.readQuestions()[0]?.text).toBe("key [redacted]?");
     s.appendTranscript("token task-token-0123456789\n");
     expect(readFileSync(join(dir, "transcript.md"), "utf8")).toBe("token [redacted]\n");
   });
