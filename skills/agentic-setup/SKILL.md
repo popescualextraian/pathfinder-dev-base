@@ -102,3 +102,5 @@ they look like a mistaken copy of one of the files above.
    and `on-start.sh` do not); list every key you added with `agentic-env` and which ones still
    need a value from the user (never the values); and tell the user
    to run, on the host, `agentic build` (if needed) and `agentic doctor`.
+   If the project has no `docs/wiki/`, suggest running `/wiki seed` next, which writes the wiki,
+   a lean CLAUDE.md and path rules.

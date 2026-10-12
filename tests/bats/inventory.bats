@@ -36,3 +36,9 @@ setup() {
   grep -qx -- '- superpowers@claude-plugins-official' <<<"$output"
   grep -qx -- '- agentic-setup' <<<"$output"
 }
+
+@test "lists agentic-wiki among the commands" {
+  printf '#!/bin/sh\nexit 2\n' > "$B/agentic-wiki"; chmod +x "$B/agentic-wiki"
+  PATH="$B:$PATH" run "$I"
+  grep -qx -- '- agentic-wiki' <<<"$output"
+}

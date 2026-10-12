@@ -25,10 +25,10 @@ echo
 echo "## Commands"
 for c in git gh glab aws az docker node npm python3 uv pipx java mvn gradle terraform tflint checkov \
          kubectl helm go dotnet psql jq yq rg tmux make claude copilot ccusage graphify mcp-atlassian \
-         playwright-mcp mcp-server-playwright Xvfb certutil; do
+         playwright-mcp mcp-server-playwright Xvfb certutil agentic-wiki; do
   command -v "$c" >/dev/null 2>&1 || continue
   case "$c" in
-    Xvfb|certutil|mcp-server-playwright) echo "- $c" ;;
+    Xvfb|certutil|mcp-server-playwright|agentic-wiki) echo "- $c" ;;
     *) v="$(version "$c")"; echo "- $c${v:+: $v}" ;;
   esac
 done

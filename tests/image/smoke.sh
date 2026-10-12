@@ -19,6 +19,10 @@ docker build -q -t agentic-smoke-overlay:local "$root/tests/fixtures/smoke-overl
 step "project repository, throwaway CA and server certificate (never committed)"
 proj="$tmp/smoke-project"
 cp -r "$root/tests/fixtures/smoke-project" "$proj"
+cp -r "$root/tests/fixtures/wiki/good" "$proj/wiki-demo"
+mv "$proj/wiki-demo/CLAUDE.fixture.md" "$proj/wiki-demo/CLAUDE.md"
+mv "$proj/wiki-demo/dot-claude" "$proj/wiki-demo/.claude"
+mv "$proj/wiki-demo/dot-github" "$proj/wiki-demo/.github"
 git -C "$proj" init -q
 git -C "$proj" add -A
 git -C "$proj" -c user.name=smoke -c user.email=smoke@example.com commit -qm init
@@ -58,6 +62,9 @@ check "overlay step, overlay defaults and all skills" 'test -f ~/.overlay-step-r
   && [ "$(jq -r .git.host ~/.agentic/config.json)" = localhost ] \
   && test -f ~/.claude/skills/agentic-setup/SKILL.md && test -f ~/.claude/skills/overlay-skill/SKILL.md \
   && test -f ~/.claude/skills/smoke-skill/SKILL.md && test -f ~/.copilot/skills/smoke-skill/SKILL.md'
+check "agentic-wiki and the /wiki skill" 'agentic-wiki -C /work/wiki-demo check \
+  && test -f ~/.claude/skills/wiki/SKILL.md && test -f ~/.copilot/skills/wiki/SKILL.md \
+  && grep -qx -- "- agentic-wiki" /opt/agentic/inventory.txt'
 check "on-start hook ran" 'test -f ~/.on-start-ran'
 check "MCP servers match the config" 'jq -e ".mcpServers.playwright.args | index(\"--headless\")" ~/.claude.json \
   && jq -e ".mcpServers.graphify" ~/.claude.json \

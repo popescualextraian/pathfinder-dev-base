@@ -3,8 +3,8 @@
 A container toolbox for agentic development. One base image with the tools agents need (git,
 Claude Code, Copilot CLI, AWS and Azure CLI, gh, Java 21 and Maven, Node 22, Python 3.12, Docker
 CLI, Playwright with Chromium) and recommended extras (Atlassian, Playwright and Graphify MCP
-servers, the Superpowers plugin, the `/agentic-setup` skill). Each project adds its own layer
-from `.agentic/agentic.yaml`.
+servers, the Superpowers plugin, the `/agentic-setup` and `/wiki` skills). Each project adds its
+own layer from `.agentic/agentic.yaml`.
 
 Built for my own daily use first, and shared so anyone can use it: no company-specific pieces,
 MIT licensed.
@@ -48,6 +48,14 @@ another directory.
    - `agentic shell [CMD...]` → a throwaway container, removed on exit.
 7. **Check.** `agentic doctor` → start steps, tools, logins, MCP servers and certificates, each
    with `ok` or what is wrong (for example `ok claude`).
+
+## Project wiki
+
+`/wiki seed` writes what agents cannot read from the code into `docs/wiki/`: components and their
+boundaries, decisions, contracts, concepts, flows and the shared code to reuse. It also writes a
+lean CLAUDE.md that imports the wiki index, and path rules. `/wiki update` keeps the pages true
+after a change. `agentic-wiki check` validates all of it. The skill decides where each statement
+belongs: `skills/wiki/reference/routing.md`.
 
 ## Private repositories
 

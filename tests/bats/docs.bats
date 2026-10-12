@@ -42,3 +42,7 @@ load helpers
   grep -qF 'AGENTIC_BUILD_CA_DIR' "$f"
   grep -qF 'Never put a token in the URL' "$f"
 }
+
+@test "the setup hand-over suggests /wiki seed when the project has no wiki" {
+  grep -qF '/wiki seed' "$REPO_ROOT/skills/agentic-setup/SKILL.md"
+}
