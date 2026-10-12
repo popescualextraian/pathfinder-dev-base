@@ -16,6 +16,9 @@ running coding agents in containers. It provides a base image, configuration ski
 core skills, agent scheduling, ACP support, automatic task execution and more. Agent
 scheduling, ACP and automatic task execution are planned, not yet available.
 
+Why it is built this way: seventeen pillars, such as "one container with every tool" and "steer
+the agent, don't write code". See the [philosophy](docs/philosophy.md).
+
 ## Prerequisites
 
 bash, git and Docker. Clone this repository once and put `bin/agentic` on your PATH.
