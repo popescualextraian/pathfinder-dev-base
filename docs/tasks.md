@@ -36,6 +36,9 @@ failure.
 
 `status` shows the task's state; a task recorded as active whose container is gone shows
 `interrupted`, and one whose container state cannot be read (Docker failed) shows `unknown`.
+`status ID` lists the open questions and the `reply:` hint also when the container has exited; it
+then reads them from the task files (`state.json`, `questions.jsonl`). `status ID --json` prints
+one shape whether or not the bridge is live: the status object (see The status object).
 
 `clean` refuses a running task, and a task whose worktree has uncommitted changes or commits on no
 remote branch, unless `--force` (which stops a running task first). It also refuses when it cannot
@@ -62,7 +65,9 @@ or answer (the agent is respawned and the session loaded); `stopped` is final.
 - **Start.** Without `state.json` the bridge creates the record, spawns the agent, opens a
   session, applies bypass and sends `prompt.md` (else `AGENTIC_PROMPT`); `starting → running`.
   With a record the bridge starts lazily: it serves the API and spawns nothing until a prompt or
-  answer arrives, so a plain `docker start` spends no tokens. A record in `starting`, `running`,
+  answer arrives, so a plain `docker start` spends no tokens. If nothing wakes it within
+  `AGENTIC_IDLE_TIMEOUT`, the bridge exits 0 with the state unchanged and the container exits
+  again (also after a refused request, such as an answer to an unknown question). A record in `starting`, `running`,
   `waiting` or `idle` found at start is an unclean end: the bridge sets `interrupted` and waits.
 - **Turn end.** `session/prompt` returns. With an open question the task is `waiting`, else
   `idle`. The summary is the agent's text after its last tool call in the turn (300 characters at most). If the inbox is
@@ -82,8 +87,12 @@ or answer (the agent is respawned and the session loaded); `stopped` is final.
 - **Resume.** The host starts the container (`docker start`), waits for `GET /status`, then sends.
   The bridge spawns the agent and calls `session/load` with the stored session id; history replayed
   before the load returns is dropped. If the session is missing, the bridge opens a new session
-  seeded with `prompt.md`, the questions and answers, and `git log <base>..HEAD` of `/work`, and
+  seeded with `prompt.md`, the questions and answers, and `git log --oneline -20` of `/work`, and
   emits an `error` event saying so.
+- **Removed container.** A task whose container was removed (for example by `docker container
+  prune`) cannot be resumed by the CLI in version 1: `send`, `answer`, `resume`, `stop` and
+  `takeover` of a task that is not stopped refuse with `has no container`. The task files are
+  kept, and `clean` still works.
 - **Interrupted.** `agentic resume ID` starts the container and sends `You were interrupted. Check
   git status and continue.`
 - **Cancel.** Accepted only while a prompt is outstanding: in `running`, or in `waiting` on a
@@ -92,7 +101,7 @@ or answer (the agent is respawned and the session loaded); `stopped` is final.
   on an `agentic-ask` question after its turn ended cannot be cancelled (answer it, or stop it).
   The task stays as it is until the prompt returns `cancelled`, then follows the turn-end rule.
   Repeating a cancel is harmless.
-- **Stop.** Cancels a running turn, closes the session where supported, ends the agent, sets
+- **Stop.** Cancels a running turn, ends the agent (no `session/close` is sent), sets
   `stopped`, `stopped_by_user = true`, and the bridge exits 0. No restart policy.
 - **Failed.** The agent process exits outside a stop or suspension, or an ACP call fails (a
   rejected prompt included): `failed` with the reason; the bridge exits 1 and the container stays
@@ -126,7 +135,10 @@ Threat model: the bridge and the agent run as one user in one container, so the 
 the bridge's environment or edit `state.json`. The tokens keep other host processes and browsers
 (DNS rebinding) out; they do not contain the agent. The gate guards against slips, not a hostile
 agent. Anyone with access to the Docker socket can read the tokens (`docker inspect`) and is root
-on the host anyway.
+on the host anyway. Each changed clone's `.git` is mounted read-write, so the agent could plant a
+hook or `core.fsmonitor` there; host git ignores clone hooks and fsmonitor: `bin/agentic` runs
+every git command on task clones and worktrees with `-c core.hooksPath=/dev/null -c
+core.fsmonitor=false`.
 
 ### Routes
 
@@ -150,7 +162,9 @@ The agent token on any other route gets 403; an unknown route gets 404. Grants: 
 ### The status object
 
 `state.json` (see Files) without `inbox` items (their count instead) plus `questions`, the open
-ones: `{id, source, text, options, recommendation, asked}`.
+ones: `{id, source, text, options, recommendation, asked}`. `agentic status ID --json` prints it
+from the bridge when it is live, else builds the same object from the task files with the state
+derived as described under `status`.
 
 ## Events
 
@@ -251,7 +265,8 @@ The gate runs as a `PreToolUse` hook (`hook.sh`, installed by start step `45-hoo
   `{"permissionDecision":"deny","permissionDecisionReason":"<reason>"}`, exit 0. Reason: `agentic
   gate: <why>; not allowed in this task. Use agentic-ask if you need it.`
 - **Report.** On a block the gate POSTs `{rule, command}` to `$AGENTIC_BRIDGE_URL/gate` with the
-  agent token, best-effort (1 s timeout), skipped without a bridge. The bridge emits a `gate` event.
+  agent token (in a mode 600 header file, never on a command line; `--noproxy '*'`), best-effort
+  (1 s timeout), skipped without a bridge. The bridge emits a `gate` event.
 - **Ask-guard.** Blocks `AskUserQuestion` and `ExitPlanMode` (Claude) and `ask_user` and
   `exit_plan_mode` (Copilot) with `Use agentic-ask; nobody can answer a chooser here.`
 
@@ -294,7 +309,7 @@ Read by the image and the host:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AGENTIC_GATE` | `1` for `agentic-bridge` and worker mode, else `0` | installs the hooks and turns the gate on |
+| `AGENTIC_GATE` | `1` for `agentic-bridge` and worker mode, else `0` | installs the hooks and turns the gate on; a value in `.agentic/.env` reaches every task and wins, so `run` warns when it is not `1` |
 | `AGENTIC_GATE_PROTECTED` | `prod production` | words that always block a deploy-like command |
 | `AGENTIC_MAX_RUNNING` | `3` | cap on running task containers per host; `run`, and any verb that has to start a task's container (`send`, `answer`, `resume`, `stop`, `takeover`), refuse at the cap; a verb on an already running container does not count |
 | `AGENTIC_WORKSPACES` | `~/agentic-workspaces` | host directory holding the per-project workspaces (see Files) |
