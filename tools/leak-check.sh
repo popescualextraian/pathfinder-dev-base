@@ -35,7 +35,10 @@ if [ "${#existing[@]}" -gt 0 ]; then
   rc=0
   hits="$(grep -I -n -i -F -f <(printf '%s\n' "$terms") -- "${existing[@]}")" || rc=$?
   case "$rc" in
-    0) printf '%s\n' "$hits" | sed 's/^/leak-check: /'; fail=1 ;;
+    0)
+      # A base64 lockfile integrity hash can contain a short term by chance: not a finding.
+      hits="$(printf '%s\n' "$hits" | grep -vE '(^|/)package-lock\.json:[0-9]+: +"integrity": "sha512-[A-Za-z0-9+/=]+",?$' || true)"
+      if [ -n "$hits" ]; then printf '%s\n' "$hits" | sed 's/^/leak-check: /'; fail=1; fi ;;
     1) ;;
     *) echo "leak-check: grep failed (exit $rc)" >&2; fail=1 ;;
   esac

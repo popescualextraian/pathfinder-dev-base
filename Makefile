@@ -5,14 +5,21 @@ SHELL_SOURCES = $(wildcard bin/agentic lib/host/*.sh image/*.sh image/lib/*.sh i
 
 .PHONY: test lint build smoke
 
-test:
-	bats -r tests/bats
+BRIDGE_DEPS = bridge/node_modules/.package-lock.json
 
-lint:
+$(BRIDGE_DEPS): bridge/package-lock.json
+	cd bridge && npm ci
+
+test: $(BRIDGE_DEPS)
+	bats -r tests/bats
+	cd bridge && npm test
+
+lint: $(BRIDGE_DEPS)
 	shellcheck -x $(SHELL_SOURCES)
 	jq empty schema/agentic.schema.json
 	tools/gen-config-docs.sh --check
 	tools/leak-check.sh
+	cd bridge && npm run lint
 
 build:
 	bin/agentic build-base

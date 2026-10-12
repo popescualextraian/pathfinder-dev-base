@@ -11,7 +11,9 @@ load helpers
 }
 
 @test "--check fails when docs/configuration.md is stale" {
-  cp -r "$REPO_ROOT" "$BATS_TEST_TMPDIR/copy"
+  # copy the repo without the bridge's node_modules (hundreds of MB)
+  mkdir "$BATS_TEST_TMPDIR/copy"
+  tar -C "$REPO_ROOT" --exclude=./bridge/node_modules -cf - . | tar -C "$BATS_TEST_TMPDIR/copy" -xf -
   echo stale >> "$BATS_TEST_TMPDIR/copy/docs/configuration.md"
   run bash "$BATS_TEST_TMPDIR/copy/tools/gen-config-docs.sh" --check
   [ "$status" -eq 1 ]
