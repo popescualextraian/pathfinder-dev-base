@@ -31,3 +31,18 @@ setup() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"is not writable"* ]]
 }
+
+@test "a task directory with spaces is written quoted and a failing mkdir stops the start" {
+  [ "$(id -u)" != 0 ] || skip "root can write anywhere"
+  export AGENTIC_TASK_DIR="$BATS_TEST_TMPDIR/my task"; mkdir -p "$AGENTIC_TASK_DIR/home"
+  run bash "$S"
+  [ "$status" -eq 0 ]
+  ( source "$AGENTIC_STATE/env"; [ "$CLAUDE_CONFIG_DIR" = "$AGENTIC_TASK_DIR/home/claude" ] )
+  rmdir "$AGENTIC_TASK_DIR/home/claude" "$AGENTIC_TASK_DIR/home/copilot"; chmod 500 "$AGENTIC_TASK_DIR/home"
+  : > "$AGENTIC_STATE/env"
+  run bash "$S"
+  chmod 700 "$AGENTIC_TASK_DIR/home"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot create"* ]]
+  [ ! -s "$AGENTIC_STATE/env" ]
+}

@@ -51,3 +51,35 @@ STUB
   ASK_BODY='{"error":{"code":"conflict","message":"task is stopped"}}' ASK_CODE=409 run bash "$ASK" "x"
   [ "$status" -eq 1 ]; [ "$output" = "agentic-ask: task is stopped" ]
 }
+
+@test "values starting with a dash work as question and options" {
+  run bash "$ASK" "-1 or more?" --option -1 --option "--x" --recommend -1
+  [ "$status" -eq 0 ]
+  [ "$(jq -c . "$BATS_TEST_TMPDIR/curl.body")" = '{"text":"-1 or more?","options":["-1","--x"],"recommend":"-1"}' ]
+}
+
+@test "a refusal with an empty body names the HTTP code" {
+  ASK_BODY='' ASK_CODE=502 run bash "$ASK" "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"HTTP 502"* ]]
+}
+
+@test "a 401 reports the bridge's message" {
+  ASK_BODY='{"error":{"code":"unauthorized","message":"bad token"}}' ASK_CODE=401 run bash "$ASK" "x"
+  [ "$status" -eq 1 ]; [ "$output" = "agentic-ask: bad token" ]
+}
+
+@test "a created answer without an id is an error" {
+  ASK_BODY='{}' ASK_CODE=201 run bash "$ASK" "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"without a question id"* ]]
+}
+
+@test "an unreachable bridge is reported" {
+  printf '#!/usr/bin/env bash\ncat >/dev/null; exit 7\n' > "$BATS_TEST_TMPDIR/bin/curl"
+  run bash "$ASK" "x"
+  [ "$status" -eq 1 ]; [ "$output" = "agentic-ask: the task bridge is not reachable" ]
+}
+
+@test "curl bypasses any proxy" {
+  bash "$ASK" "x"
+  grep -qx -- '--noproxy' "$BATS_TEST_TMPDIR/curl.args"
+}

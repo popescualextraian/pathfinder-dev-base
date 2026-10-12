@@ -91,6 +91,7 @@ out="$(docker run --rm -e AGENTIC_GATE=1 "$IMG" bash -lc \
 
 step "the bridge runs a task to idle with the fake agent; homes live on the task volume"
 tk="$tmp/task-bridge"; mkdir -p "$tk"; printf 'hello\n' > "$tk/prompt.md"
+docker rm -f agentic-smoke-bridge >/dev/null 2>&1 || true
 docker run -d --name agentic-smoke-bridge -p 127.0.0.1::8765 -v "$tk:/task" -v "$root/bridge/test:/fake:ro" \
   -e AGENTIC_TASK_TOKEN=smoke-task-token-0123456789 -e AGENTIC_AGENT_TOKEN=smoke-agent-token-0123456789 \
   -e 'AGENTIC_ACP_CMD=["node","/fake/fake-agent.mjs"]' -e FAKE_AGENT_STATE=/task/home/fake "$IMG" agentic-bridge >/dev/null
@@ -106,8 +107,11 @@ done
 [ "$(jq -r .summary "$tk/state.json")" = "echo: hello" ] || fail "bridge task: summary"
 [ -d "$tk/home/claude" ] || fail "bridge task: Claude home not on /task"
 [ -d "$tk/home/copilot" ] || fail "bridge task: harness homes not on /task"
-docker exec agentic-smoke-bridge bash -lc '. ~/.agentic/env; [ "$CLAUDE_CONFIG_DIR" = /task/home/claude ] && { [ -L /task/home/claude/plugins ] || [ -d /task/home/claude/plugins ]; }' \
-  || fail "bridge task: plugins not linked into the task's Claude home"
+# PID 1 is the bridge (the launcher execs node): its own environment must carry the homes
+docker exec agentic-smoke-bridge sh -c "tr '\\0' '\\n' < /proc/1/environ" > "$tmp/bridge.env"
+grep -qx 'CLAUDE_CONFIG_DIR=/task/home/claude' "$tmp/bridge.env" || fail "bridge task: the bridge has no CLAUDE_CONFIG_DIR"
+grep -qx 'COPILOT_HOME=/task/home/copilot' "$tmp/bridge.env" || fail "bridge task: the bridge has no COPILOT_HOME"
+[ -L "$tk/home/claude/plugins" ] || fail "bridge task: plugins not linked into the task's Claude home"
 docker exec agentic-smoke-bridge bash -lc 'test "$COPILOT_AUTO_UPDATE" = false && agentic-ask x 2>&1 | grep -q "only inside a task"' \
   || fail "bridge task: image env"
 docker rm -f agentic-smoke-bridge >/dev/null

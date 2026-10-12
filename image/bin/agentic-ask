@@ -17,12 +17,19 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$text" ] || die "$usage"
 
-body="$(jq -cn --arg t "$text" --arg r "$rec" \
-  '{text: $t, options: $ARGS.positional, recommend: (if $r == "" then null else $r end)}' --args "${opts[@]}")"
+# Options go in as a JSON array built from NUL-separated text, so a value may start with "-"
+optjson="$(if [ "${#opts[@]}" -gt 0 ]; then printf '%s\0' "${opts[@]}"; fi | jq -Rs 'split("\u0000")[:-1]')"
+body="$(jq -cn --arg t "$text" --arg r "$rec" --argjson o "$optjson" \
+  '{text: $t, options: $o, recommend: (if $r == "" then null else $r end)}')"
 hdr="$(mktemp)"; trap 'rm -f "$hdr"' EXIT
 printf 'Authorization: Bearer %s\n' "$AGENTIC_AGENT_TOKEN" > "$hdr"
-resp="$(printf '%s' "$body" | curl -sS -m 10 -X POST -H "@$hdr" -H 'Content-Type: application/json' \
+resp="$(printf '%s' "$body" | curl -sS -m 10 --noproxy '*' -X POST -H "@$hdr" -H 'Content-Type: application/json' \
   --data-binary @- -w '\n%{http_code}' "$AGENTIC_BRIDGE_URL/ask")" || die "the task bridge is not reachable"
 code="${resp##*$'\n'}"; json="${resp%$'\n'*}"
-[ "$code" = 201 ] || die "$(jq -r '.error.message // "the bridge refused the question"' <<<"$json" 2>/dev/null || echo "HTTP $code")"
-echo "Recorded $(jq -r .id <<<"$json"). Continue with work that does not depend on it; when nothing else can move, end your turn."
+if [ "$code" != 201 ]; then
+  reason="$(jq -r '.error.message // empty' <<<"$json" 2>/dev/null || true)"
+  die "${reason:-the bridge refused the question (HTTP $code)}"
+fi
+id="$(jq -r '.id // empty' <<<"$json" 2>/dev/null || true)"
+[ -n "$id" ] || die "the bridge answered without a question id"
+echo "Recorded $id. Continue with work that does not depend on it; when nothing else can move, end your turn."

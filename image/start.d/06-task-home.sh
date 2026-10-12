@@ -7,5 +7,5 @@ if [ -z "${AGENTIC_TASK_DIR:-}" ] && ! mountpoint -q /task 2>/dev/null; then exi
 task="${AGENTIC_TASK_DIR:-/task}"
 if [ ! -w "$task" ]; then say "$task is not writable by $(id -un); fix the owner of the task volume"; exit 1; fi
 [ "${1:-}" = --check ] && exit 0
-mkdir -p "$task/home/claude" "$task/home/copilot"
-printf 'export CLAUDE_CONFIG_DIR=%s\nexport COPILOT_HOME=%s\n' "$task/home/claude" "$task/home/copilot" >> "$AGENTIC_STATE/env"
+if ! mkdir -p "$task/home/claude" "$task/home/copilot"; then say "cannot create the harness homes under $task/home"; exit 1; fi
+printf 'export CLAUDE_CONFIG_DIR=%q\nexport COPILOT_HOME=%q\n' "$task/home/claude" "$task/home/copilot" >> "$AGENTIC_STATE/env"

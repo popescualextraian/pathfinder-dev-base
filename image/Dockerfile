@@ -79,10 +79,6 @@ RUN PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm install -g --prefix /opt/agenti
  && find /opt/agentic/npm/lib/node_modules/ccusage -path '*/bin/ccusage' -type f -exec chmod 755 {} + \
  && ln -s playwright-mcp /usr/local/bin/mcp-server-playwright
 
-# The task bridge's dependencies (cached apart from its sources)
-COPY bridge/package.json bridge/package-lock.json /opt/agentic/bridge/
-RUN cd /opt/agentic/bridge && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm ci --no-audit --no-fund
-
 # Python MCP servers and Graphify, as uv tools shared by every user
 RUN UV_TOOL_DIR=/opt/agentic/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --python ${PYTHON_BASE} mcp-atlassian \
  && UV_TOOL_DIR=/opt/agentic/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --python ${PYTHON_BASE} 'graphifyy[mcp]' \
@@ -92,6 +88,17 @@ RUN UV_TOOL_DIR=/opt/agentic/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool ins
 RUN mkdir -p /ms-playwright \
  && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH node /opt/agentic/npm/lib/node_modules/@playwright/mcp/node_modules/playwright/cli.js install --with-deps chromium \
  && rm -rf /var/lib/apt/lists/*
+
+# The task bridge: installed, built and pruned in one layer, so no development dependency is kept.
+# The adapter's bundled Claude binary is an optional dependency and not needed (the bridge points it
+# at the image's claude).
+COPY bridge/package.json bridge/package-lock.json bridge/tsconfig.json bridge/tsconfig.build.json /opt/agentic/bridge/
+COPY bridge/src /opt/agentic/bridge/src
+RUN cd /opt/agentic/bridge && export PATH=/opt/node/${NODE_HARNESS}/bin:$PATH \
+ && npm ci --no-audit --no-fund && npm run build \
+ && npm prune --omit=dev --omit=optional && npm cache clean --force \
+ && printf '#!/bin/sh\nPATH=/opt/node/%s/bin:$PATH exec node /opt/agentic/bridge/dist/main.js "$@"\n' "${NODE_HARNESS}" > /usr/local/bin/agentic-bridge \
+ && chmod 755 /usr/local/bin/agentic-bridge
 
 # User dev, mount points and the container marker
 RUN (userdel -r ubuntu 2>/dev/null || true) \
@@ -115,14 +122,6 @@ COPY templates /opt/agentic/templates
 COPY --chmod=755 image/entrypoint.sh /opt/agentic/entrypoint.sh
 COPY image/profile.d/agentic.sh /etc/profile.d/agentic.sh
 COPY image/tmux.conf /etc/tmux.conf
-COPY bridge/tsconfig.json bridge/tsconfig.build.json /opt/agentic/bridge/
-COPY bridge/src /opt/agentic/bridge/src
-# Built here, then only production dependencies stay; the adapter's bundled Claude binary is an
-# optional dependency and not needed (the bridge points it at the image's claude).
-RUN cd /opt/agentic/bridge && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm run build \
- && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm prune --omit=dev --omit=optional \
- && printf '#!/bin/sh\nPATH=/opt/node/%s/bin:$PATH exec node /opt/agentic/bridge/dist/main.js "$@"\n' "${NODE_HARNESS}" > /usr/local/bin/agentic-bridge \
- && chmod 755 /usr/local/bin/agentic-bridge
 RUN ln -sf /opt/agentic/bin/* /usr/local/bin/ \
  && printf '%s\n' '[ -f /etc/profile.d/agentic.sh ] && . /etc/profile.d/agentic.sh' \
       '[ -f "$HOME/.agentic/env" ] && . "$HOME/.agentic/env"' >> /etc/bash.bashrc \
