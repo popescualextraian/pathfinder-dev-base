@@ -6,6 +6,9 @@ CLI, Playwright with Chromium) and recommended extras (Atlassian, Playwright and
 servers, the Superpowers plugin, the `/agentic-setup` skill). Each project adds its own layer
 from `.agentic/agentic.yaml`.
 
+Built for my own daily use first, and shared so anyone can use it: no company-specific pieces,
+MIT licensed.
+
 ## Direction
 
 The project is heading towards **pathfinder-dev-base**: a generic, company-neutral toolbox for
@@ -23,15 +26,28 @@ so Java, Node, Python and Chromium trust it too. The files in `~/.agentic/ca/` m
 `*.crt` and hold PEM content; others are ignored. `AGENTIC_BUILD_CA_DIR` points the build at
 another directory.
 
-## Quick start
+## Usage
 
-    cd your-project
-    agentic init          # writes .agentic/ with detected tools; commit it
-    agentic build         # base image (first time ~15 min), then agentic-<project>:local
-    agentic login         # once per project (or put a key or token in .agentic/.env)
-    agentic setup         # optional: refine .agentic/ with the /agentic-setup skill
-    agentic dev           # persistent container, tmux session in /work; run claude or copilot
-    agentic doctor        # when something looks wrong
+1. **Install.** Clone this repository, put `bin/agentic` on your PATH. Optionally run
+   `make test lint smoke` to check that everything is green.
+2. **Init.** `cd` into your project, `agentic init` → `.agentic/` with the detected tools;
+   `.agentic/detect-report.md` names the build files it read. Commit `.agentic/`.
+3. **Build.** `agentic build` → the base image (first time ~15 min), then
+   `agentic-<project>:local`.
+4. **Log in** once per project, with either harness and in either mode:
+   - `agentic login claude` → `/login` in the browser flow, `/exit`; later containers need no
+     login. Or put `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`) in `.agentic/.env`.
+   - `agentic login copilot` → device code, `/exit`. Or put `COPILOT_GITHUB_TOKEN` in
+     `.agentic/.env`.
+5. **Refine (optional).** `agentic setup` → the `/agentic-setup` skill reviews and improves
+   `.agentic/` for your project.
+6. **Work.**
+   - `agentic dev` → a persistent container with a tmux session in `/work`; run `claude` or
+     `copilot`. Detach with `Ctrl-b d`; `agentic dev` again re-attaches. `agentic dev stop`,
+     `recreate` and `status` manage it.
+   - `agentic shell [CMD...]` → a throwaway container, removed on exit.
+7. **Check.** `agentic doctor` → start steps, tools, logins, MCP servers and certificates, each
+   with `ok` or what is wrong (for example `ok claude`).
 
 ## Private repositories
 
