@@ -3,3 +3,5 @@ docs/
 tests/
 README.md
 CLAUDE.md
+bridge/node_modules
+bridge/dist

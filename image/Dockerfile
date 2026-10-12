@@ -24,6 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     AWS_PAGER="" \
     DISABLE_AUTOUPDATER=1 \
+    COPILOT_AUTO_UPDATE=false \
     JAVA_HOME=/opt/java/${JAVA_BASE} \
     MAVEN_HOME=/opt/maven/${MAVEN_BASE} \
     PATH=/usr/local/sbin:/usr/local/bin:/opt/java/${JAVA_BASE}/bin:/opt/maven/${MAVEN_BASE}/bin:/opt/node/${NODE_HARNESS}/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -78,6 +79,10 @@ RUN PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm install -g --prefix /opt/agenti
  && find /opt/agentic/npm/lib/node_modules/ccusage -path '*/bin/ccusage' -type f -exec chmod 755 {} + \
  && ln -s playwright-mcp /usr/local/bin/mcp-server-playwright
 
+# The task bridge's dependencies (cached apart from its sources)
+COPY bridge/package.json bridge/package-lock.json /opt/agentic/bridge/
+RUN cd /opt/agentic/bridge && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm ci --no-audit --no-fund
+
 # Python MCP servers and Graphify, as uv tools shared by every user
 RUN UV_TOOL_DIR=/opt/agentic/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --python ${PYTHON_BASE} mcp-atlassian \
  && UV_TOOL_DIR=/opt/agentic/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --python ${PYTHON_BASE} 'graphifyy[mcp]' \
@@ -91,9 +96,9 @@ RUN mkdir -p /ms-playwright \
 # User dev, mount points and the container marker
 RUN (userdel -r ubuntu 2>/dev/null || true) \
  && groupadd -g 1000 dev && useradd -m -u 1000 -g 1000 -s /bin/bash dev \
- && mkdir -p /etc/agentic /work /workspaces /agentic-config /opt/agentic/claude-plugins /opt/agentic/defaults \
+ && mkdir -p /etc/agentic /work /workspaces /task /agentic-config /opt/agentic/claude-plugins /opt/agentic/defaults \
  && printf 'agentic\n' > /etc/agentic/container \
- && chown -R dev:dev /work /workspaces /opt/agentic/claude-plugins /ms-playwright
+ && chown -R dev:dev /work /workspaces /task /opt/agentic/claude-plugins /ms-playwright
 
 # The agentic layer (changes most often, so it comes last)
 COPY image/lib /opt/agentic/lib
@@ -110,6 +115,14 @@ COPY templates /opt/agentic/templates
 COPY --chmod=755 image/entrypoint.sh /opt/agentic/entrypoint.sh
 COPY image/profile.d/agentic.sh /etc/profile.d/agentic.sh
 COPY image/tmux.conf /etc/tmux.conf
+COPY bridge/tsconfig.json bridge/tsconfig.build.json /opt/agentic/bridge/
+COPY bridge/src /opt/agentic/bridge/src
+# Built here, then only production dependencies stay; the adapter's bundled Claude binary is an
+# optional dependency and not needed (the bridge points it at the image's claude).
+RUN cd /opt/agentic/bridge && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm run build \
+ && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm prune --omit=dev --omit=optional \
+ && printf '#!/bin/sh\nPATH=/opt/node/%s/bin:$PATH exec node /opt/agentic/bridge/dist/main.js "$@"\n' "${NODE_HARNESS}" > /usr/local/bin/agentic-bridge \
+ && chmod 755 /usr/local/bin/agentic-bridge
 RUN ln -sf /opt/agentic/bin/* /usr/local/bin/ \
  && printf '%s\n' '[ -f /etc/profile.d/agentic.sh ] && . /etc/profile.d/agentic.sh' \
       '[ -f "$HOME/.agentic/env" ] && . "$HOME/.agentic/env"' >> /etc/bash.bashrc \

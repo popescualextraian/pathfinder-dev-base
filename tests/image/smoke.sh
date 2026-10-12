@@ -89,6 +89,29 @@ out="$(docker run --rm -e AGENTIC_GATE=1 "$IMG" bash -lc \
   'echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push\"}}" | bash /opt/agentic/task/hook.sh claude pretooluse; echo "rc=$?"' 2>&1)"
 [[ "$out" == *"git push is not in allowed_actions"* && "$out" == *"rc=2"* ]] || fail "gate in the image: got '$out'"
 
+step "the bridge runs a task to idle with the fake agent; homes live on the task volume"
+tk="$tmp/task-bridge"; mkdir -p "$tk"; printf 'hello\n' > "$tk/prompt.md"
+docker run -d --name agentic-smoke-bridge -p 127.0.0.1::8765 -v "$tk:/task" -v "$root/bridge/test:/fake:ro" \
+  -e AGENTIC_TASK_TOKEN=smoke-task-token-0123456789 -e AGENTIC_AGENT_TOKEN=smoke-agent-token-0123456789 \
+  -e 'AGENTIC_ACP_CMD=["node","/fake/fake-agent.mjs"]' -e FAKE_AGENT_STATE=/task/home/fake "$IMG" agentic-bridge >/dev/null
+trap 'docker rm -f agentic-smoke-bridge >/dev/null 2>&1; rm -rf "$tmp"' EXIT
+port="$(docker port agentic-smoke-bridge 8765/tcp | head -n 1 | sed 's/.*://')"
+st=""
+for _ in $(seq 1 60); do
+  st="$(curl -fsS -H 'Authorization: Bearer smoke-task-token-0123456789' "http://127.0.0.1:$port/status" 2>/dev/null | jq -r .state || true)"
+  [ "$st" = idle ] && break
+  sleep 1
+done
+[ "$st" = idle ] || { docker logs agentic-smoke-bridge >&2; fail "bridge task: state '$st'"; }
+[ "$(jq -r .summary "$tk/state.json")" = "echo: hello" ] || fail "bridge task: summary"
+[ -d "$tk/home/claude" ] || fail "bridge task: Claude home not on /task"
+[ -d "$tk/home/copilot" ] || fail "bridge task: harness homes not on /task"
+docker exec agentic-smoke-bridge bash -lc '. ~/.agentic/env; [ "$CLAUDE_CONFIG_DIR" = /task/home/claude ] && { [ -L /task/home/claude/plugins ] || [ -d /task/home/claude/plugins ]; }' \
+  || fail "bridge task: plugins not linked into the task's Claude home"
+docker exec agentic-smoke-bridge bash -lc 'test "$COPILOT_AUTO_UPDATE" = false && agentic-ask x 2>&1 | grep -q "only inside a task"' \
+  || fail "bridge task: image env"
+docker rm -f agentic-smoke-bridge >/dev/null
+
 step "worker mode hands over to the overlay's adapter"
 cfg_b64="$(base64 -w0 < "$proj/.agentic/agentic.yaml")"
 out="$(docker run --rm -e AGENTIC_WORKER_MODE=fake -e "AGENTIC_CONFIG_B64=$cfg_b64" "$IMG" one two 2>/dev/null)"
