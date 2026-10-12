@@ -133,7 +133,6 @@ record() {
   [ "$(grep -c '"state":"interrupted"' "$AGENTIC_WORKSPACES/demo/events/events.jsonl")" -eq 1 ]
 }
 
-# Review Focus 4
 @test "a bridge that does not answer gives a clear message, not a curl error" {
   record T-10 idle
   CURL_RC=7 run ag status T-10
@@ -142,4 +141,107 @@ record() {
   CURL_RC=7 run bash -c "cd '$PROJ' && source '$REPO_ROOT/lib/host/common.sh' && source '$REPO_ROOT/lib/host/task.sh' && bridge_call T-10 GET /status"
   [ "$status" -eq 1 ]
   [ "$output" = "agentic: task T-10 is not reachable (state: idle)" ]
+}
+
+@test "the bridge token goes to curl in a header file, never through a proxy, and the agent token never reaches docker" {
+  record T-11 idle
+  ag status T-11 >/dev/null
+  grep -qx 'arg: --noproxy' "$CURL_LOG"
+  grep -qx 'arg: \*' "$CURL_LOG"
+  grep -q '^header: Authorization: Bearer tok-task-0123456789$' "$CURL_LOG"
+  run grep -q '^arg: .*tok-task' "$CURL_LOG"
+  [ "$status" -ne 0 ]
+  ag run --id T-12 "x" 2>/dev/null
+  run grep -q "$(grep AGENT_TOKEN "$T/T-12.env" | cut -d= -f2)" "$DOCKER_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "a bad .env fails before anything is created, and a retry with the same id works" {
+  printf 'A="quoted"\n' > "$PROJ/.agentic/.env"
+  run ag run --id T-13 "x"
+  [ "$status" -eq 1 ]
+  [ ! -e "$T/T-13" ] && [ ! -e "$T/T-13.env" ]
+  [ ! -e "$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-13" ]
+  if [ -d "$AGENTIC_WORKSPACES/demo/repos/proj" ]; then
+    run git -C "$AGENTIC_WORKSPACES/demo/repos/proj" rev-parse --verify -q agentic/T-13-x
+    [ "$status" -ne 0 ]
+  fi
+  rm "$PROJ/.agentic/.env"
+  run ag run --id T-13 "x"
+  [ "$status" -eq 0 ]
+}
+
+@test "a failure after creation (set -e, signal-free) still rolls back" {
+  # the mounts file cannot be written when its path is a directory
+  mkdir -p "$T/T-14.mounts"
+  run ag run --id T-14 "x"
+  [ "$status" -ne 0 ]
+  [ ! -e "$T/T-14" ] && [ ! -e "$T/T-14.env" ]
+  [ ! -e "$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-14" ]
+}
+
+@test "rollback works in a workspace path containing a space" {
+  export AGENTIC_WORKSPACES="$BATS_TEST_TMPDIR/my ws"
+  T="$AGENTIC_WORKSPACES/demo/tasks"
+  DOCKER_RUN_RC=1 run ag run --id T-15 "x"
+  [ "$status" -eq 1 ]
+  [ ! -e "$T/T-15" ] && [ ! -e "$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-15" ]
+  run git -C "$AGENTIC_WORKSPACES/demo/repos/proj" rev-parse --verify -q agentic/T-15-x
+  [ "$status" -ne 0 ]
+  [ -d "$AGENTIC_WORKSPACES/demo/repos/proj/.git" ]
+  run ag run --id T-16 "x"
+  [ "$status" -eq 0 ]
+}
+
+@test "rollback_task never removes a path outside the workspace" {
+  mkdir -p "$BATS_TEST_TMPDIR/keep"; touch "$BATS_TEST_TMPDIR/keep/f"
+  record T-17 idle
+  printf 'x\t%s\tb\n' "$BATS_TEST_TMPDIR/keep" > "$T/T-17.repos"
+  run bash -c "cd '$PROJ' && source '$REPO_ROOT/lib/host/common.sh' && source '$REPO_ROOT/lib/host/task.sh' && rollback_task T-17"
+  [ -f "$BATS_TEST_TMPDIR/keep/f" ]
+  [ ! -e "$T/T-17" ]
+}
+
+@test "status --all takes the project from the directory layout, not from state.json" {
+  record T-18 running
+  jq '.project = "../x"' "$T/T-18/state.json" > "$T/s" && mv "$T/s" "$T/T-18/state.json"
+  DOCKER_STATUS="" run ag status --all
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ T-18\ +interrupted ]]
+  [ ! -e "$AGENTIC_WORKSPACES/x" ]
+  grep -q '"project":"demo"' "$AGENTIC_WORKSPACES/demo/events/events.jsonl"
+}
+
+@test "a docker failure shows unknown and records no interruption" {
+  record T-19 running
+  DOCKER_DOWN=1 run ag status T-19 --json
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .state <<<"$output")" = unknown ]
+  [ ! -e "$AGENTIC_WORKSPACES/demo/events/events.jsonl" ]
+  [ ! -e "$T/T-19.interrupted" ]
+}
+
+@test "a prompt over 64 KB starts a task with a short branch" {
+  head -c 100000 /dev/zero | tr '\0' a > "$BATS_TEST_TMPDIR/big.md"
+  run --separate-stderr ag run --id T-20 --prompt-file "$BATS_TEST_TMPDIR/big.md" --json
+  [ "$status" -eq 0 ]
+  b="$(jq -r .branch <<<"$output")"
+  [ "$b" = "agentic/T-20-$(printf 'a%.0s' $(seq 40))" ]
+}
+
+@test "the branch slug skips blank lines and falls back to task" {
+  run --separate-stderr ag run --id T-21 --json $'\n  \nHello, World!'
+  [ "$(jq -r .branch <<<"$output")" = agentic/T-21-hello-world ]
+  run --separate-stderr ag run --id T-22 --json '!!! ???'
+  [ "$(jq -r .branch <<<"$output")" = agentic/T-22-task ]
+}
+
+@test "status strips control characters from what the agent wrote" {
+  record T-23 idle
+  CURL_BODY='{"task":"T-23","agent":"claude","created":"2026-10-12T10:00:00Z","branch":"b\u001b[31m","state":"idle","reason":"r\u001b]0;x\u0007","summary":"s\u001b[2J","questions":[{"id":"Q1","source":"agent","text":"t\u001b[1m","options":[]}]}' run ag status T-23
+  [ "$status" -eq 0 ]
+  out="$output"
+  [[ "$out" == *"T-23"* ]]
+  run grep -qP '[\x00-\x08\x0b-\x1f\x7f]' <<<"$out"
+  [ "$status" -ne 0 ]
 }

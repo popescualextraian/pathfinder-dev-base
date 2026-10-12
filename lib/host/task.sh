@@ -11,21 +11,40 @@ task_file() { printf '%s/tasks/%s.%s\n' "$(task_ws)" "$1" "$2"; }
 task_container() { printf 'agentic-%s-task-%s\n' "$(task_project)" "$1"; }
 new_task_id() { printf 'T-%s-%s\n' "$(date -u +%Y%m%d)" "$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"; }
 new_token() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
-task_slug() { printf '%s' "$1" | head -n 1 | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//' | cut -c1-40 | sed -E 's/-+$//'; }
+# task_slug TEXT: a branch-safe slug of the first non-blank line, "task" when nothing is left.
+# Plain bash for the line, so a large prompt never meets SIGPIPE under pipefail.
+task_slug() {
+  local line="" l slug
+  while IFS= read -r l; do
+    if [[ "$l" =~ [^[:space:]] ]]; then line="${l:0:200}"; break; fi
+  done <<<"$1"
+  slug="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//' | cut -c1-40 | sed -E 's/-+$//')"
+  printf '%s\n' "${slug:-task}"
+}
 valid_task_id() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]; }
 need_task() {
   valid_task_id "${1:-}" || die "usage: a task id ([A-Za-z0-9._-]+)"
   [ -f "$(task_dir "$1")/state.json" ] || die "no task $1 in $(task_project)"
 }
 
-container_status() { docker inspect -f '{{.State.Status}}' "$(task_container "$1")" 2>/dev/null || echo missing; }
+# container_status ID: the docker state, missing when there is no such container, unknown when
+# docker itself failed (daemon down, no permission).
+container_status() {
+  local out
+  if out="$(docker inspect -f '{{.State.Status}}' "$(task_container "$1")" 2>&1)"; then printf '%s\n' "$out"
+  elif [[ "$out" == *"No such object"* || "$out" == *"No such container"* ]]; then echo missing
+  else echo unknown; fi
+}
 task_port() { docker port "$(task_container "$1")" "$TASK_PORT/tcp" 2>/dev/null | head -n 1 | sed 's/.*://'; }
 record_get() { jq -r "$2 // empty" "$(task_dir "$1")/state.json" 2>/dev/null || true; }
 
 # task_state ID: the record's state; active while no container runs means interrupted (spec §6).
 task_state() {
-  local st; st="$(record_get "$1" .state)"; st="${st:-unknown}"
-  if [[ " $TASK_ACTIVE " == *" $st "* ]] && [ "$(container_status "$1")" != running ]; then st=interrupted; fi
+  local st cs; st="$(record_get "$1" .state)"; st="${st:-unknown}"
+  if [[ " $TASK_ACTIVE " == *" $st "* ]]; then
+    cs="$(container_status "$1")"
+    case "$cs" in running) ;; unknown) st=unknown ;; *) st=interrupted ;; esac
+  fi
   printf '%s\n' "$st"
 }
 
@@ -37,7 +56,7 @@ bridge_req() {
   [ -n "$port" ] || return 1
   hdr="$(mktemp)"
   (umask 077; printf 'Authorization: Bearer %s\n' "$(dotenv_value "$(task_file "$id" env)" AGENTIC_TASK_TOKEN)" > "$hdr")
-  out="$(printf '%s' "$body" | curl -sS -m 30 -X "$method" -H "@$hdr" -H 'Content-Type: application/json' \
+  out="$(printf '%s' "$body" | curl -sS --noproxy '*' -m 30 -X "$method" -H "@$hdr" -H 'Content-Type: application/json' \
     --data-binary @- -w '\n%{http_code}' "http://127.0.0.1:$port$path" 2>/dev/null)" || rc=1
   rm -f "$hdr"
   [ "$rc" = 0 ] || return 1
@@ -62,19 +81,31 @@ check_cap() {
   [ "$n" -lt "$max" ] || die "$n tasks are running (AGENTIC_MAX_RUNNING=$max); stop one or wait"
 }
 
-# rollback_task ID: removes the container, worktrees, branches and files of a task.
+# safe_rm ROOT PATH: rm -rf PATH only when it is absolute, free of .. and strictly inside ROOT.
+safe_rm() {
+  local root="$1" path="$2"
+  [ -n "$root" ] && [ -n "$path" ] || return 0
+  [[ "$path" == /* && "$path" != *"/../"* && "$path" != */.. && "$path" == "$root"/?* ]] || return 0
+  rm -rf -- "$path"
+}
+
+# rollback_task ID: removes the container, worktrees, branches and files of a task. The repos file
+# holds one tab-separated clone, worktree and branch per line.
 rollback_task() {
-  local id="$1" clone wt branch
+  local id="$1" clone wt branch ws f
+  valid_task_id "$id" || return 0
+  ws="$(task_ws)"
   docker rm -f "$(task_container "$id")" >/dev/null 2>&1 || true
   if [ -f "$(task_file "$id" repos)" ]; then
-    while read -r clone wt branch; do
-      git -C "$clone" worktree remove --force "$wt" >/dev/null 2>&1 || rm -rf "$wt"
+    while IFS=$'\t' read -r clone wt branch; do
+      [[ "$clone" == "$ws/repos/"?* && "$wt" == "$ws/repos/"?* ]] || continue
+      git -C "$clone" worktree remove --force "$wt" >/dev/null 2>&1 || safe_rm "$ws/repos" "$wt"
       git -C "$clone" worktree prune >/dev/null 2>&1 || true
       git -C "$clone" branch -D "$branch" >/dev/null 2>&1 || true
     done < "$(task_file "$id" repos)"
   fi
-  rm -rf "$(task_dir "$id")"
-  rm -f "$(task_file "$id" env)" "$(task_file "$id" mounts)" "$(task_file "$id" repos)" "$(task_file "$id" interrupted)"
+  safe_rm "$ws/tasks" "$(task_dir "$id")"
+  for f in env mounts repos interrupted; do safe_rm "$ws/tasks" "$(task_file "$id" "$f")"; done
 }
 
 # project_clone: the project's own repository under repos/, cloned from origin (credentials
@@ -98,7 +129,7 @@ add_worktree() {
   git -C "$clone" fetch -q origin >/dev/null 2>&1 || true
   [ -n "$base" ] || base="$(git -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)"
   git -C "$clone" worktree add -q -b "$3" "$clone/.worktrees/$2" "$base" >&2 || return 1
-  printf '%s %s %s\n' "$clone" "$clone/.worktrees/$2" "$3" >> "$(task_file "$2" repos)"
+  printf '%s\t%s\t%s\n' "$clone" "$clone/.worktrees/$2" "$3" >> "$(task_file "$2" repos)"
 }
 
 # task_mounts ID REPO...: the -v arguments of a task, one per line, into the mounts file.
