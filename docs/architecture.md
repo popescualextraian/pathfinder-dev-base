@@ -34,7 +34,7 @@ This document is the umbrella design. Each sub-project has its own spec in `docs
 - **Both harnesses.** Claude Code and Copilot CLI get the same tooling and the same flow.
 - **Deterministic first.** A script decides where a script can; the LLM is used only for
   judgement.
-- **Minimal.** State lives in files and container labels. No database, no server.
+- **Minimal.** State lives in files and container labels. No database and no central server: one small bridge per task container.
 - **Publishable.** No company resources in this repository: no certificates, company names,
   hosts, URLs or product-specific integrations. Enforced by `tools/leak-check.sh` in
   `make lint`. Company-specific pieces live in a downstream overlay.
@@ -44,11 +44,10 @@ This document is the umbrella design. Each sub-project has its own spec in `docs
 | # | Sub-project | Delivers | Unlocks |
 |---|---|---|---|
 | 1 | Base image and config | Base image, `agentic.yaml`, derived project image, tool presets, default MCPs/plugins/skills, `/agentic-setup` skill, `agentic init/build/login/setup/shell/dev/doctor`, downstream layer contract, worker-mode hook | Dev mode; overlays; hub task containers |
-| 2 | Runtime and CLI | Tasks and worktrees, `run/status/attach/answer/stop/resume`, action gate, hooks and liveness, notify channels, task records (`story.md`, `events.jsonl`), kickoff and report templates, `/design`, graph building | Autonomous mode, local and hub-less |
+| 2 | Runtime and CLI | Detached tasks: one ACP bridge per task container (HTTP + WebSocket API), worktrees, questions with grants, the action gate behind AGENTIC_GATE, notify, `run/status/follow/send/answer/cancel/stop/resume/takeover/clean` | Autonomous mode, local and hub-less |
 | 3 | Hub integration (in the overlay) | A worker-mode adapter that lets an external task hub start and drive this image; the gate active under the hub; blocking requests surfaced as the hub's needs-you signal | UI, team board, scheduling and remote runs, all provided by the hub |
 
-Not built here: an own API server, a UI protocol, a scheduler or a remote orchestrator. The hub
-provides them. For a hub-less setup, two documented recipes cover the simple cases:
+Not built here: a central server, a UI, a scheduler or a remote orchestrator; a hub provides them. Each task container has a small bridge with a light API (`docs/tasks.md`), which a hub may use or replace with its own driver. For a hub-less setup, two documented recipes cover the simple cases:
 
 - **Scheduled jobs:** a host `cron` entry that calls `agentic run` with a brief.
 - **Remote:** the same CLI on a VM with Docker, or the image on a managed container service,
@@ -80,12 +79,12 @@ never a second copy of a base file to keep in sync.
  host / VM                                     container (one per dev session or task)
  ─────────                                     ───────────────────────────────────────
  bin/agentic  ──docker run/exec──────────────▶ entrypoint (start.d steps)
-                                                   ├─ CLI mode:    harness in tmux (dev / task)
+                                                   ├─ CLI mode:    dev (tmux) or task: agentic-bridge (ACP)
  external hub ──starts container with env────▶     └─ worker mode: worker.d/<name>.sh (overlay)
                                                                        │
                                                   hooks → action gate, liveness, notify
                                                                        ▼
-                                                  task record: story.md, events.jsonl (2)
+                                                  task files: state.json, events.jsonl, transcript.md (2)
 ```
 
 - **Image (1).** Base image plus a derived image per project, rendered from `agentic.yaml`.
@@ -94,7 +93,7 @@ never a second copy of a base file to keep in sync.
 - **Entry modes (1).** By default the entrypoint applies config and runs the given command (CLI
   mode). With `AGENTIC_WORKER_MODE=<name>` it applies the same config and then hands over to
   `/opt/agentic/worker.d/<name>.sh`, which an overlay provides. The base ships no worker adapter.
-- **Task record (2).** Files under the workspace are the source of truth for hub-less runs.
+- **Task files (2).** `state.json`, `events.jsonl` and `transcript.md` under the workspace are the source of truth for hub-less runs; only the bridge writes `state.json`.
 - **Gate (2).** The PreToolUse hook is installed at user scope for both harnesses, so it applies
   whether the CLI or a hub launches the harness.
 
@@ -105,6 +104,7 @@ never a second copy of a base file to keep in sync.
 | Scope | Container toolbox, not a platform | An existing task hub already provides UI, scheduling and remote runs |
 | Repository | New repository; private now, publishable later | Generic from day one |
 | Company-specific parts | Downstream overlay repository, `FROM` the base | One-way flow, nothing to sync |
+| Agent driving | ACP: claude-agent-acp for Claude, copilot --acp for Copilot | Structured events, cancel, permissions and session load without terminal scraping |
 | Hub compatibility | Worker-mode hook in the base; the adapter in the overlay | Base stays neutral; any hub can be added |
 | Project config | `.agentic/` checked into the project repo; secrets in a git-ignored `.env` | Shared by the team like `.devcontainer/` |
 | Project tools | Config file plus a derived image built by `agentic build` | Install once, reproducible |

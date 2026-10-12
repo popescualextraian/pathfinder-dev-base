@@ -18,6 +18,21 @@ The base guarantees for an adapter: bash, curl, tar, git and Node are present; t
 needs no mount and no TTY; start steps never wait for input; `CLAUDE_CONFIG_DIR` and
 `COPILOT_HOME` relocate the harness homes and the start steps follow them.
 
+## Task hooks and the gate
+
+- Hook scripts: `/opt/agentic/hooks.d/<event>/*.sh` (image, for an overlay) and
+  `/agentic-config/hooks.d/<event>/*.sh` (project). Events: `sessionstart`, `userpromptsubmit`,
+  `pretooluse`, `posttooluse`, `stop`, `sessionend`. The payload arrives on stdin; on `pretooluse`
+  exit 2 refuses the tool call (stderr carries the reason).
+- `AGENTIC_GATE` turns the hooks and the action gate on; the default is on for `agentic-bridge`
+  and for worker mode, off otherwise.
+- `AGENTIC_ALLOWED_ACTIONS` (comma-separated `push`, `open-pr`, `deploy:<target>`) sets the
+  allowed actions for a worker that has no task record.
+- `AGENTIC_NOTIFY_WEBHOOK` receives the bridge's notifications on `waiting`, `idle`, `failed`
+  and `stopped`.
+- A worker adapter may run `agentic-bridge` or drive the agent itself; the hooks and the gate
+  apply either way. The API and the files are described in `docs/tasks.md`.
+
 ## Example
 
 ```dockerfile
