@@ -15,7 +15,7 @@ make_agentic_dir() {
   mkdir -p "$AGENTIC_DIR/defaults" "$AGENTIC_DIR/worker.d"
   local pair src
   for pair in lib:image/lib start.d:image/start.d tools:image/tools bin:image/bin derive:derive \
-              config:config schema:schema skills:skills profile.d:image/profile.d; do
+              config:config schema:schema skills:skills profile.d:image/profile.d task:image/task; do
     src="$REPO_ROOT/${pair#*:}"
     if [ -e "$src" ]; then ln -s "$src" "$AGENTIC_DIR/${pair%%:*}"; fi
   done
@@ -30,4 +30,20 @@ wiki_repo() {
   mv "$W/dot-claude" "$W/.claude"
   if [ -d "$W/dot-github" ]; then mv "$W/dot-github" "$W/.github"; fi
   export W
+}
+
+# install_cmd_stub NAME [EXIT]: a command that logs "args: ..." and its stdin to $BATS_TEST_TMPDIR/NAME.log.
+install_cmd_stub() {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/usr/bin/env bash\n{ echo "args: $*"; [ -t 0 ] || cat; echo; } >> "%s/%s.log"\nexit %s\n' \
+    "$BATS_TEST_TMPDIR" "$1" "${2:-0}" > "$BATS_TEST_TMPDIR/bin/$1"
+  chmod +x "$BATS_TEST_TMPDIR/bin/$1"
+  export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+
+# make_task_dir [ALLOWED...]: a /task stand-in at $AGENTIC_TASK_DIR with a state.json holding allowed_actions.
+make_task_dir() {
+  export AGENTIC_TASK_DIR="$BATS_TEST_TMPDIR/task"
+  mkdir -p "$AGENTIC_TASK_DIR"
+  jq -n '{version: 1, allowed_actions: $ARGS.positional}' --args "$@" > "$AGENTIC_TASK_DIR/state.json"
 }
