@@ -138,6 +138,7 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   record T-14 idle   # the bridge, absent here, writes state.json
   wt="$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-14"
   git -C "$wt" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m work
+  export DOCKER_STATUS=exited
   run ag clean T-14
   [ "$status" -eq 1 ]; [[ "$output" == *"commits on no remote branch"* ]]
   run ag clean T-14 --force
@@ -176,4 +177,67 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
 @test "clean refuses a task id that is not a task" {
   run ag clean ../x
   [ "$status" -eq 1 ]
+}
+
+mkclean() {   # a task with a worktree, as run leaves it, container exited
+  ag run --id "$1" "x" >/dev/null 2>&1
+  record "$1" idle
+  export DOCKER_STATUS=exited
+  wt="$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/$1"
+}
+
+@test "clean refuses uncommitted changes, a git error and a missing repos file; --force proceeds" {
+  mkclean T-20
+  echo x > "$wt/new.txt"
+  run ag clean T-20
+  [ "$status" -eq 1 ]; [[ "$output" == *"uncommitted changes"* ]]
+  rm "$wt/new.txt"
+  echo "gitdir: /nonexistent" > "$wt/.git"
+  run ag clean T-20
+  [ "$status" -eq 1 ]; [[ "$output" == *"cannot check"* ]]
+  rm "$T/T-20.repos"
+  run ag clean T-20
+  [ "$status" -eq 1 ]; [[ "$output" == *"no repos file"* ]]
+  run ag clean T-20 --force
+  [ "$status" -eq 0 ]; [ ! -e "$T/T-20" ]
+}
+
+@test "clean of a clean, pushed-nowhere-but-unchanged task succeeds" {
+  mkclean T-21
+  run ag clean T-21
+  [ "$status" -eq 0 ]; [ ! -e "$wt" ]
+}
+
+@test "clean refuses a running task unless forced, then stops it first" {
+  mkclean T-22
+  DOCKER_STATUS=running run ag clean T-22
+  [ "$status" -eq 1 ]; [[ "$output" == *"is running; run agentic stop T-22 first"* ]]
+  : > "$DOCKER_LOG"
+  DOCKER_STATUS=running run ag clean T-22 --force
+  [ "$status" -eq 0 ]
+  grep -qx -- '--- stop' "$DOCKER_LOG"
+}
+
+@test "answer takes -- before text that starts with a dash, and checks grants first" {
+  record T-23 waiting
+  ag answer T-23 Q1 --allow push -- "-yes please"
+  [ "$(curl_body 1 | jq -c .)" = '{"text":"-yes please","grant":["push"],"question":"Q1"}' ]
+  : > "$CURL_LOG"
+  run ag answer T-23 "ok" --allow "push;rm"
+  [ "$status" -eq 1 ]; [[ "$output" == *"bad grant"* ]]
+  [ ! -s "$CURL_LOG" ]
+}
+
+@test "stop shows the bridge's refusal and a failing docker stop" {
+  record T-24 idle
+  CURL_CODE=409 CURL_BODY='{"error":{"message":"busy"}}' run ag stop T-24
+  [ "$status" -eq 1 ]; [ "$output" = "agentic: busy (HTTP 409)" ]
+  CURL_RC=7 DOCKER_STOP_FAIL=1 run ag stop T-24
+  [ "$status" -eq 1 ]; [[ "$output" == *"could not stop the container"* ]]
+}
+
+@test "a 2xx answer that is not JSON gives a readable message" {
+  record T-25 idle
+  CURL_BODY='<html>proxy</html>' run ag send T-25 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"not a task state"* ]]
 }

@@ -205,7 +205,8 @@ ensure_running() {
 bridge_result() {
   local why
   case "$BRIDGE_CODE" in
-    2*) jq -r --arg id "$1" '"\($id): \(.state)\(if (.reason // "") != "" then " (" + .reason + ")" else "" end)"' <<<"$BRIDGE_BODY" | plain ;;
+    2*) jq -er --arg id "$1" '"\($id): \(.state)\(if (.reason // "") != "" then " (" + .reason + ")" else "" end)"' <<<"$BRIDGE_BODY" 2>/dev/null | plain \
+          || die "the bridge answered HTTP $BRIDGE_CODE with a body that is not a task state" ;;
     *) why="$(jq -r '.error.message // "request failed"' <<<"$BRIDGE_BODY" 2>/dev/null | plain)" || why=""
        die "${why:-request failed} (HTTP $BRIDGE_CODE)" ;;
   esac

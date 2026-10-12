@@ -5,7 +5,15 @@ import type { TaskEvent } from "./types.js";
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
 const END = new Set(["waiting", "idle", "stopped", "failed", "suspended"]);
 
+// Agent-written text must not drive the terminal: control characters other than newline and tab go.
+// eslint-disable-next-line no-control-regex
+const plain = (t: string): string => t.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, " ");
+
 export function formatEvent(e: TaskEvent): string {
+  return plain(formatRaw(e));
+}
+
+function formatRaw(e: TaskEvent): string {
   const d = e.data;
   switch (e.type) {
     case "state": return `— ${s(d.state)}${d.reason ? ` (${s(d.reason)})` : ""}\n`;

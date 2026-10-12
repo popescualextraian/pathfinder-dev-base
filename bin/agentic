@@ -432,9 +432,10 @@ cmd_send() {
 
 cmd_answer() {
   need_config
-  local id="" q="" text="" pos=() grants=()
+  local id="" q="" text="" pos=() grants=() g
   while [ $# -gt 0 ]; do
     case "$1" in
+      --) shift; pos+=("$@"); break ;;
       --allow) optval "$@"; grants+=("$2"); shift 2 ;;
       -*) die "unknown option $1" ;;
       *) pos+=("$1"); shift ;;
@@ -445,9 +446,12 @@ cmd_answer() {
     3) id="${pos[0]}"; q="${pos[1]}"; text="${pos[2]}" ;;
     *) die 'usage: agentic answer ID [QID] "text" [--allow A]...' ;;
   esac
+  for g in ${grants[@]+"${grants[@]}"}; do
+    [[ "$g" =~ ^(push|open-pr|deploy:[A-Za-z0-9_.-]+)$ ]] || die "bad grant '$g' (push, open-pr or deploy:TARGET)"
+  done
   need_task "$id"; ensure_running "$id"
   bridge_call "$id" POST /answer "$(jq -cn --arg q "$q" --arg t "$text" \
-    '{text: $t, grant: $ARGS.positional} + (if $q == "" then {} else {question: $q} end)' --args "${grants[@]}")"
+    '{text: $t, grant: $ARGS.positional} + (if $q == "" then {} else {question: $q} end)' --args ${grants[@]+"${grants[@]}"})"
   bridge_result "$id"
 }
 
@@ -462,11 +466,12 @@ cmd_stop() {
   local id="$1" c; c="$(task_container "$1")"
   if [ "$(task_state "$id")" = stopped ]; then echo "$id: stopped"; return 0; fi
   ensure_running "$id"
-  if bridge_req "$id" POST /stop && [[ "$BRIDGE_CODE" == 2* ]]; then
-    timeout 30 docker wait "$c" >/dev/null 2>&1 || docker stop "$c" >/dev/null
+  if bridge_req "$id" POST /stop; then
+    [[ "$BRIDGE_CODE" == 2* ]] || bridge_result "$id"
+    timeout 30 docker wait "$c" >/dev/null 2>&1 || docker stop "$c" >/dev/null || die "could not stop the container of $id"
   else
     say "the bridge of $id did not answer; stopping its container (the task will show interrupted)"
-    docker stop "$c" >/dev/null
+    docker stop "$c" >/dev/null || die "could not stop the container of $id"
   fi
   echo "$id: $(task_state "$id" | plain)"
 }
@@ -544,15 +549,21 @@ cmd_takeover() {
 
 cmd_clean() {
   need_config
-  local id="" force=0 a wt branch
+  local id="" force=0 a wt branch why
   for a in "$@"; do case "$a" in --force) force=1 ;; -*) die "unknown option $a" ;; *) id="$a" ;; esac; done
   need_task "$id"
-  if [ "$force" = 0 ] && [ -f "$(task_file "$id" repos)" ]; then
+  if [ "$(container_status "$id")" = running ]; then
+    [ "$force" = 1 ] || die "task $id is running; run agentic stop $id first, or --force"
+    docker stop "$(task_container "$id")" >/dev/null || die "could not stop the container of $id"
+  fi
+  if [ "$force" = 0 ]; then
+    [ -f "$(task_file "$id" repos)" ] || die "task $id has no repos file, so unpushed work cannot be checked; run agentic clean $id --force"
     while IFS=$'\t' read -r _ wt branch; do
       [ -d "$wt" ] || continue
-      if [ -n "$(git -C "$wt" log --oneline HEAD --not --remotes 2>/dev/null | head -n 1)" ]; then
-        die "$wt has commits on no remote branch ($branch); push them, or run agentic clean $id --force"
-      fi
+      why="$(git -C "$wt" status --porcelain 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
+      [ -z "$why" ] || die "$wt has uncommitted changes; commit and push them, or run agentic clean $id --force"
+      why="$(git -C "$wt" log --oneline "$branch" --not --remotes 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
+      [ -z "$why" ] || die "$wt has commits on no remote branch ($branch); push them, or run agentic clean $id --force"
     done < "$(task_file "$id" repos)"
   fi
   rollback_task "$id"

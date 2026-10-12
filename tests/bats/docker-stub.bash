@@ -19,6 +19,7 @@ case "$1" in
       echo "$DOCKER_STATUS"; exit 0
     fi
     [ -n "${DOCKER_RUNNING:-}" ] && echo "$DOCKER_RUNNING" || exit 1 ;;
+  stop) [ -z "${DOCKER_STOP_FAIL:-}" ] || exit 1 ;;
   start) echo running > "$BATS_TEST_TMPDIR/docker.status" ;;
   port) [ -n "${DOCKER_PORT:-}" ] && echo "127.0.0.1:$DOCKER_PORT" ;;
   ps) [ -z "${DOCKER_PS:-}" ] || printf '%s\n' $DOCKER_PS ;;

@@ -7,6 +7,10 @@ import type { TaskEvent } from "../src/types.js";
 const e = (type: TaskEvent["type"], data: Record<string, unknown>): TaskEvent => ({ seq: 7, ts: "t", task: "T-1", session: null, agent: "claude", type, data });
 
 describe("formatEvent", () => {
+  it("replaces control characters from the agent, keeping newline and tab", () => {
+    const out = formatEvent(e("message", { role: "assistant", text: "a\u001b[2Jb\u009bc\u007fd\te\nf" }));
+    expect(out).toBe("a [2Jb c d\te\nf");
+  });
   it("prints one readable line per event; partial messages stream without a newline", () => {
     expect(formatEvent(e("state", { state: "waiting", reason: "question Q1" }))).toBe("— waiting (question Q1)\n");
     expect(formatEvent(e("message", { role: "agent", text: "Hel", final: false }))).toBe("Hel");
