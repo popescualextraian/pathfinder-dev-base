@@ -109,6 +109,11 @@ export class TaskMachine {
 
       case "permissionRequest": {
         if (!this.promptOutstanding || !["running", "waiting"].includes(this.record.state)) return { ok: true, effects: fx };
+        if (this.cancelling) {
+          // the turn is being cancelled: answer as cancelled at once; nothing is recorded
+          fx.push({ kind: "permission", question: `Q${this.questions.length + 1}`, optionId: null });
+          return { ok: true, effects: fx };
+        }
         const q = this.addQuestion("permission", `Allow: ${input.command || input.title}?`,
           input.options.map((o) => o.name), null, fx, { options: input.options });
         this.pending.add(q.id);

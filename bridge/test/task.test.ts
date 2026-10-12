@@ -258,6 +258,16 @@ describe("fix round 1", () => {
     expect(t.questions).toEqual([]);
   });
 
+  it("a permission request during a cancel is answered as cancelled and not recorded", () => {
+    const t = running();
+    t.apply({ kind: "cancel" });
+    expect(fx(t.apply(perm))).toEqual([{ kind: "permission", question: "Q1", optionId: null }]);
+    expect(t.questions).toEqual([]);
+    expect(t.record.state).toBe("running");
+    t.apply({ kind: "turnEnd", stopReason: "cancelled", summary: "" });
+    expect(t.record.state).toBe("idle");
+  });
+
   it("agentReady is ignored when stopped, failed or suspended", () => {
     for (const s of ["stopped", "failed", "suspended"] as const) {
       const t = m({ state: s });
