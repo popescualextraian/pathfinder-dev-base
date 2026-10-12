@@ -57,6 +57,14 @@ lean CLAUDE.md that imports the wiki index, and path rules. `/wiki update` keeps
 after a change. `agentic-wiki check` validates all of it. The skill decides where each statement
 belongs: `skills/wiki/reference/routing.md`.
 
+## Philosophy
+
+The aim is more autonomy and speed with the same quality, reached through ten pillars: the
+developer becomes architect and owner, one container with every tool, remote runs, agentic
+colleagues on a schedule, spec-driven development, a strong plan, knowledge in Markdown, an
+agent-maintained wiki, agents that test their own work, and steering instead of coding. See
+[`docs/philosophy.md`](docs/philosophy.md).
+
 ## Private repositories
 
 Repositories (`AGENTIC_REPO_URL`, `repos:`) clone over https with `GIT_TOKEN` or `GH_TOKEN` from
