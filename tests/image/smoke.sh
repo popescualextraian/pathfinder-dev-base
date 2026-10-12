@@ -127,6 +127,61 @@ out="$(docker run --rm -v "$tmp/repo.git:/repo.git:ro" -e AGENTIC_REPO_URL=file:
   bash -lc 'test -f /work/.agentic/agentic.yaml && jq -r .project ~/.agentic/config.json && jq -e .mcpServers.playwright ~/.claude.json >/dev/null' 2>/dev/null)"
 [ "$out" = smoke-project ] || fail "no-mount start: got '$out'"
 
+step "detached tasks through bin/agentic, with the fake agent"
+export AGENTIC_TASK_DOCKER_ARGS="-v $root/bridge/test:/fake:ro -e AGENTIC_ACP_CMD=[\"node\",\"/fake/fake-agent.mjs\"] -e FAKE_AGENT_STATE=/task/home/fake -e FAKE_ASK=cli"
+ag() { (cd "$proj" && "$A" "$@"); }
+tasks="$AGENTIC_WORKSPACES/smoke-project/tasks"
+wait_state() {
+  local id="$1" s=""; shift
+  for _ in $(seq 1 90); do
+    s="$(ag status "$id" --json 2>/dev/null | jq -r .state)"
+    if [[ " $* " == *" $s "* ]]; then return 0; fi
+    sleep 1
+  done
+  echo "state of $id: $s" >&2; ag logs "$id" --bridge >&2 || true; return 1
+}
+
+trap 'docker ps -aq --filter label=agentic.kind=task | xargs -r docker rm -f >/dev/null; docker rm -f agentic-smoke-bridge >/dev/null 2>&1; rm -rf "$tmp"' EXIT
+id="$(AGENTIC_IDLE_TIMEOUT=6 ag run --allow open-pr "hello")"
+wait_state "$id" idle || fail "task: first turn"
+ag status | grep -q "^$id " || fail "task: not listed"
+
+ag send "$id" "SHELL:git push origin HEAD" >/dev/null
+wait_state "$id" idle || fail "task: refused push"
+grep -q '"type":"gate"' "$tasks/$id/events.jsonl" || fail "task: the gate refusal was not reported to the bridge"
+grep -q 'refused: agentic gate: git push is not in allowed_actions' "$tasks/$id/transcript.md" || fail "task: refusal reason"
+
+ag send "$id" "ASK:May I push?" >/dev/null
+wait_state "$id" waiting || fail "task: the question did not make the task wait"
+ag answer "$id" Q1 "yes" --allow push >/dev/null
+wait_state "$id" idle || fail "task: answer"
+grep -q 'ran: git push origin HEAD' "$tasks/$id/transcript.md" || fail "task: the push was not retried through the gate after the grant"
+
+for _ in $(seq 1 30); do
+  [ "$(docker inspect -f '{{.State.Status}}' "agentic-smoke-project-task-$id")" = exited ] && break
+  sleep 1
+done
+[ "$(ag status "$id" --json | jq -r .state)" = suspended ] || fail "task: not suspended after the idle timeout"
+ag send "$id" HISTORY >/dev/null
+wait_state "$id" idle || fail "task: resume after suspension"
+grep -Eq 'history: [1-9]' "$tasks/$id/transcript.md" || fail "task: the session was not loaded"
+ag stop "$id" >/dev/null
+[ "$(ag status "$id" --json | jq -r .state)" = stopped ] || fail "task: stop"
+
+id2="$(AGENTIC_IDLE_TIMEOUT=300 ag run "second")"
+wait_state "$id2" idle || fail "task 2: first turn"
+ag follow "$id2" </dev/null | grep -q 'echo: second' || fail "task 2: follow"
+docker kill "agentic-smoke-project-task-$id2" >/dev/null
+[ "$(ag status "$id2" --json | jq -r .state)" = interrupted ] || fail "task 2: not interrupted after docker kill"
+ag resume "$id2" >/dev/null
+wait_state "$id2" idle || fail "task 2: resume"
+grep -q 'echo: You were interrupted' "$tasks/$id2/transcript.md" || fail "task 2: resume prompt"
+
+ag clean "$id" --force >/dev/null
+ag clean "$id2" --force >/dev/null
+[ -z "$(docker ps -aq --filter label=agentic.kind=task)" ] || fail "task: clean left a container"
+unset AGENTIC_TASK_DOCKER_ARGS
+
 step "doctor passes on the good setup"
 (cd "$proj" && "$A" doctor) >"$tmp/doctor.out" 2>&1 || { cat "$tmp/doctor.out"; fail "doctor on a good setup"; }
 
