@@ -20,3 +20,14 @@ make_agentic_dir() {
     if [ -e "$src" ]; then ln -s "$src" "$AGENTIC_DIR/${pair%%:*}"; fi
   done
 }
+
+# A copy of the wiki fixture repository at $W, with CLAUDE.md, .claude and .github under their
+# real names (the fixture avoids them so no harness loads them from this repository).
+wiki_repo() {
+  W="$BATS_TEST_TMPDIR/repo"
+  cp -r "$REPO_ROOT/tests/fixtures/wiki/good" "$W"
+  mv "$W/CLAUDE.fixture.md" "$W/CLAUDE.md"
+  mv "$W/dot-claude" "$W/.claude"
+  if [ -d "$W/dot-github" ]; then mv "$W/dot-github" "$W/.github"; fi
+  export W
+}

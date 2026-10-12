@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Builds, mirrors and checks the project wiki in docs/wiki/; the deterministic half of /wiki.
+# Usage: agentic-wiki [-C DIR] build | sync | check | affected <git diff range>
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+# shellcheck source=../lib/wiki.sh
+source "$AGENTIC_DIR/lib/wiki.sh"
+usage() { echo "usage: agentic-wiki [-C DIR] build | sync | check | affected <git diff range>" >&2; exit 2; }
+
+ROOT="$PWD"
+if [ "${1:-}" = -C ]; then
+  [ "$#" -ge 2 ] || usage
+  ROOT="$(cd "$2" && pwd)"; shift 2
+fi
+need_wiki() { [ -d "$ROOT/$WIKI_DIR" ] || { echo "agentic-wiki: no $WIKI_DIR in $ROOT" >&2; exit 2; }; }
+
+# --- build -------------------------------------------------------------------------------------
+
+build_index() {
+  local overview="" more="- [Decisions](decisions/index.md), [Reuse](reuse.md)"
+  if [ -f "$ROOT/$WIKI_DIR/overview.md" ]; then
+    overview="$(wiki_authored "$ROOT/$WIKI_DIR/overview.md" | { grep -v '^# ' || true; } | sed '/./,$!d')"
+  fi
+  printf '%s\n# Project wiki\n\n' "$WIKI_GEN_NOTE"
+  printf '%s\n' "What the code does not tell: components, decisions, concepts and flows. Paths are relative to" \
+    "docs/wiki/. Read a component's page before you change it. The code wins over the wiki; never" \
+    "guess a page id."
+  if [ -n "$overview" ]; then printf '\n%s\n' "$overview"; fi
+  jq -r '
+    def line: "- [\(.fm.name // .id)](\(.id).md): \(.fm.summary // "")";
+    def section($t; $xs): if ($xs | length) > 0 then "\n## \($t)\n\n" + ($xs | map(line) | join("\n")) else empty end;
+    section("Components"; map(select(.fm.kind == "component" and (.fm.parent // null) == null))),
+    section("Concepts"; map(select(.fm.kind == "concept"))),
+    section("Flows"; map(select(.fm.kind == "flow")))' <<<"$1"
+  if [ -f "$ROOT/$WIKI_DIR/glossary.md" ]; then more+=", [Glossary](glossary.md)"; fi
+  printf '\n## More\n\n%s\n' "$more"
+}
+
+build_decisions() {
+  printf '%s\n# Decisions\n\n' "$WIKI_GEN_NOTE"
+  jq -r '[.[] | select(.fm.kind == "decision")]
+    | sort_by((.id | capture("adr-(?<n>[0-9]+)$") // {n: "0"}).n | tonumber)
+    | if length == 0 then "No decisions recorded yet."
+      else map("- [\(.fm.title // .id)](\(.id | ltrimstr("decisions/")).md): \(.fm.status // "")") | join("\n") end' <<<"$1"
+}
+
+build_reuse() {
+  printf '%s\n# Reuse\n\nFunctions the components offer for reuse. Check here before you write a helper.\n\n' "$WIKI_GEN_NOTE"
+  jq -r '[.[] | select(.fm.kind == "component") as $c
+      | ($c.fm.offers | if type == "array" then .[] else empty end) | select(type == "object")
+      | {name: (.name // ""), location: (.location // ""), use: (.use // ""), cid: $c.id, cname: ($c.fm.name // $c.id)}]
+    | sort_by(.name)
+    | if length == 0 then "No reusable functions recorded yet."
+      else (["| Function | Location | Use | Component |", "|---|---|---|---|"]
+        + map("| \(.name) | `\(.location)` | \(.use) | [\(.cname)](\(.cid).md) |")) | join("\n") end' <<<"$1"
+}
+
+# build_used_by MODEL: the reverse of depends_on, written into each component page.
+build_used_by() {
+  local id path dir u name content
+  while IFS=$'\t' read -r id path; do
+    dir="$(dirname "$ROOT/$path")"
+    content=""
+    while IFS=$'\t' read -r u name; do
+      content+="- [$name]($(realpath -m --relative-to="$dir" "$ROOT/$WIKI_DIR/$u.md"))"$'\n'
+    done < <(jq -r --arg id "$id" '.[] | select(.fm.depends_on | if type == "array" then any(.[]; . == $id) else false end)
+      | [.id, (.fm.name // .id)] | @tsv' <<<"$1")
+    if [ -n "$content" ]; then content="## Used by"$'\n\n'"${content%$'\n'}"; fi
+    wiki_put_block "$ROOT/$path" used-by <<<"$content"
+  done < <(jq -r '.[] | select(.fm.kind == "component") | [.id, .path] | @tsv' <<<"$1")
+}
+
+cmd_build() {
+  local model
+  model="$(wiki_model)"
+  mkdir -p "$ROOT/$WIKI_DIR/decisions"
+  build_index "$model" > "$ROOT/$WIKI_DIR/index.md"
+  build_decisions "$model" > "$ROOT/$WIKI_DIR/decisions/index.md"
+  build_reuse "$model" > "$ROOT/$WIKI_DIR/reuse.md"
+  build_used_by "$model"
+  echo "built $WIKI_DIR/index.md, decisions/index.md, reuse.md and the Used by blocks"
+}
+
+# --- dispatch ----------------------------------------------------------------------------------
+
+cmd="${1:-}"; [ "$#" -gt 0 ] && shift
+case "$cmd" in
+  build) need_wiki; cmd_build ;;
+  *) usage ;;
+esac
