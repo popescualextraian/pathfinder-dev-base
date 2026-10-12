@@ -74,13 +74,21 @@ proxy_build_args() {
 
 # build_run_args IMAGE: docker run arguments for this project, in the global array RUN_ARGS.
 build_run_args() {
-  local img="$1" root cfg p data ws v name email profile sock
+  local root cfg p data ws
   root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"
   data="$AGENTIC_DATA/projects/$p"; ws="$AGENTIC_WORKSPACES/$p"
   mkdir -p "$data/harness/claude" "$data/harness/copilot" "$ws"
   RUN_ARGS=(--label "agentic.project=$p"
     -v "$root:/work" -v "$ws:/workspaces" -v "$cfg:/agentic-config:ro"
     -v "$data/harness/claude:/home/dev/.claude" -v "$data/harness/copilot:/home/dev/.copilot")
+  shared_run_args "$1"
+}
+
+# shared_run_args IMAGE: appends what every container of the project gets to RUN_ARGS: the .env
+# file, git identity, proxy, AWS profile and the opt-in Docker socket.
+shared_run_args() {
+  local img="$1" root cfg p data v name email profile sock
+  root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"; data="$AGENTIC_DATA/projects/$p"
   check_env_file "$cfg/.env"
   if [ -f "$cfg/.env" ]; then RUN_ARGS+=(--env-file "$cfg/.env"); fi
   name="$(git -C "$root" config user.name || true)"; email="$(git -C "$root" config user.email || true)"

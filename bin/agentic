@@ -8,6 +8,8 @@ source "$AGENTIC_ROOT/lib/host/common.sh"
 source "$AGENTIC_ROOT/lib/host/aws.sh"
 # shellcheck source=../lib/host/detect.sh
 source "$AGENTIC_ROOT/lib/host/detect.sh"
+# shellcheck source=../lib/host/task.sh
+source "$AGENTIC_ROOT/lib/host/task.sh"
 
 usage() {
   cat <<'EOF'
@@ -22,6 +24,9 @@ agentic <command> [options]          run inside a project repository
   doctor                             check the configured container: steps, tools, logins, MCP, certificates
   dev [stop|recreate|status] [--host-profile wsl|none]
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
+  run "prompt" [--agent A] [--allow push|open-pr|deploy:T]... [--repo R]... [--base REF] [--branch B] [--id ID] [--json]
+                                     start a detached task; prints its id
+  status [ID] [--all] [--json]       list tasks, or one task with its open questions
   build-base [--force]               build agentic-dev-base:local (make build)
 EOF
 }
@@ -270,6 +275,127 @@ cmd_doctor() {
   docker run --rm "${RUN_ARGS[@]}" -e "AGENTIC_IMAGE_CONFIG_HASH=$(image_label "$img" agentic.config.hash)" "$img" agentic-doctor
 }
 
+optval() { [ -n "${2:-}" ] || die "$1 needs a value"; }
+
+cmd_run() {
+  need_config
+  local prompt="" pfile="" agent="" model="" base="" branch="" id="" keep=0 json=0 repos=() allow=() a
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --prompt-file) optval "$@"; pfile="$2"; shift 2 ;;
+      --agent) optval "$@"; agent="$2"; shift 2 ;;
+      --model) optval "$@"; model="$2"; shift 2 ;;
+      --repo) optval "$@"; repos+=("$2"); shift 2 ;;
+      --base) optval "$@"; base="$2"; shift 2 ;;
+      --branch) optval "$@"; branch="$2"; shift 2 ;;
+      --allow) optval "$@"; allow+=("$2"); shift 2 ;;
+      --id) optval "$@"; id="$2"; shift 2 ;;
+      --keep-on-failure) keep=1; shift ;;
+      --json) json=1; shift ;;
+      -*) die "unknown option $1 (agentic help)" ;;
+      *) [ -z "$prompt" ] || die "one prompt; quote it"; prompt="$1"; shift ;;
+    esac
+  done
+  if [ -n "$pfile" ]; then
+    [ -z "$prompt" ] || die "give either a prompt or --prompt-file"
+    [ -f "$pfile" ] || die "no file $pfile"
+    prompt="$(cat "$pfile")"
+  fi
+  [ -n "$prompt" ] || die 'run needs a prompt: agentic run "..." or --prompt-file F'
+  local img; img="$(run_image)"
+  [ -n "$agent" ] || agent="$(image_label "$img" agentic.harness)"
+  agent="${agent:-claude}"
+  case "$agent" in claude|copilot) ;; *) die "--agent must be claude or copilot" ;; esac
+  for a in "${allow[@]}"; do [[ "$a" =~ ^(push|open-pr|deploy:[A-Za-z0-9_.-]+)$ ]] || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
+  [ -n "$id" ] || id="$(new_task_id)"
+  valid_task_id "$id" || die "the task id must match [A-Za-z0-9._-]+"
+  [ ! -e "$(task_dir "$id")" ] || die "task $id exists"
+  [ -n "$branch" ] || branch="${AGENTIC_BRANCH_PREFIX:-agentic/}$id-$(task_slug "$prompt")"
+  check_cap
+
+  abort() { [ "$keep" = 1 ] || rollback_task "$id"; die "$*"; }
+  local p ws dir c own r data port
+  p="$(task_project)"; ws="$(task_ws)"; dir="$(task_dir "$id")"; c="$(task_container "$id")"
+  mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
+  own="$(project_clone)" || abort "could not clone the project's repository into $ws/repos"
+  [ "${#repos[@]}" -gt 0 ] || repos=("$own")
+  for r in "${repos[@]}"; do add_worktree "$r" "$id" "$branch" "$base" || abort "could not create the worktree of $r"; done
+  printf '%s\n' "$prompt" > "$dir/prompt.md"
+  (umask 077; printf 'AGENTIC_TASK_TOKEN=%s\nAGENTIC_AGENT_TOKEN=%s\n' "$(new_token)" "$(new_token)" > "$(task_file "$id" env)")
+  data="$AGENTIC_DATA/projects/$p/harness"
+  if [ -f "$data/claude/.credentials.json" ]; then install -m 600 "$data/claude/.credentials.json" "$dir/home/claude/"; fi
+  if [ -f "$data/copilot/config.json" ]; then install -m 600 "$data/copilot/config.json" "$dir/home/copilot/"; fi
+  task_mounts "$id" "${repos[@]}"
+
+  local mounts=() extra=() v
+  mapfile -t mounts < "$(task_file "$id" mounts)"
+  read -ra extra <<<"${AGENTIC_TASK_DOCKER_ARGS:-}"
+  RUN_ARGS=()
+  shared_run_args "$img"
+  for v in AGENTIC_IDLE_TIMEOUT AGENTIC_NOTIFY_WEBHOOK AGENTIC_GATE_PROTECTED; do
+    if [ -n "${!v:-}" ]; then RUN_ARGS+=(-e "$v"); fi
+  done
+  docker run -d --name "$c" --label agentic.kind=task --label "agentic.task=$id" --label "agentic.project=$p" \
+    --label "agentic.agent=$agent" --label "agentic.branch=$branch" -p "127.0.0.1::$TASK_PORT" \
+    "${mounts[@]}" "${RUN_ARGS[@]}" --env-file "$(task_file "$id" env)" \
+    -e "AGENTIC_TASK_ID=$id" -e "AGENTIC_PROJECT=$p" -e "AGENTIC_AGENT=$agent" -e "AGENTIC_MODEL=$model" \
+    -e "AGENTIC_BRANCH=$branch" -e "AGENTIC_ALLOWED_ACTIONS=$(IFS=,; echo "${allow[*]}")" \
+    "${extra[@]}" "$img" agentic-bridge >/dev/null || abort "docker run failed for $id"
+  if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}"; then
+    docker logs --tail 20 "$c" >&2 2>&1 || true
+    abort "the bridge of $id did not come up"
+  fi
+  port="$(task_port "$id")"
+  if [ "$json" = 1 ]; then
+    jq -cn --arg t "$id" --arg c "$c" --arg p "$port" --arg b "$branch" '{task: $t, container: $c, port: $p, branch: $b}'
+  else
+    echo "$id"
+  fi
+  echo "follow: agentic follow $id" >&2
+}
+
+cmd_status() {
+  local all=0 json=0 id="" f st rows=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all) all=1 ;;
+      --json) json=1 ;;
+      -*) die "unknown option $1" ;;
+      *) id="$1" ;;
+    esac
+    shift
+  done
+  if [ -n "$id" ]; then
+    need_config; need_task "$id"
+    st="$(task_status_json "$id")"
+    if [ "$json" = 1 ]; then printf '%s\n' "$st"; return; fi
+    jq -r --arg id "$id" '"\($id)  \(.state)\(if (.reason // "") != "" then " (" + .reason + ")" else "" end)  \(.agent)  \(.branch // "")",
+      (if (.summary // "") != "" then "summary: " + .summary else empty end),
+      ((.questions // [])[] | "\(.id) (\(.source)): \(.text)\(if (.options | length) > 0 then " [" + (.options | join(", ")) + "]" else "" end)\(if .recommendation then " recommended: " + .recommendation else "" end)"),
+      (if ((.questions // []) | length) > 0 then "reply: agentic answer \($id) \(.questions[0].id) \"…\"" else empty end)' <<<"$st"
+    return
+  fi
+  local files=()
+  if [ "$all" = 1 ]; then
+    files=("$AGENTIC_WORKSPACES"/*/tasks/*/state.json)
+  else
+    need_config
+    files=("$(task_ws)"/tasks/*/state.json)
+  fi
+  for f in "${files[@]}"; do
+    [ -f "$f" ] || continue
+    id="$(basename "$(dirname "$f")")"
+    rows+=("$(TASK_PROJECT="$(jq -r .project "$f")" task_status_json "$id")")
+  done
+  if [ "$json" = 1 ]; then printf '%s\n' "${rows[@]}" | jq -s .; return; fi
+  printf '%-18s %-11s %-8s %-9s %-5s %s\n' TASK STATE AGENT QUESTIONS AGE BRANCH
+  for st in "${rows[@]}"; do
+    [ -n "$st" ] || continue
+    printf '%-18s %-11s %-8s %-9s %-5s %s\n' "$(jq -r .task <<<"$st")" "$(jq -r .state <<<"$st")" "$(jq -r .agent <<<"$st")" \
+      "$(jq -r 'if has("questions") then (.questions | length) else (.open_questions // 0) end' <<<"$st")" "$(age "$(jq -r .created <<<"$st")")" "$(jq -r '.branch // ""' <<<"$st")"
+  done
+}
+
 main() {
   local cmd="${1:-help}"
   if [ "$#" -gt 0 ]; then shift; fi
@@ -282,6 +408,8 @@ main() {
     setup) cmd_setup "$@" ;;
     doctor) cmd_doctor "$@" ;;
     dev) cmd_dev "$@" ;;
+    run) cmd_run "$@" ;;
+    status) cmd_status "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
   esac

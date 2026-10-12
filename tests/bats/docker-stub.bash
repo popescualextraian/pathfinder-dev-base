@@ -1,6 +1,7 @@
 # A docker stand-in. Every call is logged to $DOCKER_LOG ("--- <subcommand>" then one argument per line).
 # Controls: DOCKER_LABEL (image inspect -f output), DOCKER_IMAGE_EXISTS (1/0),
-# DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output).
+# DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output),
+# DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PS (docker ps ids, space-separated).
 install_docker_stub() {
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat > "$BATS_TEST_TMPDIR/bin/docker" <<'EOF'
@@ -9,7 +10,11 @@ install_docker_stub() {
 case "$1" in
   image)
     if [ "$3" = -f ]; then echo "${DOCKER_LABEL:-}"; exit 0; else [ "${DOCKER_IMAGE_EXISTS:-1}" = 1 ]; exit $?; fi ;;
-  inspect) [ -n "${DOCKER_RUNNING:-}" ] && echo "$DOCKER_RUNNING" || exit 1 ;;
+  inspect)
+    if [[ "$*" == *State.Status* ]]; then [ -n "${DOCKER_STATUS:-}" ] || exit 1; echo "$DOCKER_STATUS"; exit 0; fi
+    [ -n "${DOCKER_RUNNING:-}" ] && echo "$DOCKER_RUNNING" || exit 1 ;;
+  port) [ -n "${DOCKER_PORT:-}" ] && echo "127.0.0.1:$DOCKER_PORT" ;;
+  ps) [ -z "${DOCKER_PS:-}" ] || printf '%s\n' $DOCKER_PS ;;
   run) if [ -n "${DOCKER_RUN_OUT:-}" ]; then printf '%s\n' "$DOCKER_RUN_OUT"; fi; exit "${DOCKER_RUN_RC:-0}" ;;
 esac
 exit 0

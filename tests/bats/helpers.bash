@@ -47,3 +47,25 @@ make_task_dir() {
   mkdir -p "$AGENTIC_TASK_DIR"
   jq -n '{version: 1, allowed_actions: $ARGS.positional}' --args "$@" > "$AGENTIC_TASK_DIR/state.json"
 }
+
+# install_curl_stub: a curl stand-in for bridge calls. Each call appends its arguments, the header
+# file's content and the body (stdin) to $CURL_LOG, then prints $CURL_BODY and the HTTP code:
+# $CURL_GET_CODE (default 200) for GET, $CURL_CODE (default 202) otherwise. CURL_RC=7 fails the call.
+install_curl_stub() {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  cat > "$BATS_TEST_TMPDIR/bin/curl" <<'EOF2'
+#!/usr/bin/env bash
+method=GET
+{ echo "--- curl"; for a in "$@"; do echo "arg: $a"; case "$a" in @/*|@.*) sed 's/^/header: /' "${a#@}" ;; esac; done
+  echo "body: $(cat)"; } >> "$CURL_LOG"
+prev=""; for a in "$@"; do [ "$prev" = -X ] && method="$a"; prev="$a"; done
+[ -z "${CURL_RC:-}" ] || exit "$CURL_RC"
+code="${CURL_CODE:-202}"; [ "$method" = GET ] && code="${CURL_GET_CODE:-200}"
+default='{"state":"idle","reason":""}'
+printf '%s\n%s' "${CURL_BODY:-$default}" "$code"
+EOF2
+  chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+  export PATH="$BATS_TEST_TMPDIR/bin:$PATH" CURL_LOG="$BATS_TEST_TMPDIR/curl.log"
+}
+# curl_body N: the body of the Nth curl call.
+curl_body() { grep '^body: ' "$CURL_LOG" | sed -n "${1}p" | sed 's/^body: //'; }
