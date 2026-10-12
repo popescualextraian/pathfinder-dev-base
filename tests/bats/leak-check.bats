@@ -113,3 +113,11 @@ setup() {
   [[ "$output" == *"resolved"* ]]
   [[ "$output" != *"integrity"* ]]
 }
+
+@test "an integrity-shaped line outside a lockfile is still flagged" {
+  printf '      "integrity": "sha512-xxAcMeCoRpxx==",\n' > "$R/notes.json"
+  printf 'acmecorp\n' >> "$AGENTIC_LEAK_DENYLIST"
+  run bash "$LC" "$R"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"notes.json"* ]]
+}

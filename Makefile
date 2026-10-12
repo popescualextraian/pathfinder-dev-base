@@ -3,6 +3,7 @@ SHELL_SOURCES = $(wildcard bin/agentic lib/host/*.sh image/*.sh image/lib/*.sh i
   image/tools/*.sh image/bin/* image/profile.d/*.sh derive/*.sh tools/*.sh tests/image/*.sh \
   image/task/*.sh image/task/lib/*.sh tests/e2e/*.sh)
 
+.DEFAULT_GOAL := test
 .PHONY: test lint build smoke
 
 BRIDGE_DEPS = bridge/node_modules/.package-lock.json

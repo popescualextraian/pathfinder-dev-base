@@ -25,4 +25,25 @@ describe("redact", () => {
     const v = redactDeep({ a: ["sk-ant-api03-0123456789abcdef"], b: { c: 1, d: "ok" } }, r);
     expect(v).toEqual({ a: ["[redacted]"], b: { c: 1, d: "ok" } });
   });
+
+  it("masks a secret that contains another one completely (longest first)", () => {
+    const rr = makeRedactor(["abcdefgh", "abcdefghXYZ12345", "abcdefgh"]);
+    expect(rr("x abcdefghXYZ12345 y")).toBe("x [redacted] y");
+  });
+
+  it("ignores empty and short secrets", () => {
+    const rr = makeRedactor(["", "abc"]);
+    expect(rr("abc and more")).toBe("abc and more");
+  });
+
+  it("masks a lowercase bearer scheme", () => {
+    expect(r("authorization: bearer abc.def-ghi_jkl")).toBe("authorization: Bearer [redacted]");
+  });
+
+  it("does not mutate its input", () => {
+    const input = { a: ["sk-ant-api03-0123456789abcdef"], b: { d: "ok" } };
+    const copy = structuredClone(input);
+    redactDeep(input, r);
+    expect(input).toEqual(copy);
+  });
 });
