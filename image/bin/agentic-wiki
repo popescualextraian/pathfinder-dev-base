@@ -269,6 +269,43 @@ cmd_check() {
   echo "wiki: ok"
 }
 
+# --- affected ----------------------------------------------------------------------------------
+
+# cmd_affected RANGE: maps the files git diff lists to the component with the longest matching
+# source; omitted.yaml paths print as omitted, the rest as unclaimed.
+cmd_affected() {
+  local files f e best id src
+  declare -A owner=()
+  files="$(git -C "$ROOT" diff --name-only "$1")" || exit 2
+  while IFS=$'\t' read -r id src; do
+    owner["${src%/}"]="$id"
+  done < <(wiki_model | jq -r '.[] | select(.fm.kind == "component") | .id as $i
+      | (.fm.sources | if type == "array" then .[] else empty end) | select(type == "string") | [$i, .] | @tsv')
+  if [ -f "$ROOT/$WIKI_DIR/omitted.yaml" ]; then
+    while IFS= read -r e; do
+      if [ -n "$e" ]; then owner["${e%/}"]="-"; fi
+    done < <(yq -r '.paths[]?.path // ""' "$ROOT/$WIKI_DIR/omitted.yaml")
+  fi
+  while IFS= read -r f; do
+    case "$f" in
+      ""|"$WIKI_DIR"/*|.claude/*|.github/instructions/*|.github/copilot-instructions.md|CLAUDE.md) continue ;;
+    esac
+    best=""
+    for e in "${!owner[@]}"; do
+      if [ "$f" = "$e" ] || [[ "$f" == "$e"/* ]]; then
+        if [ "${#e}" -gt "${#best}" ]; then best="$e"; fi
+      fi
+    done
+    if [ -z "$best" ]; then
+      echo "unclaimed $f"
+    elif [ "${owner[$best]}" = - ]; then
+      echo "omitted $f"
+    else
+      echo "component ${owner[$best]} $f"
+    fi
+  done <<<"$files"
+}
+
 # --- dispatch ----------------------------------------------------------------------------------
 
 cmd="${1:-}"; [ "$#" -gt 0 ] && shift
@@ -276,5 +313,6 @@ case "$cmd" in
   build) need_wiki; cmd_build ;;
   sync) need_wiki; cmd_sync ;;
   check) cmd_check ;;
+  affected) need_wiki; [ "$#" -eq 1 ] || usage; cmd_affected "$1" ;;
   *) usage ;;
 esac
