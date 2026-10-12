@@ -245,3 +245,86 @@ record() {
   run grep -qP '[\x00-\x08\x0b-\x1f\x7f]' <<<"$out"
   [ "$status" -ne 0 ]
 }
+
+@test "status of a task whose container is gone shows its open questions and the reply hint from the task files" {
+  record T-24 suspended
+  {
+    jq -cn '{id:"Q1", source:"ask", text:"Which DB?\u001b[2J", options:["pg","sqlite"], recommendation:"pg", asked:"t1", status:"open"}'
+    jq -cn '{id:"Q2", source:"ask", text:"Old?", options:[], recommendation:null, asked:"t2", status:"open"}'
+    jq -cn '{id:"Q2", source:"ask", text:"Old?", options:[], recommendation:null, asked:"t2", status:"answered", answer:"yes"}'
+  } > "$T/T-24/questions.jsonl"
+  DOCKER_STATUS=exited run ag status T-24
+  [ "$status" -eq 0 ]
+  [[ "$(sed -n 1p <<<"$output")" == "T-24  suspended  claude  agentic/T-24" ]]
+  [[ "$output" == *"Q1 (ask): Which DB? [2J [pg, sqlite] recommended: pg"* ]]
+  [[ "$output" != *"Q2"* ]]
+  [[ "$output" == *'reply: agentic answer T-24 Q1 "…"'* ]]
+  run grep -qP '[\x00-\x08\x0b-\x1f\x7f]' <<<"$output"
+  [ "$status" -ne 0 ]
+  DOCKER_STATUS=exited run ag status
+  [[ "$(sed -n 2p <<<"$output")" =~ ^T-24\ +suspended\ +claude\ +1\  ]]
+}
+
+@test "status --json has one shape, with the bridge live or not" {
+  record T-25 suspended
+  printf '%s\n' '{"id":"Q1","source":"ask","text":"Which DB?","options":[],"recommendation":null,"asked":"t1","status":"open"}' > "$T/T-25/questions.jsonl"
+  DOCKER_STATUS=exited run ag status T-25 --json
+  [ "$status" -eq 0 ]
+  off="$output"
+  [ "$(jq -c '.questions' <<<"$off")" = '[{"id":"Q1","source":"ask","text":"Which DB?","options":[],"recommendation":null,"asked":"t1"}]' ]
+  [ "$(jq -r '.inbox | type' <<<"$off")" = number ]
+  [ "$(jq -r 'has("open_questions")' <<<"$off")" = false ]
+  # the live shape: the bridge's status() (the record without the inbox texts, plus questions)
+  live="$(jq -c '.inbox = 0 | .questions = []' "$T/T-25/state.json")"
+  CURL_BODY="$live" run ag status T-25 --json
+  [ "$(jq -c 'keys' <<<"$output")" = "$(jq -c 'keys' <<<"$off")" ]
+  # no questions file: an empty list
+  record T-26 failed
+  DOCKER_STATUS=exited run ag status T-26 --json
+  [ "$(jq -c .questions <<<"$output")" = '[]' ]
+}
+
+@test "host git ignores hooks and fsmonitor planted in a task clone" {
+  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
+  mkdir -p "$AGENTIC_WORKSPACES/demo/repos"
+  git clone -q "$PROJ" "$clone"; printf '.worktrees/\n' >> "$clone/.git/info/exclude"
+  for h in post-checkout reference-transaction pre-auto-gc; do
+    printf '#!/bin/sh\ntouch "%s/hook-ran"\n' "$BATS_TEST_TMPDIR" > "$clone/.git/hooks/$h"; chmod +x "$clone/.git/hooks/$h"
+  done
+  printf '#!/bin/sh\ntouch "%s/fsmonitor-ran"\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/fsmon"; chmod +x "$BATS_TEST_TMPDIR/fsmon"
+  git -C "$clone" config core.fsmonitor "$BATS_TEST_TMPDIR/fsmon"
+  run ag run --id T-27 "x"
+  [ "$status" -eq 0 ]
+  record T-27 idle
+  DOCKER_STATUS=exited run ag clean T-27
+  [ "$status" -eq 0 ]
+  [ ! -e "$BATS_TEST_TMPDIR/hook-ran" ]
+  [ ! -e "$BATS_TEST_TMPDIR/fsmonitor-ran" ]
+}
+
+@test "run warns when the project .env turns the gate off for every task" {
+  printf 'AGENTIC_GATE=0\n' > "$PROJ/.agentic/.env"
+  run --separate-stderr ag run --id T-28 "x"
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"warning: .agentic/.env sets AGENTIC_GATE=0: the gate is off for every task"* ]]
+  printf 'AGENTIC_GATE=1\n' > "$PROJ/.agentic/.env"
+  run --separate-stderr ag run --id T-29 "x"
+  [[ "$stderr" != *warning* ]]
+}
+
+@test "a run that fails early shows the bridge's reason before the rollback deletes it" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin2"
+  # docker run leaves a bridge log in the task directory, as a bridge that fails at start does
+  cat > "$BATS_TEST_TMPDIR/bin2/docker" <<EOF2
+#!/usr/bin/env bash
+if [ "\$1" = run ]; then printf 'boot\nagent failed to start: not logged in\e[31m\n' > "$T/T-30/bridge.log"; fi
+exec "$BATS_TEST_TMPDIR/bin/docker" "\$@"
+EOF2
+  chmod +x "$BATS_TEST_TMPDIR/bin2/docker"
+  PATH="$BATS_TEST_TMPDIR/bin2:$PATH" DOCKER_STATUS=exited run ag run --id T-30 "x"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"agent failed to start: not logged in"* ]]
+  run grep -qP '[\x00-\x08\x0b-\x1f\x7f]' <<<"$output"
+  [ "$status" -ne 0 ]
+  [ ! -e "$T/T-30" ]
+}

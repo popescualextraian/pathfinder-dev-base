@@ -241,3 +241,17 @@ mkclean() {   # a task with a worktree, as run leaves it, container exited
   CURL_BODY='<html>proxy</html>' run ag send T-25 "x"
   [ "$status" -eq 1 ]; [[ "$output" == *"not a task state"* ]]
 }
+
+@test "send and answer reviving an interrupted task clear the interrupted marker" {
+  record T-40 running
+  : > "$T/T-40.interrupted"
+  DOCKER_STATUS=exited run ag send T-40 "go on"
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/T-40.interrupted" ]
+  rm -f "$BATS_TEST_TMPDIR/docker.status"
+  record T-41 running
+  : > "$T/T-41.interrupted"
+  DOCKER_STATUS=exited run ag answer T-41 "pg"
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/T-41.interrupted" ]
+}

@@ -336,6 +336,9 @@ cmd_run() {
   for v in AGENTIC_IDLE_TIMEOUT AGENTIC_NOTIFY_WEBHOOK AGENTIC_GATE_PROTECTED; do
     if [ -n "${!v:-}" ]; then RUN_ARGS+=(-e "$v"); fi
   done
+  # The .env reaches every task; a gate value there wins over the bridge's default of on.
+  v="$(dotenv_value "$(project_root)/.agentic/.env" AGENTIC_GATE)"
+  if [ -n "$v" ] && [ "$v" != 1 ]; then say "warning: .agentic/.env sets AGENTIC_GATE=$(printf '%s' "$v" | plain): the gate is off for every task"; fi
 
   # From here any failure, die or signal removes what was created (unless --keep-on-failure).
   RUN_ROLLBACK_ID="$id"; RUN_KEEP="$keep"
@@ -361,7 +364,9 @@ cmd_run() {
     -e "AGENTIC_BRANCH=$branch" -e "AGENTIC_ALLOWED_ACTIONS=$(IFS=,; echo "${allow[*]}")" \
     "${extra[@]}" "$img" agentic-bridge >/dev/null || die "docker run failed for $id"
   if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}"; then
-    docker logs --tail 20 "$c" >&2 2>&1 || true
+    docker logs --tail 20 "$c" 2>&1 | plain >&2 || true
+    # the bridge's own reason, before the rollback removes the task directory
+    if [ -s "$dir/bridge.log" ]; then { echo "bridge.log:"; tail -n 20 "$dir/bridge.log" | plain; } >&2; fi
     die "the bridge of $id did not come up"
   fi
   RUN_ROLLBACK_ID=""; trap - EXIT INT TERM
@@ -417,7 +422,7 @@ cmd_status() {
     [ -n "$st" ] || continue
     printf '%-18s %-11s %-8s %-9s %-5s %s\n' "$(jq -r '.task | tostring | gsub("[[:cntrl:]]"; " ")' <<<"$st")" \
       "$(jq -r '.state | tostring | gsub("[[:cntrl:]]"; " ")' <<<"$st")" "$(jq -r '.agent | tostring | gsub("[[:cntrl:]]"; " ")' <<<"$st")" \
-      "$(jq -r 'if has("questions") then (.questions | length) else (.open_questions // 0) end' <<<"$st")" "$(age "$(jq -r .created <<<"$st")")" \
+      "$(jq -r '.questions // [] | length' <<<"$st")" "$(age "$(jq -r .created <<<"$st")")" \
       "$(jq -r '.branch // "" | tostring | gsub("[[:cntrl:]]"; " ")' <<<"$st")"
   done
 }
@@ -560,9 +565,9 @@ cmd_clean() {
     [ -f "$(task_file "$id" repos)" ] || die "task $id has no repos file, so unpushed work cannot be checked; run agentic clean $id --force"
     while IFS=$'\t' read -r _ wt branch; do
       [ -d "$wt" ] || continue
-      why="$(git -C "$wt" status --porcelain 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
+      why="$(hgit -C "$wt" status --porcelain 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
       [ -z "$why" ] || die "$wt has uncommitted changes; commit and push them, or run agentic clean $id --force"
-      why="$(git -C "$wt" log --oneline "$branch" --not --remotes 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
+      why="$(hgit -C "$wt" log --oneline "$branch" --not --remotes 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
       [ -z "$why" ] || die "$wt has commits on no remote branch ($branch); push them, or run agentic clean $id --force"
     done < "$(task_file "$id" repos)"
   fi

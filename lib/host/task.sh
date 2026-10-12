@@ -21,6 +21,9 @@ task_slug() {
   slug="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//' | cut -c1-40 | sed -E 's/-+$//')"
   printf '%s\n' "${slug:-task}"
 }
+# hgit ARG...: git for the task clones and worktrees. Their .git is writable from the task container,
+# so host git runs none of their hooks and no fsmonitor command.
+hgit() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
 valid_task_id() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]; }
 need_task() {
   valid_task_id "${1:-}" || die "usage: a task id ([A-Za-z0-9._-]+)"
@@ -99,9 +102,9 @@ rollback_task() {
   if [ -f "$(task_file "$id" repos)" ]; then
     while IFS=$'\t' read -r clone wt branch; do
       [[ "$clone" == "$ws/repos/"?* && "$wt" == "$ws/repos/"?* ]] || continue
-      git -C "$clone" worktree remove --force "$wt" >/dev/null 2>&1 || safe_rm "$ws/repos" "$wt"
-      git -C "$clone" worktree prune >/dev/null 2>&1 || true
-      git -C "$clone" branch -D "$branch" >/dev/null 2>&1 || true
+      hgit -C "$clone" worktree remove --force "$wt" >/dev/null 2>&1 || safe_rm "$ws/repos" "$wt"
+      hgit -C "$clone" worktree prune >/dev/null 2>&1 || true
+      hgit -C "$clone" branch -D "$branch" >/dev/null 2>&1 || true
     done < "$(task_file "$id" repos)"
   fi
   safe_rm "$ws/tasks" "$(task_dir "$id")"
@@ -116,7 +119,7 @@ project_clone() {
   if [ ! -d "$clone/.git" ]; then
     url="$(git -C "$root" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#' || true)"
     mkdir -p "$(task_ws)/repos"
-    git clone -q "${url:-$root}" "$clone" >&2 || return 1
+    hgit clone -q "${url:-$root}" "$clone" >&2 || return 1
     printf '.worktrees/\n' >> "$clone/.git/info/exclude"
   fi
   printf '%s\n' "$name"
@@ -126,9 +129,9 @@ project_clone() {
 add_worktree() {
   local clone base="$4"; clone="$(task_ws)/repos/$1"
   [ -d "$clone/.git" ] || { say "no clone $clone; clone the repository there first"; return 1; }
-  git -C "$clone" fetch -q origin >/dev/null 2>&1 || true
-  [ -n "$base" ] || base="$(git -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)"
-  git -C "$clone" worktree add -q -b "$3" "$clone/.worktrees/$2" "$base" >&2 || return 1
+  hgit -C "$clone" fetch -q origin >/dev/null 2>&1 || true
+  [ -n "$base" ] || base="$(hgit -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)"
+  hgit -C "$clone" worktree add -q -b "$3" "$clone/.worktrees/$2" "$base" >&2 || return 1
   printf '%s\t%s\t%s\n' "$clone" "$clone/.worktrees/$2" "$3" >> "$(task_file "$2" repos)"
 }
 
@@ -155,11 +158,14 @@ age() {
   if [ "$s" -lt 3600 ]; then echo "$((s / 60))m"; elif [ "$s" -lt 86400 ]; then echo "$((s / 3600))h"; else echo "$((s / 86400))d"; fi
 }
 
-# open_questions ID: the number of open questions in questions.jsonl (the last line per id wins).
+# open_questions ID: the open questions in questions.jsonl (the last line per id wins) as a JSON
+# array, in the shape of the bridge's status; [] when there is no file or it cannot be read.
 open_questions() {
-  local f; f="$(task_dir "$1")/questions.jsonl"
-  [ -f "$f" ] || { echo 0; return; }
-  jq -s 'group_by(.id) | map(last) | map(select(.status == "open")) | length' "$f" 2>/dev/null || echo 0
+  local f out; f="$(task_dir "$1")/questions.jsonl"
+  [ -f "$f" ] || { echo '[]'; return; }
+  out="$(jq -cs 'group_by(.id) | map(last) | map(select(.status == "open")) | sort_by(.id | ltrimstr("Q") | tonumber? // 0)
+    | map({id, source, text, options: (.options // []), recommendation, asked})' "$f" 2>/dev/null)" || out='[]'
+  printf '%s\n' "${out:-[]}"
 }
 
 # note_interrupted ID: appends interrupted to the project events log the first time it is seen.
@@ -172,7 +178,8 @@ note_interrupted() {
   : > "$m"
 }
 
-# task_status_json ID: the live status when the bridge answers, else the record with the derived state.
+# task_status_json ID: the live status when the bridge answers, else the same shape from the task
+# files: the record with the derived state, the inbox as a count and the open questions.
 task_status_json() {
   local st
   if [ "$(container_status "$1")" = running ] && bridge_req "$1" GET /status && [ "$BRIDGE_CODE" = 200 ]; then
@@ -180,7 +187,7 @@ task_status_json() {
   fi
   st="$(task_state "$1")"
   [ "$st" != interrupted ] || note_interrupted "$1"
-  jq -c --arg s "$st" --argjson n "$(open_questions "$1")" 'del(.inbox) | .state = $s | .open_questions = $n' "$(task_dir "$1")/state.json"
+  jq -c --arg s "$st" --argjson q "$(open_questions "$1")" '.inbox = (.inbox // [] | length) | .state = $s | .questions = $q' "$(task_dir "$1")/state.json"
 }
 
 # plain: stdin without control characters (terminal escapes) other than newline and tab.
@@ -199,6 +206,8 @@ ensure_running() {
   check_cap
   docker start "$(task_container "$id")" >/dev/null || die "could not start the container of $id"
   wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}" || die "the bridge of $id did not come up; see agentic logs $id --start"
+  # revived: a later interruption is logged to the project events log again
+  rm -f "$(task_file "$id" interrupted)"
 }
 
 # bridge_result ID: the new state after a 2xx answer; otherwise the bridge's message and HTTP code.
