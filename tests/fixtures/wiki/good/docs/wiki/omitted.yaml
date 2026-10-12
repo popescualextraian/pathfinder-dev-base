@@ -1,0 +1,4 @@
+# Paths that deliberately belong to no component.
+paths:
+  - path: scripts/
+    reason: developer helpers, not shipped
