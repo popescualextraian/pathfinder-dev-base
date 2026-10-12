@@ -236,9 +236,14 @@ describe("fix round 1", () => {
     const t = running();
     t.apply(perm);
     expect(t.record.state).toBe("waiting");
-    expect(fx(t.apply({ kind: "cancel" }))).toEqual([
-      { kind: "permission", question: "Q1", optionId: null }, { kind: "cancel" },
-    ]);
+    const effects = fx(t.apply({ kind: "cancel" }));
+    expect(effects[0]).toEqual({ kind: "permission", question: "Q1", optionId: null });
+    expect(effects.at(-1)).toEqual({ kind: "cancel" });
+    // the cancelled request can no longer be answered: its question is closed and the task is running again
+    expect(t.openQuestions()).toEqual([]);
+    expect(t.record.state).toBe("running");
+    t.apply({ kind: "turnEnd", stopReason: "cancelled", summary: "" });
+    expect(t.record.state).toBe("idle");
   });
 
   it("cancel is idempotent until the turn ends", () => {

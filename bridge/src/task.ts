@@ -82,7 +82,10 @@ export class TaskMachine {
         if (!this.promptOutstanding) return fail("conflict", "no turn in progress");
         if (this.cancelling) return { ok: true, effects: fx };
         this.cancelling = true;
-        for (const id of this.pending) fx.push({ kind: "permission", question: id, optionId: null });
+        for (const id of this.pending) {
+          fx.push({ kind: "permission", question: id, optionId: null });
+          this.closeCancelled(id, fx);
+        }
         this.pending.clear();
         fx.push({ kind: "cancel" });
         return { ok: true, effects: fx };
@@ -203,6 +206,19 @@ export class TaskMachine {
       this.deliver(fx);
     }
     return { ok: true, effects: fx };
+  }
+
+  // closeCancelled: a permission question whose request was cancelled can no longer be answered; close it,
+  // or the task would wait on it after the turn ends.
+  private closeCancelled(id: string, fx: Effect[]): void {
+    const q = this.questions.find((x) => x.id === id);
+    if (!q || q.status !== "open") return;
+    q.status = "answered";
+    q.answer = "cancelled";
+    q.grant = [];
+    q.answered = this.now();
+    fx.push({ kind: "question", question: { ...q } });
+    if (this.record.state === "waiting") this.setState("running", "", fx);
   }
 
   // deliver: the inbox as one prompt when nothing is outstanding; spawns the agent if needed.

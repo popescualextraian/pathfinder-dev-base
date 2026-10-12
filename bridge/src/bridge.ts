@@ -1,0 +1,287 @@
+// The orchestrator: feeds inputs to the state machine and performs its effects (spec §6).
+import { spawnSync } from "node:child_process";
+import type { ApiTarget } from "./api.js";
+import type { AgentHooks, AgentLike } from "./agent.js";
+import type { Config } from "./config.js";
+import { UpdateMapper, type Mapped } from "./map.js";
+import type { Notifier } from "./notify.js";
+import type { Store } from "./store.js";
+import { TaskMachine, type Effect, type Input, type Outcome } from "./task.js";
+import { renderEvent } from "./transcript.js";
+import { makeRedactor, redactDeep } from "./redact.js";
+import type { EventType, Question, TaskEvent, TaskRecord } from "./types.js";
+
+export class BridgeError extends Error {}
+
+export interface BridgeDeps {
+  store: Store;
+  config: Config;
+  notifier: Notifier;
+  paragraph: string;
+  agentFactory(hooks: AgentHooks): AgentLike;
+  exit(code: number): void;
+  now(): string;
+  log(line: string): void;
+}
+
+const EXIT_GRACE_MS = 100;
+const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+export class Bridge implements ApiTarget {
+  private machine: TaskMachine | null = null;
+  private readonly mapper = new UpdateMapper();
+  private agent: AgentLike | null = null;
+  private readonly listeners = new Set<(e: TaskEvent) => void>();
+  private readonly waiters = new Map<string, (optionId: string | null) => void>();
+  private idle: NodeJS.Timeout | null = null;
+  private flush: NodeJS.Timeout | null = null;
+  private readonly kills = new Set<Promise<void>>();
+  private readonly redact: (s: string) => string;
+
+  constructor(private readonly d: BridgeDeps) {
+    // what leaves the bridge outside the store (status, webhook, events log, log lines) is masked too
+    this.redact = makeRedactor([d.config.tokens.task, d.config.tokens.agent]);
+  }
+
+  boot(): void {
+    const { store, config } = this.d;
+    store.checkWritable();
+    const fresh = !store.hasRecord();
+    let record: TaskRecord;
+    if (fresh) {
+      const prompt = store.readPrompt() ?? config.prompt;
+      if (!prompt) throw new BridgeError(`no prompt: write ${store.path("prompt.md")} or set AGENTIC_PROMPT`);
+      const now = this.d.now();
+      record = {
+        version: 1, task: config.task, project: config.project, agent: config.agent, model: config.model, state: "starting",
+        reason: "", session: null, branch: config.branch, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
+        inbox: [{ kind: "prompt", text: prompt }], summary: "", stopped_by_user: false,
+      };
+    } else {
+      record = store.readRecord();
+    }
+    // all questions, answered ones too: the next question id counts them all
+    this.machine = new TaskMachine(record, store.readQuestions(), this.d.now);
+    this.flush = setInterval(() => this.emitMapped(this.mapper.flushPartial()), 1000);
+    this.run({ kind: "boot", fresh });
+  }
+
+  ready(): boolean {
+    return this.machine !== null;
+  }
+
+  status(): Record<string, unknown> {
+    const m = this.m();
+    const { inbox, ...rest } = m.record;
+    return redactDeep({
+      ...rest,
+      inbox: inbox.length,
+      questions: m.openQuestions().map((q) => ({ id: q.id, source: q.source, text: q.text, options: q.options, recommendation: q.recommendation, asked: q.asked })),
+    }, this.redact);
+  }
+
+  command(input: Input): Outcome {
+    return this.run(input);
+  }
+
+  events(since: number, limit: number): TaskEvent[] {
+    return this.d.store.readEvents(since, limit);
+  }
+
+  subscribe(fn: (e: TaskEvent) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  // shutdownAgent: ends the agent without a state change (SIGTERM from Docker: the next boot shows interrupted).
+  async shutdownAgent(): Promise<void> {
+    this.clearTimers();
+    const a = this.agent;
+    this.agent = null;
+    if (a) this.track(a.kill());
+    await Promise.all([...this.kills]);
+  }
+
+  // track: a kill in progress; shutdownAgent waits for all of them, so no agent process outlives the bridge.
+  private track(p: Promise<void>): void {
+    const t = p.catch(() => {}).finally(() => this.kills.delete(t));
+    this.kills.add(t);
+  }
+
+  private log(line: string): void {
+    this.d.log(this.redact(line));
+  }
+
+  private m(): TaskMachine {
+    if (!this.machine) throw new BridgeError("the bridge has not booted");
+    return this.machine;
+  }
+
+  private run(input: Input): Outcome {
+    const m = this.m();
+    const out = m.apply(input);
+    // any input counts as activity: the machine only emits timer effects on state changes
+    if (input.kind !== "idleTimeout") this.touch();
+    if (!out.ok) return out;
+    // the record first: the gate reads allowed_actions from it before the agent retries
+    this.d.store.writeRecord(m.record);
+    for (const e of out.effects) this.perform(e);
+    this.d.store.writeRecord(m.record);
+    if (input.kind !== "idleTimeout") this.touch();
+    return out;
+  }
+
+  // touch: restarts the idle timer while the task sits in waiting or idle.
+  private touch(): void {
+    const s = this.m().record.state;
+    if (s === "waiting" || s === "idle") this.armIdle();
+  }
+
+  private perform(e: Effect): void {
+    switch (e.kind) {
+      case "emit": this.emit(e.type, e.data); break;
+      case "question": this.d.store.appendQuestion(e.question); break;
+      case "timer": if (e.on) this.armIdle(); else this.disarmIdle(); break;
+      case "notify": {
+        const q = e.question ? redactDeep<Question>(e.question, this.redact) : null;
+        void this.d.notifier.webhook(redactDeep(this.m().record, this.redact), q).catch((err) => this.log(`webhook failed: ${message(err)}`));
+        break;
+      }
+      case "spawn": void this.spawn(e.mode).catch((err) => this.log(`spawn failed: ${message(err)}`)); break;
+      case "prompt":
+        this.emit("message", { role: "user", text: e.text, final: true });
+        void this.prompt(e.text).catch((err) => this.log(`prompt failed: ${message(err)}`));
+        break;
+      case "cancel": this.agent?.cancel(); break;
+      case "permission": this.waiters.get(e.question)?.(e.optionId); this.waiters.delete(e.question); break;
+      case "kill": { const a = this.agent; this.agent = null; if (a) this.track(a.kill()); break; }
+      case "exit": this.clearTimers(); this.d.exit(e.code); break;
+    }
+  }
+
+  private hooks(self: () => AgentLike | null): AgentHooks {
+    return {
+      onUpdate: (u) => { if (this.agent === self()) this.emitMapped(this.mapper.handle(u)); },
+      onPermission: (req) => new Promise((resolve) => {
+        // The id the machine will give this request (it counts every question). Registered before the
+        // input runs: while cancelling, the machine answers at once with an effect naming that id.
+        const m = this.m();
+        const id = `Q${m.questions.length + 1}`;
+        const before = m.questions.length;
+        this.waiters.set(id, resolve);
+        this.run({ kind: "permissionRequest", ...req });
+        // ignored (no turn outstanding): nothing was recorded and no effect resolved it
+        if (m.questions.length === before && this.waiters.get(id) === resolve) {
+          this.waiters.delete(id);
+          resolve(null);
+        }
+      }),
+      onExit: (error) => {
+        if (this.agent !== self()) return;
+        this.agent = null;
+        this.run({ kind: "agentExit", error });
+      },
+      onStderr: (s) => this.log(`agent: ${s.trimEnd()}`),
+    };
+  }
+
+  private async spawn(mode: "new" | "load"): Promise<void> {
+    let agent: AgentLike | null = null;
+    agent = this.d.agentFactory(this.hooks(() => agent));
+    this.agent = agent;
+    const rec = this.m().record;
+    try {
+      await agent.start();
+      let session: string;
+      if (mode === "load" && rec.session) {
+        try {
+          await agent.loadSession(rec.session);
+          session = rec.session;
+        } catch (err) {
+          this.emit("error", { message: `session ${rec.session} could not be loaded (${message(err)}); started a new session with the task history` });
+          session = await agent.newSession();
+          rec.inbox.unshift({ kind: "prompt", text: this.seed() });
+        }
+      } else {
+        session = await agent.newSession();
+      }
+      if (this.agent !== agent) return;
+      this.run({ kind: "agentReady", session });
+    } catch (err) {
+      if (this.agent !== agent) return;
+      this.agent = null;
+      this.track(agent.kill());
+      this.run({ kind: "agentExit", error: `agent failed to start: ${message(err)}` });
+    }
+  }
+
+  private async prompt(text: string): Promise<void> {
+    const agent = this.agent;
+    if (!agent) return;
+    let stopReason = "error";
+    let failed = false;
+    try {
+      stopReason = await agent.prompt(text);
+    } catch (err) {
+      // A child that died mid-turn rejects the prompt and reports its exit: give the exit the turn,
+      // so the one failure is handled once (as agentExit), not also as a failed turn.
+      await new Promise((r) => setTimeout(r, EXIT_GRACE_MS));
+      if (this.agent !== agent) return;
+      failed = true;
+      this.emit("error", { message: `prompt failed: ${message(err)}; the message is kept and goes out with the next one` });
+    }
+    if (this.agent !== agent) return;
+    const { events, summary } = this.mapper.finishTurn();
+    this.emitMapped(events);
+    this.run({ kind: "turnEnd", stopReason, summary });
+    if (failed) {
+      // the machine cleared its inbox when it sent the text: keep the user's words
+      const rec = this.m().record;
+      rec.inbox.unshift({ kind: "prompt", text });
+      this.d.store.writeRecord(rec);
+    }
+  }
+
+  // seed: the first prompt of a replacement session (spec §6, Resume).
+  private seed(): string {
+    const m = this.m();
+    const qa = m.questions.map((q) => `${q.id}: ${q.text} → ${q.status === "answered" ? q.answer : "(open)"}`).join("\n") || "(none)";
+    const log = spawnSync("git", ["-C", this.d.config.work, "log", "--oneline", "-20"], { encoding: "utf8" }).stdout?.trim() || "(none)";
+    return `Original task:\n${this.d.store.readPrompt() ?? this.d.config.prompt ?? ""}\n\nQuestions and answers so far:\n${qa}\n\nRecent commits:\n${log}\n\nThe earlier session could not be restored. Check git status and continue the task.`;
+  }
+
+  private emitMapped(list: Mapped[]): void {
+    for (const e of list) this.emit(e.type, e.data);
+  }
+
+  private emit(type: EventType, data: Record<string, unknown>): void {
+    const m = this.m();
+    const ev = this.d.store.appendEvent({ ts: this.d.now(), task: m.record.task, session: m.record.session, agent: m.record.agent, type, data });
+    const md = renderEvent(ev);
+    if (md) this.d.store.appendTranscript(md);
+    if (type === "state") this.d.notifier.logState(redactDeep(m.record, this.redact));
+    for (const fn of this.listeners) {
+      try {
+        fn(ev);
+      } catch (err) {
+        this.log(`listener failed: ${message(err)}`);
+      }
+    }
+  }
+
+  private armIdle(): void {
+    this.disarmIdle();
+    this.idle = setTimeout(() => this.run({ kind: "idleTimeout" }), this.d.config.idleTimeoutMs);
+  }
+
+  private disarmIdle(): void {
+    if (this.idle) clearTimeout(this.idle);
+    this.idle = null;
+  }
+
+  private clearTimers(): void {
+    this.disarmIdle();
+    if (this.flush) clearInterval(this.flush);
+    this.flush = null;
+  }
+}

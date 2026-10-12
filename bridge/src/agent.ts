@@ -143,7 +143,7 @@ export class AgentProcess implements AgentLike {
   }
 
   cancel(): void {
-    if (this.conn && this.sessionId && this.inFlight) void this.conn.agent.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionId });
+    if (this.conn && this.sessionId && this.inFlight) this.conn.agent.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionId }).catch(() => {}); // the connection may close right after
   }
 
   async kill(): Promise<void> {
