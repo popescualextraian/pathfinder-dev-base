@@ -42,9 +42,28 @@ describe("start", () => {
     }
   });
 
-  it("a suspended task boots lazily; a stopped one exits", () => {
-    expect(fx(m({ state: "suspended", inbox: [] }).apply({ kind: "boot", fresh: false }))).toEqual([]);
+  it("a suspended task boots lazily with the idle timer on; a stopped one exits", () => {
+    expect(fx(m({ state: "suspended", inbox: [] }).apply({ kind: "boot", fresh: false }))).toEqual([{ kind: "timer", on: true }]);
     expect(fx(m({ state: "stopped", inbox: [] }).apply({ kind: "boot", fresh: false }))).toEqual([{ kind: "exit", code: 0 }]);
+  });
+
+  it("a lazy boot in suspended, interrupted or failed arms the timer; its timeout exits 0 without a state change", () => {
+    for (const s of ["suspended", "interrupted", "failed", "running"] as const) {
+      const t = m({ state: s, reason: "before", inbox: [] });
+      const boot = fx(t.apply({ kind: "boot", fresh: false }));
+      expect(boot.at(-1)).toEqual({ kind: "timer", on: true });
+      const state = t.record.state;
+      expect(fx(t.apply({ kind: "idleTimeout" }))).toEqual([{ kind: "exit", code: 0 }]);
+      expect(t.record.state).toBe(state);
+    }
+  });
+
+  it("once a resume spawns the agent, the idle timeout of a lazy boot no longer applies", () => {
+    const t = m({ state: "suspended", session: "s1", inbox: [] });
+    t.apply({ kind: "boot", fresh: false });
+    t.apply({ kind: "userPrompt", text: "go on" });
+    expect(fx(t.apply({ kind: "idleTimeout" }))).toEqual([]);
+    expect(t.record.state).toBe("starting");
   });
 });
 

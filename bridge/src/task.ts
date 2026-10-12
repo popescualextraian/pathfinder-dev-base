@@ -35,6 +35,7 @@ export const GRANT_RE = /^(push|open-pr|deploy:[A-Za-z0-9_.-]+)$/;
 const PROMPTABLE: State[] = ["idle", "waiting", "suspended", "interrupted", "failed"];
 const NOTIFY: State[] = ["waiting", "idle", "failed", "stopped"];
 const UNCLEAN: State[] = ["starting", "running", "waiting", "idle"];
+const DORMANT: State[] = ["suspended", "interrupted", "failed"];
 
 const fail = (code: "conflict" | "not_found" | "bad_request", message: string): Outcome => ({ ok: false, code, message });
 
@@ -47,6 +48,11 @@ export class TaskMachine {
   private readonly pending = new Set<string>(); // permission questions the live agent waits on
 
   constructor(public record: TaskRecord, public questions: Question[], private readonly now: () => string) {}
+
+  // dormant: booted lazily with no agent; the idle timeout ends the container and keeps the state
+  dormant(): boolean {
+    return DORMANT.includes(this.record.state) && !this.agentLive && !this.spawning;
+  }
 
   openQuestions(): Question[] {
     return this.questions.filter((q) => q.status === "open");
@@ -65,6 +71,7 @@ export class TaskMachine {
         } else if (this.record.state === "stopped") {
           fx.push({ kind: "exit", code: 0 });
         }
+        if (!input.fresh && this.dormant()) fx.push({ kind: "timer", on: true });
         return { ok: true, effects: fx };
 
       case "userPrompt": {
@@ -157,6 +164,10 @@ export class TaskMachine {
         return { ok: true, effects: fx };
 
       case "idleTimeout":
+        if (this.dormant()) {
+          fx.push({ kind: "exit", code: 0 });
+          return { ok: true, effects: fx };
+        }
         if (this.record.state !== "waiting" && this.record.state !== "idle") return { ok: true, effects: fx };
         for (const id of this.pending) fx.push({ kind: "permission", question: id, optionId: null });
         this.pending.clear();

@@ -315,6 +315,20 @@ describe("Bridge with a scripted agent", () => {
     expect(await exited(exits)).toEqual([0]);
   });
 
+  it("a lazy boot of a suspended task exits 0 after the idle timeout, also after a failed request", async () => {
+    const { bridge, store, agents, exits } = await stubbed({ idleMs: 300 });
+    const now = new Date().toISOString();
+    store.writeRecord({ version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "suspended",
+      reason: "idle timeout", session: "s1", branch: null, created: now, updated: now, seq: 0, allowed_actions: [],
+      inbox: [], summary: "", stopped_by_user: false });
+    bridge.boot();
+    await tick(150);
+    expect(bridge.command({ kind: "answer", question: "Q9", text: "x", grant: [] })).toMatchObject({ ok: false, code: "not_found" });
+    expect(await exited(exits)).toEqual([0]);
+    expect(bridge.status()).toMatchObject({ state: "suspended", reason: "idle timeout" });
+    expect(agents).toHaveLength(0);
+  });
+
   it("never sends a token to the webhook or the status", async () => {
     const { bridge, bodies } = await stubbed();
     bridge.boot();

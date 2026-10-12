@@ -51,14 +51,28 @@ setup() {
   [[ "$stderr" == *"agentic gate failed (rc 7)"* ]]
 }
 
-@test "a block is reported to the bridge with the agent token" {
-  install_cmd_stub curl
-  AGENTIC_BRIDGE_URL=http://127.0.0.1:8765 AGENTIC_AGENT_TOKEN=agent-tok run bash "$H" claude pretooluse < "$F/claude/pretooluse-bash.json"
+@test "a block is reported to the bridge with the agent token in a 0600 header file, never through a proxy" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  # curl stand-in: arguments one per line, the header file's content and mode, the body
+  cat > "$BATS_TEST_TMPDIR/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$BATS_TEST_TMPDIR/curl.args"
+for a in "$@"; do case "$a" in @-) ;; @*) cat "${a#@}" > "$BATS_TEST_TMPDIR/curl.header"; stat -c %a "${a#@}" > "$BATS_TEST_TMPDIR/curl.mode" ;; esac; done
+cat > "$BATS_TEST_TMPDIR/curl.body"
+STUB
+  chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" http_proxy=http://proxy.example.com:3128 AGENTIC_BRIDGE_URL=http://127.0.0.1:8765 AGENTIC_AGENT_TOKEN=agent-tok \
+    run bash "$H" claude pretooluse < "$F/claude/pretooluse-bash.json"
   [ "$status" -eq 2 ]
-  grep -q -- 'http://127.0.0.1:8765/gate' "$BATS_TEST_TMPDIR/curl.log"
-  grep -q -- 'Authorization: Bearer agent-tok' "$BATS_TEST_TMPDIR/curl.log"
-  grep -q '"rule":"gate"' "$BATS_TEST_TMPDIR/curl.log"
-  grep -q '"command":"git push origin HEAD"' "$BATS_TEST_TMPDIR/curl.log"
+  grep -qx -- 'http://127.0.0.1:8765/gate' "$BATS_TEST_TMPDIR/curl.args"
+  grep -qx -- '--noproxy' "$BATS_TEST_TMPDIR/curl.args"
+  grep -qx -- '\*' "$BATS_TEST_TMPDIR/curl.args"
+  run grep -q agent-tok "$BATS_TEST_TMPDIR/curl.args"
+  [ "$status" -ne 0 ]
+  grep -qx 'Authorization: Bearer agent-tok' "$BATS_TEST_TMPDIR/curl.header"
+  [ "$(cat "$BATS_TEST_TMPDIR/curl.mode")" = 600 ]
+  grep -q '"rule":"gate"' "$BATS_TEST_TMPDIR/curl.body"
+  grep -q '"command":"git push origin HEAD"' "$BATS_TEST_TMPDIR/curl.body"
 }
 
 @test "without a bridge nothing is reported and the block still holds" {

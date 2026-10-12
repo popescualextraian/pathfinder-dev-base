@@ -139,10 +139,12 @@ export class Bridge implements ApiTarget {
     return out;
   }
 
-  // touch: restarts the idle timer while the task sits in waiting or idle.
+  // touch: restarts the idle timer while the task sits in waiting or idle, or is dormant (a lazy boot
+  // that no prompt has woken: the container exits again after the idle timeout).
   private touch(): void {
-    const s = this.m().record.state;
-    if (s === "waiting" || s === "idle") this.armIdle();
+    const m = this.m();
+    const s = m.record.state;
+    if (s === "waiting" || s === "idle" || m.dormant()) this.armIdle();
   }
 
   private perform(e: Effect): void {

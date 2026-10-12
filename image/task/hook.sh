@@ -26,14 +26,17 @@ run_extensions() {
   return 0
 }
 
-# report RULE: tells the bridge about a refusal, best effort.
+# report RULE: tells the bridge about a refusal, best effort. The token goes in a 0600 header file
+# (never argv) and the call bypasses any proxy: the bridge is on the container's loopback.
 report() {
   [ -n "${AGENTIC_BRIDGE_URL:-}" ] || return 0
-  local auth=()
-  [ -z "${AGENTIC_AGENT_TOKEN:-}" ] || auth=(-H "Authorization: Bearer $AGENTIC_AGENT_TOKEN")
+  local hdr
+  hdr="$(mktemp)" || return 0
+  [ -z "${AGENTIC_AGENT_TOKEN:-}" ] || printf 'Authorization: Bearer %s\n' "$AGENTIC_AGENT_TOKEN" > "$hdr"
   jq -cn --arg r "$1" --arg c "$(payload_command "$payload")" '{rule: $r, command: $c}' \
-    | curl -fsS -m 1 -X POST "${auth[@]}" -H 'Content-Type: application/json' \
+    | curl -fsS -m 1 --noproxy '*' -X POST -H "@$hdr" -H 'Content-Type: application/json' \
         --data-binary @- "$AGENTIC_BRIDGE_URL/gate" >/dev/null 2>&1 || true
+  rm -f "$hdr"
 }
 
 # refuse RULE REASON: reports, then refuses the call in the harness's format.
