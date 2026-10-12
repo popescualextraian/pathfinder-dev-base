@@ -1,5 +1,6 @@
 // The bridge's environment (spec §8.1, §12).
 import type { Tokens } from "./api.js";
+import { GRANT_RE } from "./task.js";
 import type { AgentName } from "./types.js";
 
 export class ConfigError extends Error {}
@@ -41,6 +42,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (agent !== "claude" && agent !== "copilot") throw new ConfigError(`AGENTIC_AGENT must be claude or copilot, not ${agent}`);
   const idle = Number(env.AGENTIC_IDLE_TIMEOUT ?? "900");
   if (!Number.isFinite(idle) || idle <= 0) throw new ConfigError("AGENTIC_IDLE_TIMEOUT must be a number of seconds");
+  const port = Number(env.AGENTIC_BRIDGE_PORT ?? "8765");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError("AGENTIC_BRIDGE_PORT must be an integer from 1 to 65535");
+  const allowed = list(env.AGENTIC_ALLOWED_ACTIONS);
+  const badGrant = allowed.find((g) => !GRANT_RE.test(g));
+  if (badGrant !== undefined) throw new ConfigError(`AGENTIC_ALLOWED_ACTIONS has an unknown entry ${badGrant} (push, open-pr, deploy:<target>)`);
   let acpCmd: string[] | null = null;
   if (opt(env.AGENTIC_ACP_CMD)) {
     try {
@@ -60,7 +66,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     branch: opt(env.AGENTIC_BRANCH),
     prompt: opt(env.AGENTIC_PROMPT),
     idleTimeoutMs: idle * 1000,
-    port: Number(env.AGENTIC_BRIDGE_PORT ?? "8765"),
+    port,
     tokens,
     hosts: list(env.AGENTIC_BRIDGE_HOSTS),
     origins: list(env.AGENTIC_BRIDGE_ORIGINS),
@@ -68,7 +74,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     eventsDir: env.AGENTIC_EVENTS_DIR ?? "/events",
     acpCmd,
     work: env.AGENTIC_WORK ?? "/work",
-    allowed: list(env.AGENTIC_ALLOWED_ACTIONS),
+    allowed,
     paragraphFile: `${env.AGENTIC_DIR ?? "/opt/agentic"}/task/task-prompt.md`,
   };
 }

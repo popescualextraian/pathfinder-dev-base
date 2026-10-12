@@ -21,8 +21,8 @@ async function start(dir: string, extra: Record<string, string> = {}) {
   const exits: number[] = [];
   const env = { AGENTIC_TASK_TOKEN: "task-token-0123456789", AGENTIC_AGENT_TOKEN: "agent-token-0123456789",
     AGENTIC_TASK_DIR: dir, AGENTIC_TASK_ID: "T-1", AGENTIC_PROJECT: "demo", AGENTIC_ACP_CMD: JSON.stringify(["node", FAKE]),
-    AGENTIC_BRIDGE_PORT: "0", AGENTIC_WORK: dir, AGENTIC_EVENTS_DIR: join(dir, "no-events"), ...extra };
-  const cfg: Config = loadConfig(env);
+    AGENTIC_WORK: dir, AGENTIC_EVENTS_DIR: join(dir, "no-events"), ...extra };
+  const cfg: Config = { ...loadConfig(env), port: 0 };
   const store = new Store(dir, makeRedactor([cfg.tokens.task, cfg.tokens.agent]));
   let agentEnv: NodeJS.ProcessEnv = {};
   const bridge = new Bridge({
@@ -38,6 +38,12 @@ async function start(dir: string, extra: Record<string, string> = {}) {
   running.push({ bridge, close: server.close });
   bridge.boot();
   return { bridge, exits, store, port: server.port };
+}
+
+// exit is called once the final webhooks are out: a moment after the command
+async function exited(exits: number[]): Promise<number[]> {
+  for (let i = 0; i < 200 && exits.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+  return exits;
 }
 
 function waitState(bridge: Bridge, ...states: State[]): Promise<void> {
@@ -90,7 +96,7 @@ describe("Bridge", () => {
     const dir = taskDir();
     const a = await start(dir, { AGENTIC_IDLE_TIMEOUT: "0.3" });
     await waitState(a.bridge, "suspended");
-    expect(a.exits).toEqual([0]);
+    expect(await exited(a.exits)).toEqual([0]);
     const b = await start(dir);
     expect(b.bridge.status().state).toBe("suspended");
     expect(b.bridge.command({ kind: "userPrompt", text: "HISTORY" })).toMatchObject({ ok: true });
@@ -116,13 +122,13 @@ describe("Bridge", () => {
     await waitState(bridge, "running");
     bridge.command({ kind: "stop" });
     expect(bridge.status()).toMatchObject({ state: "stopped", stopped_by_user: true });
-    expect(exits).toEqual([0]);
+    expect(await exited(exits)).toEqual([0]);
   });
 
   it("fails and exits 1 when the agent crashes", async () => {
     const { bridge, exits } = await start(taskDir("CRASH"));
     await waitState(bridge, "failed");
-    expect(exits).toEqual([1]);
+    expect(await exited(exits)).toEqual([1]);
   });
 
   it("a record left running is interrupted at boot and spawns nothing", async () => {
@@ -180,8 +186,10 @@ class StubAgent implements AgentLike {
   async kill() { this.killed = true; }
 }
 
+let stubDir = "";
 async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch } = {}) {
   const dir = taskDir();
+  stubDir = dir;
   const cfg: Config = { ...loadConfig({ AGENTIC_TASK_TOKEN: "task-token-0123456789", AGENTIC_AGENT_TOKEN: "agent-token-0123456789",
     AGENTIC_TASK_DIR: dir, AGENTIC_NOTIFY_WEBHOOK: "https://hooks.example.com/x" }), ...(opts.idleMs ? { idleTimeoutMs: opts.idleMs } : {}) };
   const store = new Store(dir, makeRedactor([cfg.tokens.task, cfg.tokens.agent]));
@@ -192,7 +200,7 @@ async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch } = {}) {
   const fetchStub = opts.fetch ?? ((async (_u: string, init: RequestInit) => { bodies.push(String(init.body)); return new Response(null, { status: 204 }); }) as unknown as typeof fetch);
   const bridge = new Bridge({
     store, config: cfg, paragraph: "",
-    notifier: new Notifier({ eventsLog: null, webhook: cfg.webhook, project: "demo", log: () => {}, fetch: fetchStub }),
+    notifier: new Notifier({ eventsLog: null, webhook: cfg.webhook, project: "demo", log: () => {}, fetch: fetchStub, retryDelayMs: 1 }),
     agentFactory: (hooks) => { const a = new StubAgent(hooks, script); agents.push(a); return a; },
     exit: (c) => exits.push(c), now: () => new Date().toISOString(), log: () => {},
   });
@@ -229,29 +237,82 @@ describe("Bridge with a scripted agent", () => {
     expect(bridge.status().questions).toEqual([]);
   });
 
-  it("keeps the user's text when sending the prompt fails, and does not also fail the task", async () => {
-    const { bridge, store, agents, script } = await stubbed();
+  it("fails the task and exits 1 when the prompt is rejected by a live agent, keeping the text at the inbox head", async () => {
+    const { bridge, agents, script, exits } = await stubbed();
     bridge.boot();
     await waitState(bridge, "idle");
     script.push(async () => { throw new Error("pipe broke"); });
     expect(bridge.command({ kind: "userPrompt", text: "please keep me" })).toMatchObject({ ok: true });
+    await waitState(bridge, "failed");
+    expect(bridge.status()).toMatchObject({ state: "failed", reason: expect.stringContaining("pipe broke"), inbox: 1 });
+    expect(JSON.parse(readFileSync(join(stubDir, "state.json"), "utf8")).inbox[0].text).toBe("please keep me");
+    expect(await exited(exits)).toEqual([1]);
+    expect(agents[0]!.killed).toBe(true);
+  });
+
+  it("keeps the in-flight text when the agent exits mid-turn", async () => {
+    const { bridge, agents, script, exits } = await stubbed();
+    let hang: () => void = () => {};
+    script.push(() => new Promise<string>((_r, rej) => { hang = () => rej(new Error("closed")); }));
+    bridge.boot();
+    await waitState(bridge, "running");
+    agents[0]!.hooks.onExit("agent exited with code 3");
+    hang(); // the rejection that follows the exit is ignored
+    await waitState(bridge, "failed");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(bridge.status()).toMatchObject({ state: "failed", reason: "agent exited with code 3", inbox: 1 });
+    expect(await exited(exits)).toEqual([1]);
+  });
+
+  it("sends the webhook of a failed and of a stopped task before it exits", async () => {
+    for (const how of ["failed", "stopped"] as const) {
+      const order: string[] = [];
+      const slow = (async () => { await new Promise((r) => setTimeout(r, 60)); order.push("webhook"); return new Response(null, { status: 204 }); }) as unknown as typeof fetch;
+      const { bridge, agents, exits } = await stubbed({ fetch: slow });
+      bridge.boot();
+      await waitState(bridge, "idle");
+      await new Promise((r) => setTimeout(r, 120)); // the idle webhook is out
+      order.length = 0;
+      if (how === "failed") agents[0]!.hooks.onExit("boom");
+      else bridge.command({ kind: "stop" });
+      await waitState(bridge, how);
+      await exited(exits);
+      order.push("exit");
+      expect(order, how).toEqual(["webhook", "exit"]);
+    }
+  });
+
+  it("emits an error event, without payload or secret, when the webhook fails", async () => {
+    const down = (async () => { throw new Error("down task-token-0123456789"); }) as unknown as typeof fetch;
+    const { bridge, store } = await stubbed({ fetch: down });
+    bridge.boot();
     await waitState(bridge, "idle");
-    await tick(20);
-    expect(store.readEvents(0).some((e) => e.type === "error" && String(e.data.message).includes("pipe broke"))).toBe(true);
-    expect(bridge.status()).toMatchObject({ state: "idle", inbox: 1 });
-    expect(bridge.command({ kind: "userPrompt", text: "again" })).toMatchObject({ ok: true });
-    await tick(50);
-    expect(agents[0]!.prompts.at(-1)).toBe("please keep me\n\nagain");
+    await new Promise((r) => setTimeout(r, 200));
+    const errs = store.readEvents(0).filter((e) => e.type === "error").map((e) => JSON.stringify(e));
+    expect(errs.length).toBe(1);
+    expect(errs[0]).toContain("webhook delivery failed");
+    expect(errs[0]).not.toContain("task-token");
+  });
+
+  it("does not re-arm the idle timer after shutdown", async () => {
+    const { bridge, exits } = await stubbed({ idleMs: 100 });
+    bridge.boot();
+    await waitState(bridge, "idle");
+    await bridge.shutdownAgent();
+    bridge.command({ kind: "gate", rule: "r", command: "c" });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(bridge.status().state).toBe("idle");
+    expect(exits).toEqual([]);
   });
 
   it("restarts the idle timer on every input", async () => {
-    const { bridge, exits } = await stubbed({ idleMs: 400 });
+    const { bridge, exits } = await stubbed({ idleMs: 600 });
     bridge.boot();
     await waitState(bridge, "idle");
     for (let i = 0; i < 4; i++) { await tick(150); bridge.command({ kind: "gate", rule: "r", command: "c" }); }
     expect(bridge.status().state).toBe("idle");
     await waitState(bridge, "suspended");
-    expect(exits).toEqual([0]);
+    expect(await exited(exits)).toEqual([0]);
   });
 
   it("never sends a token to the webhook or the status", async () => {

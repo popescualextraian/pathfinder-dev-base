@@ -239,6 +239,7 @@ describe("fix round 1", () => {
     const effects = fx(t.apply({ kind: "cancel" }));
     expect(effects[0]).toEqual({ kind: "permission", question: "Q1", optionId: null });
     expect(effects.at(-1)).toEqual({ kind: "cancel" });
+    expect(effects).toContainEqual({ kind: "emit", type: "answer", data: { question: "Q1", text: "cancelled", grant: [] } });
     // the cancelled request can no longer be answered: its question is closed and the task is running again
     expect(t.openQuestions()).toEqual([]);
     expect(t.record.state).toBe("running");
@@ -366,5 +367,16 @@ describe("cancel, stop, suspension, failure", () => {
   it("gate reports become gate events", () => {
     expect(fx(running().apply({ kind: "gate", rule: "gate", command: "git push" })))
       .toEqual([{ kind: "emit", type: "gate", data: { rule: "gate", command: "git push" } }]);
+  });
+});
+
+describe("an outstanding prompt that does not finish", () => {
+  it("goes back to the inbox head when the agent exits, and pending permissions are released", () => {
+    const t = running();
+    t.record.inbox = [];
+    t.apply({ kind: "permissionRequest", title: "x", command: "x", options: [{ optionId: "a", name: "Yes", kind: "allow_once" }] });
+    const effects = fx(t.apply({ kind: "agentExit", error: "boom" }));
+    expect(effects).toContainEqual({ kind: "permission", question: "Q1", optionId: null });
+    expect(t.record.inbox.map((i) => i.text)).toHaveLength(1);
   });
 });

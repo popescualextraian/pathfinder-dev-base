@@ -42,6 +42,7 @@ export class TaskMachine {
   promptOutstanding = false;
   agentLive = false;
   private spawning = false;
+  private promptText: string | null = null; // the text of the outstanding prompt, kept for a resume
   private cancelling = false; // a cancel is in flight; cleared at turn end
   private readonly pending = new Set<string>(); // permission questions the live agent waits on
 
@@ -96,6 +97,7 @@ export class TaskMachine {
         for (const id of this.pending) fx.push({ kind: "permission", question: id, optionId: null });
         this.pending.clear();
         if (this.agentLive || this.spawning) fx.push({ kind: "kill" });
+        this.promptText = null;
         this.agentLive = this.spawning = this.promptOutstanding = this.cancelling = false;
         this.record.stopped_by_user = true;
         this.setState("stopped", "stopped by user", fx);
@@ -136,7 +138,8 @@ export class TaskMachine {
       case "turnEnd":
         if (!this.promptOutstanding) return { ok: true, effects: fx };
         this.promptOutstanding = this.cancelling = false;
-        this.pending.clear();
+        this.promptText = null;
+        this.releasePending(fx);
         if (input.summary) this.record.summary = input.summary.slice(0, 300);
         this.deliver(fx);
         if (!this.promptOutstanding) this.settle(input.stopReason === "cancelled" ? "cancelled" : "", fx);
@@ -144,8 +147,11 @@ export class TaskMachine {
 
       case "agentExit":
         if (["stopped", "suspended", "failed"].includes(this.record.state)) return { ok: true, effects: fx };
+        // the text of a turn that did not finish goes back to the inbox head: a resume sends it again
+        if (this.promptOutstanding && this.promptText !== null) this.record.inbox.unshift({ kind: "prompt", text: this.promptText });
+        this.promptText = null;
         this.agentLive = this.spawning = this.promptOutstanding = this.cancelling = false;
-        this.pending.clear();
+        this.releasePending(fx);
         this.setState("failed", input.error, fx);
         fx.push({ kind: "exit", code: 1 });
         return { ok: true, effects: fx };
@@ -155,6 +161,7 @@ export class TaskMachine {
         for (const id of this.pending) fx.push({ kind: "permission", question: id, optionId: null });
         this.pending.clear();
         if (this.agentLive) fx.push({ kind: "kill" });
+        this.promptText = null;
         this.agentLive = this.promptOutstanding = this.cancelling = false;
         this.setState("suspended", "idle timeout", fx);
         fx.push({ kind: "exit", code: 0 });
@@ -208,6 +215,12 @@ export class TaskMachine {
     return { ok: true, effects: fx };
   }
 
+  // releasePending: the agent no longer waits on these permission requests; tell the orchestrator.
+  private releasePending(fx: Effect[]): void {
+    for (const id of this.pending) fx.push({ kind: "permission", question: id, optionId: null });
+    this.pending.clear();
+  }
+
   // closeCancelled: a permission question whose request was cancelled can no longer be answered; close it,
   // or the task would wait on it after the turn ends.
   private closeCancelled(id: string, fx: Effect[]): void {
@@ -218,6 +231,7 @@ export class TaskMachine {
     q.grant = [];
     q.answered = this.now();
     fx.push({ kind: "question", question: { ...q } });
+    fx.push({ kind: "emit", type: "answer", data: { question: id, text: "cancelled", grant: [] } });
     if (this.record.state === "waiting") this.setState("running", "", fx);
   }
 
@@ -233,6 +247,7 @@ export class TaskMachine {
     }
     const text = this.record.inbox.map((i) => i.text).join("\n\n");
     this.record.inbox = [];
+    this.promptText = text;
     this.promptOutstanding = true;
     this.setState("running", "", fx);
     fx.push({ kind: "prompt", text });

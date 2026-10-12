@@ -31,14 +31,28 @@ export function follow(o: { url: string; token: string; since: number; raw: bool
     const ws = new WebSocket(`${o.url}/events?since=${o.since}`, { headers: { authorization: `Bearer ${o.token}` } });
     // A state event ends the stream only once the backlog is through: the stored events are sent first.
     let settled: NodeJS.Timeout | null = null;
+    let ended = false; // a final state was seen: the bridge closing the socket afterwards is normal
     ws.on("message", (m) => {
-      const e = JSON.parse(m.toString()) as TaskEvent;
+      let e: TaskEvent;
+      try {
+        e = JSON.parse(m.toString()) as TaskEvent;
+      } catch {
+        o.out("agentic-bridge: skipped a frame that is not JSON\n");
+        return;
+      }
       o.out(o.raw ? JSON.stringify(e) + "\n" : formatEvent(e));
       if (settled) clearTimeout(settled);
-      if (!o.forever && e.type === "state" && END.has(s(e.data.state))) settled = setTimeout(() => { ws.close(); resolve(0); }, 300);
+      if (e.type === "state" && END.has(s(e.data.state))) ended = true;
+      else if (e.type === "state") ended = false;
+      if (!o.forever && ended) settled = setTimeout(() => { ws.close(); resolve(0); }, 300);
     });
     ws.on("unexpected-response", (_req, res) => { o.out(`agentic-bridge: follow refused (HTTP ${res.statusCode})\n`); resolve(1); });
     ws.on("error", (err) => { o.out(`agentic-bridge: ${err.message}\n`); resolve(1); });
-    ws.on("close", () => resolve(0));
+    ws.on("close", (code) => {
+      if (settled) clearTimeout(settled);
+      if (code === 1000 || code === 1005 || ended) return resolve(0);
+      o.out(`agentic-bridge: connection lost (close code ${code})\n`);
+      resolve(1);
+    });
   });
 }

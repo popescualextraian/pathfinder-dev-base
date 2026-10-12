@@ -36,19 +36,21 @@ export class Notifier {
     }
   }
 
-  async webhook(rec: TaskRecord, q: Question | null): Promise<void> {
-    if (!this.o.webhook) return;
+  // true when delivered (or nothing is configured), false after the retry failed
+  async webhook(rec: TaskRecord, q: Question | null): Promise<boolean> {
+    if (!this.o.webhook) return true;
     const f = this.o.fetch ?? fetch;
     const body = JSON.stringify(notifyPayload(rec, q, new Date().toISOString()));
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const r = await f(this.o.webhook, { method: "POST", body, headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(5000) });
-        if (r.ok) return;
+        if (r.ok) return true;
         throw new Error(`HTTP ${r.status}`);
       } catch (e) {
         if (attempt === 1) this.o.log(`webhook failed: ${(e as Error).message}`);
         else await new Promise((r) => setTimeout(r, this.o.retryDelayMs ?? 1000));
       }
     }
+    return false;
   }
 }

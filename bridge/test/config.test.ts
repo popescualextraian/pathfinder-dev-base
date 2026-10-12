@@ -34,6 +34,15 @@ describe("loadConfig", () => {
   });
 });
 
+describe("loadConfig validation", () => {
+  it("refuses a bad port and bad grants, naming the variable", () => {
+    for (const port of ["0", "70000", "80.5", "http"]) expect(() => loadConfig({ ...base, AGENTIC_BRIDGE_PORT: port })).toThrow("AGENTIC_BRIDGE_PORT");
+    expect(loadConfig({ ...base, AGENTIC_BRIDGE_PORT: "65535" }).port).toBe(65535);
+    expect(() => loadConfig({ ...base, AGENTIC_ALLOWED_ACTIONS: "push,rm-rf" })).toThrow("AGENTIC_ALLOWED_ACTIONS");
+    expect(loadConfig({ ...base, AGENTIC_ALLOWED_ACTIONS: "push,deploy:prod-1" }).allowed).toEqual(["push", "deploy:prod-1"]);
+  });
+});
+
 describe("agentEnvironment", () => {
   it("gives the agent the bridge URL and its own token, never the task token", () => {
     const env = agentEnvironment({ ...base, PATH: "/bin" }, loadConfig(base));

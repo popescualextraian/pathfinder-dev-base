@@ -24,7 +24,6 @@ export interface BridgeDeps {
   log(line: string): void;
 }
 
-const EXIT_GRACE_MS = 100;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export class Bridge implements ApiTarget {
@@ -36,6 +35,9 @@ export class Bridge implements ApiTarget {
   private idle: NodeJS.Timeout | null = null;
   private flush: NodeJS.Timeout | null = null;
   private readonly kills = new Set<Promise<void>>();
+  private readonly webhooks = new Set<Promise<void>>();
+  private incoming: ((optionId: string | null) => void) | null = null;
+  private down = false;
   private readonly redact: (s: string) => string;
 
   constructor(private readonly d: BridgeDeps) {
@@ -95,11 +97,17 @@ export class Bridge implements ApiTarget {
 
   // shutdownAgent: ends the agent without a state change (SIGTERM from Docker: the next boot shows interrupted).
   async shutdownAgent(): Promise<void> {
+    this.down = true;
     this.clearTimers();
     const a = this.agent;
     this.agent = null;
     if (a) this.track(a.kill());
-    await Promise.all([...this.kills]);
+    await this.drain();
+  }
+
+  // drain: waits for the kills and the webhooks in progress (a failed or stopped task still notifies).
+  private async drain(): Promise<void> {
+    while (this.kills.size || this.webhooks.size) await Promise.all([...this.kills, ...this.webhooks]);
   }
 
   // track: a kill in progress; shutdownAgent waits for all of them, so no agent process outlives the bridge.
@@ -144,7 +152,11 @@ export class Bridge implements ApiTarget {
       case "timer": if (e.on) this.armIdle(); else this.disarmIdle(); break;
       case "notify": {
         const q = e.question ? redactDeep<Question>(e.question, this.redact) : null;
-        void this.d.notifier.webhook(redactDeep(this.m().record, this.redact), q).catch((err) => this.log(`webhook failed: ${message(err)}`));
+        const p = this.d.notifier.webhook(redactDeep(this.m().record, this.redact), q)
+          .then((ok) => { if (!ok) this.emit("error", { message: "webhook delivery failed after a retry" }); })
+          .catch((err) => this.log(`webhook failed: ${message(err)}`))
+          .finally(() => this.webhooks.delete(p));
+        this.webhooks.add(p);
         break;
       }
       case "spawn": void this.spawn(e.mode).catch((err) => this.log(`spawn failed: ${message(err)}`)); break;
@@ -153,9 +165,26 @@ export class Bridge implements ApiTarget {
         void this.prompt(e.text).catch((err) => this.log(`prompt failed: ${message(err)}`));
         break;
       case "cancel": this.agent?.cancel(); break;
-      case "permission": this.waiters.get(e.question)?.(e.optionId); this.waiters.delete(e.question); break;
+      case "permission": {
+        // a recorded request, or the one being raised right now (cancelling: answered, never recorded)
+        const w = this.waiters.get(e.question);
+        if (w) {
+          this.waiters.delete(e.question);
+          w(e.optionId);
+        } else if (this.incoming) {
+          const i = this.incoming;
+          this.incoming = null;
+          i(e.optionId);
+        }
+        break;
+      }
       case "kill": { const a = this.agent; this.agent = null; if (a) this.track(a.kill()); break; }
-      case "exit": this.clearTimers(); this.d.exit(e.code); break;
+      case "exit":
+        // after the webhooks of the final state (failed, stopped) have gone out
+        this.down = true;
+        this.clearTimers();
+        void this.drain().then(() => this.d.exit(e.code));
+        break;
     }
   }
 
@@ -163,18 +192,20 @@ export class Bridge implements ApiTarget {
     return {
       onUpdate: (u) => { if (this.agent === self()) this.emitMapped(this.mapper.handle(u)); },
       onPermission: (req) => new Promise((resolve) => {
-        // The id the machine will give this request (it counts every question). Registered before the
-        // input runs: while cancelling, the machine answers at once with an effect naming that id.
+        // While cancelling, the machine answers at once with a permission effect for a question it
+        // does not record; `incoming` lets perform() resolve this very request from that effect.
         const m = this.m();
-        const id = `Q${m.questions.length + 1}`;
         const before = m.questions.length;
-        this.waiters.set(id, resolve);
-        this.run({ kind: "permissionRequest", ...req });
-        // ignored (no turn outstanding): nothing was recorded and no effect resolved it
-        if (m.questions.length === before && this.waiters.get(id) === resolve) {
-          this.waiters.delete(id);
-          resolve(null);
+        let done = false;
+        this.incoming = (o) => { done = true; resolve(o); };
+        try {
+          this.run({ kind: "permissionRequest", ...req });
+        } finally {
+          this.incoming = null;
         }
+        const q = m.questions[before];
+        if (q) this.waiters.set(q.id, resolve); // recorded: the answer resolves it
+        else if (!done) resolve(null); // ignored (no turn outstanding)
       }),
       onExit: (error) => {
         if (this.agent !== self()) return;
@@ -218,28 +249,22 @@ export class Bridge implements ApiTarget {
   private async prompt(text: string): Promise<void> {
     const agent = this.agent;
     if (!agent) return;
-    let stopReason = "error";
-    let failed = false;
+    let stopReason: string;
     try {
       stopReason = await agent.prompt(text);
     } catch (err) {
-      // A child that died mid-turn rejects the prompt and reports its exit: give the exit the turn,
-      // so the one failure is handled once (as agentExit), not also as a failed turn.
-      await new Promise((r) => setTimeout(r, EXIT_GRACE_MS));
+      // A rejection from a live agent fails the task (spec §6). If the child's exit got here first the
+      // agent is already gone and this is ignored; the machine ignores a second agentExit anyway.
       if (this.agent !== agent) return;
-      failed = true;
-      this.emit("error", { message: `prompt failed: ${message(err)}; the message is kept and goes out with the next one` });
+      this.agent = null;
+      this.track(agent.kill());
+      this.run({ kind: "agentExit", error: `prompt failed: ${message(err)}` });
+      return;
     }
     if (this.agent !== agent) return;
     const { events, summary } = this.mapper.finishTurn();
     this.emitMapped(events);
     this.run({ kind: "turnEnd", stopReason, summary });
-    if (failed) {
-      // the machine cleared its inbox when it sent the text: keep the user's words
-      const rec = this.m().record;
-      rec.inbox.unshift({ kind: "prompt", text });
-      this.d.store.writeRecord(rec);
-    }
   }
 
   // seed: the first prompt of a replacement session (spec §6, Resume).
@@ -271,6 +296,7 @@ export class Bridge implements ApiTarget {
 
   private armIdle(): void {
     this.disarmIdle();
+    if (this.down) return;
     this.idle = setTimeout(() => this.run({ kind: "idleTimeout" }), this.d.config.idleTimeoutMs);
   }
 
