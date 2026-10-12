@@ -34,6 +34,9 @@ export class AgentProcess implements AgentLike {
   private sessionId: string | null = null;
   private loading = false;
   private killing = false;
+  private inFlight = false;
+  private exitReported = false;
+  private spawnError: Error | null = null;
   private exited: Promise<void> = Promise.resolve();
 
   constructor(
@@ -48,12 +51,19 @@ export class AgentProcess implements AgentLike {
     const child = spawn(cmd, args, { cwd: this.opts.cwd, env: { ...this.opts.env, ...this.spec.env }, stdio: ["pipe", "pipe", "pipe"] });
     this.child = child;
     this.exited = new Promise((resolve) => {
+      // 'exit' and 'error' can both fire: report once.
+      const report = (error: string): void => {
+        if (this.killing || this.exitReported) return;
+        this.exitReported = true;
+        this.hooks.onExit(error);
+      };
       child.on("exit", (code, signal) => {
-        if (!this.killing) this.hooks.onExit(`agent exited with code ${code ?? signal}`);
+        report(`agent exited with code ${code ?? signal}`);
         resolve();
       });
       child.on("error", (err) => {
-        if (!this.killing) this.hooks.onExit(`agent could not start: ${err.message}`);
+        this.spawnError = err;
+        report(`agent could not start: ${err.message}`);
         resolve();
       });
     });
@@ -70,18 +80,31 @@ export class AgentProcess implements AgentLike {
       .onRequest(acp.methods.client.session.requestPermission, async (ctx) => {
         const p = ctx.params;
         const raw = p.toolCall.rawInput as { command?: unknown } | undefined;
-        const optionId = await this.hooks.onPermission({
-          title: p.toolCall.title ?? "",
-          command: typeof raw?.command === "string" ? raw.command : "",
-          options: p.options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind })),
-        });
-        return { outcome: optionId ? { outcome: "selected" as const, optionId } : { outcome: "cancelled" as const } };
+        const options = p.options.map((o) => ({ optionId: o.optionId, name: o.name, kind: o.kind }));
+        let optionId: string | null = null;
+        try {
+          optionId = await this.hooks.onPermission({
+            title: p.toolCall.title ?? "",
+            command: typeof raw?.command === "string" ? raw.command : "",
+            options,
+          });
+        } catch {
+          optionId = null; // a failing hook must not close the connection
+        }
+        const ok = optionId !== null && options.some((o) => o.optionId === optionId);
+        return { outcome: ok ? { outcome: "selected" as const, optionId: optionId as string } : { outcome: "cancelled" as const } };
       })
       .connect(stream);
-    await this.conn.agent.request(acp.methods.agent.initialize, {
-      protocolVersion: acp.PROTOCOL_VERSION,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
-    });
+    try {
+      await this.conn.agent.request(acp.methods.agent.initialize, {
+        protocolVersion: acp.PROTOCOL_VERSION,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      });
+    } catch (err) {
+      // A failed spawn surfaces first as a broken pipe; report the real cause.
+      await new Promise((r) => setImmediate(r));
+      throw this.spawnError ?? err;
+    }
   }
 
   async newSession(): Promise<string> {
@@ -109,14 +132,18 @@ export class AgentProcess implements AgentLike {
   }
 
   async prompt(text: string): Promise<string> {
-    const r = await this.agent().request(acp.methods.agent.session.prompt, {
-      sessionId: this.session(), prompt: [{ type: "text", text }],
-    });
-    return r.stopReason;
+    const sessionId = this.session();
+    this.inFlight = true;
+    try {
+      const r = await this.agent().request(acp.methods.agent.session.prompt, { sessionId, prompt: [{ type: "text", text }] });
+      return r.stopReason;
+    } finally {
+      this.inFlight = false;
+    }
   }
 
   cancel(): void {
-    if (this.conn && this.sessionId) void this.conn.agent.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionId });
+    if (this.conn && this.sessionId && this.inFlight) void this.conn.agent.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionId });
   }
 
   async kill(): Promise<void> {

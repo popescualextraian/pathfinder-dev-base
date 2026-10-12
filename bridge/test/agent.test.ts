@@ -93,4 +93,44 @@ describe("AgentProcess", () => {
     await quiet.a.kill();
     expect(quiet.exits).toEqual([]);
   });
+
+  it("cancels a permission request when the hook throws, and the turn goes on", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-"));
+    const { a, updates } = make(dir, { onPermission: async () => { throw new Error("boom"); } });
+    await a.start(); await a.newSession();
+    expect(await a.prompt("PERMISSION:echo x")).toBe("end_turn");
+    expect(texts(updates)).toEqual(["permission: cancelled"]);
+    expect(await a.prompt("again")).toBe("end_turn");
+  });
+
+  it("cancels a permission request for an option that was not offered", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-"));
+    const { a, updates } = make(dir, { onPermission: async () => "bogus" });
+    await a.start(); await a.newSession();
+    await a.prompt("PERMISSION:echo x");
+    expect(texts(updates)).toEqual(["permission: cancelled"]);
+  });
+
+  it("sends session/cancel only while a prompt is in flight", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-"));
+    const { a } = make(dir);
+    await a.start(); await a.newSession();
+    a.cancel(); // idle: must not leak into the next turn
+    expect(await a.prompt("SLEEP:300")).toBe("end_turn");
+    a.cancel(); // after the prompt settled
+    expect(await a.prompt("SLEEP:300")).toBe("end_turn");
+  });
+
+  it("rejects start with the spawn error and reports the exit once", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-"));
+    const exits: string[] = [];
+    const a = new AgentProcess(harnessFor("claude", { model: null, acpCmd: ["/nonexistent/agent-bin"] }),
+      { cwd: dir, env: process.env, paragraph: "", model: null },
+      { onUpdate: () => {}, onPermission: async () => null, onExit: (e) => exits.push(e) });
+    agents.push(a);
+    await expect(a.start()).rejects.toThrow(/ENOENT/);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(exits).toHaveLength(1);
+    expect(exits[0]).toMatch(/ENOENT/);
+  });
 });
