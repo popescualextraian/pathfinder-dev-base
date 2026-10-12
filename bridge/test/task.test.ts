@@ -225,6 +225,76 @@ describe("permission requests", () => {
   });
 });
 
+describe("fix round 1", () => {
+  const opts = [
+    { optionId: "allow-once", name: "Yes", kind: "allow_once" },
+    { optionId: "reject", name: "No", kind: "reject_once" },
+  ];
+  const perm = { kind: "permissionRequest", title: "x", command: "x", options: opts } as const;
+
+  it("cancel while permissions are pending answers them as cancelled, then cancels", () => {
+    const t = running();
+    t.apply(perm);
+    expect(t.record.state).toBe("waiting");
+    expect(fx(t.apply({ kind: "cancel" }))).toEqual([
+      { kind: "permission", question: "Q1", optionId: null }, { kind: "cancel" },
+    ]);
+  });
+
+  it("cancel is idempotent until the turn ends", () => {
+    const t = running();
+    expect(fx(t.apply({ kind: "cancel" }))).toEqual([{ kind: "cancel" }]);
+    expect(fx(t.apply({ kind: "cancel" }))).toEqual([]);
+    t.apply({ kind: "turnEnd", stopReason: "cancelled", summary: "" });
+    t.apply({ kind: "userPrompt", text: "again" });
+    expect(fx(t.apply({ kind: "cancel" }))).toEqual([{ kind: "cancel" }]);
+  });
+
+  it("a permission request is ignored unless a turn is in progress", () => {
+    const t = running();
+    t.apply({ kind: "turnEnd", stopReason: "end_turn", summary: "" });
+    expect(fx(t.apply(perm))).toEqual([]);
+    expect(t.record.state).toBe("idle");
+    expect(t.questions).toEqual([]);
+  });
+
+  it("agentReady is ignored when stopped, failed or suspended", () => {
+    for (const s of ["stopped", "failed", "suspended"] as const) {
+      const t = m({ state: s });
+      expect(fx(t.apply({ kind: "agentReady", session: "s9" }))).toEqual([]);
+      expect(t.record.state).toBe(s);
+      expect(t.record.inbox).toHaveLength(1);
+    }
+  });
+
+  it("a second agentExit changes nothing", () => {
+    const t = running();
+    t.apply({ kind: "agentExit", error: "first" });
+    expect(fx(t.apply({ kind: "agentExit", error: "second" }))).toEqual([]);
+    expect(t.record.reason).toBe("first");
+  });
+
+  it("failure switches the timer off", () => {
+    const o = running().apply({ kind: "agentExit", error: "boom" });
+    expect(fx(o)).toContainEqual({ kind: "timer", on: false });
+  });
+
+  it("the notification for a permission question carries that question", () => {
+    const t = running();
+    t.apply({ kind: "ask", text: "older", options: [], recommend: null });
+    const o = t.apply(perm);
+    expect(fx(o).find((e) => e.kind === "notify")).toMatchObject({ question: { id: "Q2", source: "permission" } });
+  });
+
+  it("rejecting a permission records no grant", () => {
+    const t = running();
+    t.apply(perm);
+    t.apply({ kind: "answer", text: "no", grant: ["push"] });
+    expect(t.record.allowed_actions).toEqual([]);
+    expect(t.questions[0]?.grant).toEqual([]);
+  });
+});
+
 describe("cancel, stop, suspension, failure", () => {
   it("cancel only while a turn is in progress", () => {
     const t = running();
@@ -237,7 +307,11 @@ describe("cancel, stop, suspension, failure", () => {
   it("stop cancels a running turn, ends the agent and exits 0; a late turn end is ignored", () => {
     const t = running();
     const o = t.apply({ kind: "stop" });
-    expect(kinds(o)).toEqual(expect.arrayContaining(["cancel", "kill", "exit", "notify"]));
+    expect(fx(o)).toEqual([
+      { kind: "cancel" }, { kind: "kill" },
+      { kind: "emit", type: "state", data: { state: "stopped", reason: "stopped by user" } },
+      { kind: "timer", on: false }, { kind: "notify", question: null }, { kind: "exit", code: 0 },
+    ]);
     expect(t.record.state).toBe("stopped");
     expect(t.record.stopped_by_user).toBe(true);
     expect(fx(t.apply({ kind: "turnEnd", stopReason: "cancelled", summary: "" }))).toEqual([]);
@@ -249,8 +323,11 @@ describe("cancel, stop, suspension, failure", () => {
     expect(fx(t.apply({ kind: "idleTimeout" }))).toEqual([]);
     t.apply({ kind: "turnEnd", stopReason: "end_turn", summary: "" });
     const o = t.apply({ kind: "idleTimeout" });
-    expect(kinds(o)).toEqual(expect.arrayContaining(["kill", "exit"]));
-    expect(fx(o)).toContainEqual({ kind: "exit", code: 0 });
+    expect(fx(o)).toEqual([
+      { kind: "kill" },
+      { kind: "emit", type: "state", data: { state: "suspended", reason: "idle timeout" } },
+      { kind: "timer", on: false }, { kind: "exit", code: 0 },
+    ]);
     expect(t.record.state).toBe("suspended");
     expect(t.agentLive).toBe(false);
   });

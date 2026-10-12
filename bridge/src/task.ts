@@ -42,6 +42,7 @@ export class TaskMachine {
   promptOutstanding = false;
   agentLive = false;
   private spawning = false;
+  private cancelling = false; // a cancel is in flight; cleared at turn end
   private readonly pending = new Set<string>(); // permission questions the live agent waits on
 
   constructor(public record: TaskRecord, public questions: Question[], private readonly now: () => string) {}
@@ -79,6 +80,10 @@ export class TaskMachine {
 
       case "cancel":
         if (!this.promptOutstanding) return fail("conflict", "no turn in progress");
+        if (this.cancelling) return { ok: true, effects: fx };
+        this.cancelling = true;
+        for (const id of this.pending) fx.push({ kind: "permission", question: id, optionId: null });
+        this.pending.clear();
         fx.push({ kind: "cancel" });
         return { ok: true, effects: fx };
 
@@ -88,7 +93,7 @@ export class TaskMachine {
         for (const id of this.pending) fx.push({ kind: "permission", question: id, optionId: null });
         this.pending.clear();
         if (this.agentLive || this.spawning) fx.push({ kind: "kill" });
-        this.agentLive = this.spawning = this.promptOutstanding = false;
+        this.agentLive = this.spawning = this.promptOutstanding = this.cancelling = false;
         this.record.stopped_by_user = true;
         this.setState("stopped", "stopped by user", fx);
         fx.push({ kind: "exit", code: 0 });
@@ -103,14 +108,16 @@ export class TaskMachine {
       }
 
       case "permissionRequest": {
+        if (!this.promptOutstanding || !["running", "waiting"].includes(this.record.state)) return { ok: true, effects: fx };
         const q = this.addQuestion("permission", `Allow: ${input.command || input.title}?`,
           input.options.map((o) => o.name), null, fx, { options: input.options });
         this.pending.add(q.id);
-        this.setState("waiting", `question ${q.id}`, fx);
+        this.setState("waiting", `question ${q.id}`, fx, q);
         return { ok: true, effects: fx };
       }
 
       case "agentReady":
+        if (["stopped", "failed", "suspended"].includes(this.record.state)) return { ok: true, effects: fx };
         this.agentLive = true;
         this.spawning = false;
         this.record.session = input.session;
@@ -120,7 +127,7 @@ export class TaskMachine {
 
       case "turnEnd":
         if (!this.promptOutstanding) return { ok: true, effects: fx };
-        this.promptOutstanding = false;
+        this.promptOutstanding = this.cancelling = false;
         this.pending.clear();
         if (input.summary) this.record.summary = input.summary.slice(0, 300);
         this.deliver(fx);
@@ -128,8 +135,8 @@ export class TaskMachine {
         return { ok: true, effects: fx };
 
       case "agentExit":
-        if (["stopped", "suspended"].includes(this.record.state)) return { ok: true, effects: fx };
-        this.agentLive = this.spawning = this.promptOutstanding = false;
+        if (["stopped", "suspended", "failed"].includes(this.record.state)) return { ok: true, effects: fx };
+        this.agentLive = this.spawning = this.promptOutstanding = this.cancelling = false;
         this.pending.clear();
         this.setState("failed", input.error, fx);
         fx.push({ kind: "exit", code: 1 });
@@ -140,7 +147,7 @@ export class TaskMachine {
         for (const id of this.pending) fx.push({ kind: "permission", question: id, optionId: null });
         this.pending.clear();
         if (this.agentLive) fx.push({ kind: "kill" });
-        this.agentLive = this.promptOutstanding = false;
+        this.agentLive = this.promptOutstanding = this.cancelling = false;
         this.setState("suspended", "idle timeout", fx);
         fx.push({ kind: "exit", code: 0 });
         return { ok: true, effects: fx };
@@ -170,6 +177,9 @@ export class TaskMachine {
     if (live) {
       optionId = matchOption(q.permission?.options ?? [], input.text);
       if (!optionId) return fail("bad_request", `answer one of: ${q.options.join(", ")}`);
+      // a rejection grants nothing
+      const kind = q.permission?.options.find((o) => o.optionId === optionId)?.kind ?? "";
+      if (kind.startsWith("reject")) input = { ...input, grant: [] };
     }
     q.status = "answered";
     q.answer = input.text;
@@ -226,7 +236,7 @@ export class TaskMachine {
     return q;
   }
 
-  private setState(state: State, reason: string, fx: Effect[]): void {
+  private setState(state: State, reason: string, fx: Effect[], notifyQ?: Question): void {
     const changed = this.record.state !== state || this.record.reason !== reason;
     this.record.state = state;
     this.record.reason = reason;
@@ -234,7 +244,7 @@ export class TaskMachine {
     if (!changed) return;
     fx.push({ kind: "emit", type: "state", data: { state, reason } });
     fx.push({ kind: "timer", on: state === "waiting" || state === "idle" });
-    if (NOTIFY.includes(state)) fx.push({ kind: "notify", question: this.openQuestions()[0] ?? null });
+    if (NOTIFY.includes(state)) fx.push({ kind: "notify", question: notifyQ ? { ...notifyQ } : this.openQuestions()[0] ?? null });
   }
 }
 
