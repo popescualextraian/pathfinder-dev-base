@@ -1,0 +1,40 @@
+{"sessionUpdate":"tool_call","toolCallId":"call_SB0tDENkUbLk6UK5BDS7C8M9","title":"Push current HEAD and working tree ref","kind":"execute","status":"pending","rawInput":{"command":"git push origin HEAD .","description":"Push current HEAD and working tree ref"}}
+{"sessionUpdate":"tool_call_update","toolCallId":"call_SB0tDENkUbLk6UK5BDS7C8M9","status":"failed","rawOutput":{"message":"Denied by preToolUse hook: agentic gate: git push is not in allowed_actions; not allowed in this task. Use agentic-ask if you need it.","code":"denied"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Blocked"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":":"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" “"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Denied"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" by"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" pre"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Tool"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Use"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" hook"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":":"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" agent"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ic"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" gate"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":":"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" git"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" push"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" is"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" not"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" in"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" allowed"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"_actions"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":";"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" not"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" allowed"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" in"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" this"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" task"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"."}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" Use"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" agent"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ic"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"-"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"ask"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" if"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" you"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" need"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" it"}}
+{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":".”"}}
