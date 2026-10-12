@@ -116,11 +116,165 @@ cmd_sync() {
   echo "synced .github/instructions and .github/copilot-instructions.md"
 }
 
+# --- check -------------------------------------------------------------------------------------
+
+stale_note() { echo "$1: generated content is stale; run agentic-wiki build and agentic-wiki sync"; }
+
+# check_pages MODEL: front matter shape, kinds, required fields, allowed values, references.
+check_pages() {
+  jq -r '
+    def kind_for: if startswith("components/") then "component"
+      elif test("^decisions/adr-[0-9]+$") then "decision"
+      elif startswith("concepts/") then "concept"
+      elif startswith("flows/") then "flow"
+      elif . == "overview" or . == "glossary" then .
+      else null end;
+    def required: {component: ["name", "summary", "lifecycle", "status", "sources"],
+      decision: ["title", "status"], concept: ["name", "summary"], flow: ["name", "summary"],
+      overview: [], glossary: []};
+    def known($ids): . as $r | ($r | type) == "string" and any($ids[]; . == $r);
+    def bad_offer: if type != "object" then true else (.name == null or .location == null or .use == null) end;
+    (map(.id)) as $ids
+    | .[] | . as $p | ($p.id | kind_for) as $k | $p.fm as $fm
+    | if $k == null then "\($p.path): not a page location of the wiki"
+      elif $fm == null then "\($p.path): missing or invalid front matter"
+      else
+        (if $fm.kind != $k then "\($p.path): kind must be \($k)" else empty end),
+        (if $fm.id != $p.id then "\($p.path): id must be \($p.id)" else empty end),
+        ((required | .[$k])[] | . as $f | select($fm | .[$f] == null) | "\($p.path): missing \($f)"),
+        (["sources", "depends_on", "decisions", "offers", "related", "components"][] | . as $f
+          | select(($fm | .[$f]) != null and ($fm | .[$f] | type) != "array") | "\($p.path): \($f) must be a list"),
+        (if $k == "component" and $fm.status != null and ($fm.status | IN("draft", "reviewed") | not)
+          then "\($p.path): status must be draft or reviewed" else empty end),
+        (if $k == "component" and $fm.lifecycle != null and ($fm.lifecycle | IN("active", "migrating", "retiring") | not)
+          then "\($p.path): lifecycle must be active, migrating or retiring" else empty end),
+        (if $k == "decision" and $fm.status != null and ($fm.status | IN("proposed", "accepted", "superseded") | not)
+          then "\($p.path): status must be proposed, accepted or superseded" else empty end),
+        (if ($fm.offers | type) == "array" and any($fm.offers[]; bad_offer)
+          then "\($p.path): every offer needs name, location and use" else empty end),
+        (["depends_on", "decisions", "related", "components"][] as $f
+          | ($fm | .[$f] | if type == "array" then .[] else empty end)
+          | select(known($ids) | not) | "\($p.path): \($f) names unknown page \(.)"),
+        (["parent", "superseded_by"][] as $f | ($fm | .[$f] // empty)
+          | select(known($ids) | not) | "\($p.path): \($f) names unknown page \(.)")
+      end' <<<"$1"
+}
+
+# check_sources MODEL: every source and offer location exists; no source is claimed twice.
+check_sources() {
+  local path src e name loc
+  declare -A claimed=()
+  while IFS=$'\t' read -r path src; do
+    e="${src%/}"
+    if [ ! -e "$ROOT/$e" ]; then echo "$path: source $src does not exist"; fi
+    if [ -n "${claimed[$e]:-}" ]; then
+      echo "$path: source $src is also claimed by ${claimed[$e]}"
+    else
+      claimed[$e]="$path"
+    fi
+  done < <(jq -r '.[] | select(.fm.kind == "component") | .path as $p
+      | (.fm.sources | if type == "array" then .[] else empty end) | select(type == "string") | [$p, .] | @tsv' <<<"$1")
+  while IFS=$'\t' read -r path name loc; do
+    if [ ! -e "$ROOT/${loc%%::*}" ]; then echo "$path: offer $name points at missing ${loc%%::*}"; fi
+  done < <(jq -r '.[] | select(.fm.kind == "component") | .path as $p
+      | (.fm.offers | if type == "array" then .[] else empty end) | select(type == "object" and .location != null)
+      | [$p, (.name // ""), .location] | @tsv' <<<"$1")
+}
+
+# check_links MODEL: relative links in authored text resolve to a file in the repository.
+check_links() {
+  local path dir target
+  while IFS= read -r path; do
+    dir="$(dirname "$ROOT/$path")"
+    while IFS= read -r target; do
+      case "$target" in *://*|mailto:*|'#'*) continue ;; esac
+      target="${target%%#*}"
+      if [ ! -e "$dir/$target" ]; then echo "$path: broken link $target"; fi
+    done < <(wiki_authored "$ROOT/$path" | grep -oE '\]\([^)[:space:]]+\)' | sed -E 's/^\]\((.*)\)$/\1/' || true)
+  done < <(jq -r '.[].path' <<<"$1")
+}
+
+# check_limits MODEL: page size (non-blank, non-heading lines), tables and path lists, the index.
+check_limits() {
+  local path kind limit n
+  while IFS=$'\t' read -r path kind; do
+    case "$kind" in
+      component) limit=80 ;;
+      concept|flow) limit=60 ;;
+      overview) limit=10 ;;
+      *) continue ;;
+    esac
+    n="$(wiki_authored "$ROOT/$path" | grep -cvE '^[[:space:]]*(#.*)?$' || true)"
+    if [ "$n" -gt "$limit" ]; then echo "$path: $n lines, limit $limit"; fi
+    if [ "$kind" != component ]; then continue; fi
+    n="$(wiki_authored "$ROOT/$path" | awk '/^\|/ { run++; if (run - 2 > max) max = run - 2; next } { run = 0 } END { print max + 0 }')"
+    if [ "$n" -gt 10 ]; then echo "$path: table with $n rows, limit 10; leave inventories to the code"; fi
+    # shellcheck disable=SC2016 # literal Markdown backticks, not command substitution
+    n="$(wiki_authored "$ROOT/$path" | grep -cE '`[^`[:space:]]*/[^`[:space:]]*`' || true)"
+    if [ "$n" -gt 10 ]; then echo "$path: $n lines name paths, limit 10; leave inventories to the code"; fi
+  done < <(jq -r '.[] | select(.fm != null) | [.path, (.fm.kind // "")] | @tsv' <<<"$1")
+  if [ -f "$ROOT/$WIKI_DIR/index.md" ]; then
+    n="$(wc -l < "$ROOT/$WIKI_DIR/index.md")"
+    if [ "$n" -gt 70 ]; then echo "$WIKI_DIR/index.md: $n lines, limit 70; group components under parents"; fi
+  fi
+}
+
+# check_context: CLAUDE.md imports the index and stays small; every rule has paths.
+check_context() {
+  local f n
+  if [ ! -f "$ROOT/CLAUDE.md" ]; then
+    echo "CLAUDE.md: missing; it must import the wiki index"
+  else
+    n="$(wc -l < "$ROOT/CLAUDE.md")"
+    if [ "$n" -gt 130 ]; then echo "CLAUDE.md: $n lines, limit 130"; fi
+    if ! grep -qxF '@docs/wiki/index.md' "$ROOT/CLAUDE.md"; then echo "CLAUDE.md: no @docs/wiki/index.md line"; fi
+  fi
+  if [ ! -d "$ROOT/.claude/rules" ]; then return 0; fi
+  while IFS= read -r f; do
+    if [ -z "$(rule_globs "$f")" ]; then echo "${f#"$ROOT"/}: a rule without paths belongs in CLAUDE.md"; fi
+  done < <(find "$ROOT/.claude/rules" -type f -name '*.md' | LC_ALL=C sort)
+}
+
+# check_generated: build and sync on a copy must reproduce the generated files byte for byte.
+check_generated() {
+  local tmp f
+  tmp="$(mktemp -d)"
+  mkdir -p "$tmp/docs" "$tmp/.claude"
+  cp -r "$ROOT/$WIKI_DIR" "$tmp/docs/"
+  if [ -d "$ROOT/.claude/rules" ]; then cp -r "$ROOT/.claude/rules" "$tmp/.claude/"; fi
+  if [ -d "$ROOT/.github" ]; then cp -r "$ROOT/.github" "$tmp/"; fi
+  "${BASH_SOURCE[0]}" -C "$tmp" build >/dev/null
+  "${BASH_SOURCE[0]}" -C "$tmp" sync >/dev/null
+  while IFS= read -r f; do
+    if ! cmp -s "$tmp/$f" "$ROOT/$f"; then stale_note "$f"; fi
+  done < <(cd "$tmp" && find "$WIKI_DIR" .github -type f 2>/dev/null | LC_ALL=C sort)
+  if [ -d "$ROOT/.github/instructions" ]; then
+    while IFS= read -r f; do
+      if [ ! -e "$tmp/$f" ]; then stale_note "$f"; fi
+    done < <(cd "$ROOT" && { grep -lr '^<!-- Generated by agentic-wiki sync' .github/instructions || true; } | LC_ALL=C sort)
+  fi
+  rm -rf "$tmp"
+}
+
+cmd_check() {
+  local model n=0 line
+  if [ ! -d "$ROOT/$WIKI_DIR" ]; then echo "agentic-wiki: no $WIKI_DIR; nothing to check"; return 0; fi
+  model="$(wiki_model)"
+  while IFS= read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    echo "$line"; n=$((n + 1))
+  done < <(check_pages "$model"; check_sources "$model"; check_links "$model"; check_limits "$model"
+           check_context; check_generated)
+  if [ "$n" -gt 0 ]; then echo "agentic-wiki: $n problem(s)" >&2; return 1; fi
+  echo "wiki: ok"
+}
+
 # --- dispatch ----------------------------------------------------------------------------------
 
 cmd="${1:-}"; [ "$#" -gt 0 ] && shift
 case "$cmd" in
   build) need_wiki; cmd_build ;;
   sync) need_wiki; cmd_sync ;;
+  check) cmd_check ;;
   *) usage ;;
 esac
