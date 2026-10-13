@@ -14,17 +14,19 @@ setup() {
   A="$REPO_ROOT/bin/agentic"
   export DOCKER_STATUS=running DOCKER_PORT=49153 AGENTIC_WSLG_DIR="$BATS_TEST_TMPDIR/no-wslg"
   T="$AGENTIC_WORKSPACES/demo/tasks"
+  H="$AGENTIC_DATA/projects/demo/tasks"
 }
 
 ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
 # record ID STATE: a task directory with a state.json, tokens and mounts, as run and the bridge leave them.
 record() {
   mkdir -p "$T/$1"
+  mkdir -p "$H/$1"
   jq -n --arg id "$1" --arg s "$2" '{version:1, task:$id, project:"demo", agent:"claude", state:$s, reason:"",
     session:"s1", branch:("agentic/" + $id), created:"2026-10-12T10:00:00Z", updated:"t", seq:1,
     allowed_actions:[], summary:"", stopped_by_user:false}' > "$T/$1/state.json"
-  printf 'AGENTIC_TASK_TOKEN=tok-task-0123456789\nAGENTIC_AGENT_TOKEN=tok-agent-0123456789\n' > "$T/$1.env"
-  printf -- '-v\n%s\n' "$T/$1:/task" > "$T/$1.mounts"
+  printf 'AGENTIC_TASK_TOKEN=tok-task-0123456789\nAGENTIC_AGENT_TOKEN=tok-agent-0123456789\n' > "$H/$1/env"
+  printf -- '-v\n%s\n' "$T/$1:/task" > "$H/$1/mounts"
 }
 posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http://127.0.0.1:49153##' | tr '\n' ' '; }
 
@@ -143,7 +145,7 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   [ "$status" -eq 1 ]; [[ "$output" == *"commits on no remote branch"* ]]
   run ag clean T-14 --force
   [ "$status" -eq 0 ]
-  [ ! -e "$wt" ] && [ ! -e "$T/T-14" ] && [ ! -e "$T/T-14.env" ]
+  [ ! -e "$wt" ] && [ ! -e "$T/T-14" ] && [ ! -e "$H/T-14/env" ]
   run git -C "$AGENTIC_WORKSPACES/demo/repos/proj" rev-parse --verify -q agentic/T-14-x
   [ "$status" -ne 0 ]
   grep -qx -- '--- rm' "$DOCKER_LOG"
@@ -151,10 +153,10 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
 
 @test "resume clears the interrupted marker" {
   record T-15 running
-  : > "$T/T-15.interrupted"
+  : > "$H/T-15/interrupted"
   DOCKER_STATUS=exited run ag resume T-15
   [ "$status" -eq 0 ]
-  [ ! -e "$T/T-15.interrupted" ]
+  [ ! -e "$H/T-15/interrupted" ]
 }
 
 @test "an unknown docker state is not started or resumed" {
@@ -195,7 +197,7 @@ mkclean() {   # a task with a worktree, as run leaves it, container exited
   echo "gitdir: /nonexistent" > "$wt/.git"
   run ag clean T-20
   [ "$status" -eq 1 ]; [[ "$output" == *"cannot check"* ]]
-  rm "$T/T-20.repos"
+  rm "$H/T-20/repos"
   run ag clean T-20
   [ "$status" -eq 1 ]; [[ "$output" == *"no repos file"* ]]
   run ag clean T-20 --force
@@ -244,14 +246,29 @@ mkclean() {   # a task with a worktree, as run leaves it, container exited
 
 @test "send and answer reviving an interrupted task clear the interrupted marker" {
   record T-40 running
-  : > "$T/T-40.interrupted"
+  : > "$H/T-40/interrupted"
   DOCKER_STATUS=exited run ag send T-40 "go on"
   [ "$status" -eq 0 ]
-  [ ! -e "$T/T-40.interrupted" ]
+  [ ! -e "$H/T-40/interrupted" ]
   rm -f "$BATS_TEST_TMPDIR/docker.status"
   record T-41 running
-  : > "$T/T-41.interrupted"
+  : > "$H/T-41/interrupted"
   DOCKER_STATUS=exited run ag answer T-41 "pg"
   [ "$status" -eq 0 ]
-  [ ! -e "$T/T-41.interrupted" ]
+  [ ! -e "$H/T-41/interrupted" ]
+}
+
+@test "takeover refuses a mounts file with anything the host does not write" {
+  record T-70 stopped
+  printf -- '-v\n%s\n--privileged\n' "$T/T-70:/task" > "$H/T-70/mounts"
+  run ag takeover T-70
+  [ "$status" -eq 1 ]; [[ "$output" == *"not one the host wrote"* ]]
+  printf -- '-v\n/:/h\n' > "$H/T-70/mounts"
+  run ag takeover T-70
+  [ "$status" -eq 1 ]; [[ "$output" == *"not one the host wrote"* ]]
+  printf -- '-v\n%s\n' "$T/T-70/../..:/task" > "$H/T-70/mounts"
+  run ag takeover T-70
+  [ "$status" -eq 1 ]
+  run grep -qx -- '--- run' "$DOCKER_LOG"
+  [ "$status" -ne 0 ]
 }

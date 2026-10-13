@@ -344,6 +344,8 @@ cmd_run() {
   RUN_ROLLBACK_ID="$id"; RUN_KEEP="$keep"
   trap run_cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
   mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
+  (umask 077; mkdir -p "$(task_hdir "$id")")
+  rm -f "$(task_file "$id" repos)" "$(task_file "$id" interrupted)"
   own="$(project_clone)" || die "could not clone the project's repository into $ws/repos"
   [ "${#repos[@]}" -gt 0 ] || repos=("$own")
   for r in "${repos[@]}"; do add_worktree "$r" "$id" "$branch" "$base" "$img" || die "could not create the worktree of $r"; done
@@ -354,19 +356,19 @@ cmd_run() {
   if [ -f "$data/copilot/config.json" ]; then install -m 600 "$data/copilot/config.json" "$dir/home/copilot/"; fi
   task_mounts "$id" "${repos[@]}"
 
-  local mounts=() extra=()
-  mapfile -t mounts < "$(task_file "$id" mounts)"
+  local extra=()
+  read_mounts "$id"
   read -ra extra <<<"${AGENTIC_TASK_DOCKER_ARGS:-}"
   docker run -d --name "$c" --label agentic.kind=task --label "agentic.task=$id" --label "agentic.project=$p" \
     --label "agentic.agent=$agent" --label "agentic.branch=$branch" -p "127.0.0.1::$TASK_PORT" \
-    "${mounts[@]}" "${RUN_ARGS[@]}" --env-file "$(task_file "$id" env)" \
+    "${TASK_MOUNTS[@]}" "${RUN_ARGS[@]}" --env-file "$(task_file "$id" env)" \
     -e "AGENTIC_TASK_ID=$id" -e "AGENTIC_PROJECT=$p" -e "AGENTIC_AGENT=$agent" -e "AGENTIC_MODEL=$model" \
     -e "AGENTIC_BRANCH=$branch" -e "AGENTIC_ALLOWED_ACTIONS=$(IFS=,; echo "${allow[*]}")" \
     "${extra[@]}" "$img" agentic-bridge >/dev/null || die "docker run failed for $id"
   if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}"; then
     docker logs --tail 20 "$c" 2>&1 | plain >&2 || true
     # the bridge's own reason, before the rollback removes the task directory
-    if [ -s "$dir/bridge.log" ]; then { echo "bridge.log:"; tail -n 20 "$dir/bridge.log" | plain; } >&2; fi
+    if task_readable "$id" bridge.log && [ -s "$dir/bridge.log" ]; then { echo "bridge.log:"; tail -n 20 "$dir/bridge.log" | plain; } >&2; fi
     die "the bridge of $id did not come up"
   fi
   RUN_ROLLBACK_ID=""; trap - EXIT INT TERM
@@ -412,7 +414,7 @@ cmd_status() {
     files=("$(task_ws)"/tasks/*/state.json)
   fi
   for f in "${files[@]}"; do
-    [ -f "$f" ] || continue
+    if ! { [ -f "$f" ] && [ ! -L "$f" ] && [ ! -L "$(dirname "$f")" ] && [ ! -L "$(dirname "$(dirname "$f")")" ]; }; then continue; fi
     # The project and id come from the directory layout; state.json is written by the agent.
     id="$(basename "$(dirname "$f")")"
     valid_task_id "$id" || continue
@@ -508,8 +510,8 @@ cmd_logs() {
   done
   need_task "$id"
   case "$what" in
-    transcript) { cat "$(task_dir "$id")/transcript.md" 2>/dev/null || echo "(no transcript yet)"; } | plain ;;
-    bridge) { cat "$(task_dir "$id")/bridge.log" 2>/dev/null || echo "(no bridge log yet)"; } | plain ;;
+    transcript) if task_readable "$id" transcript.md; then plain < "$(task_dir "$id")/transcript.md"; else echo "(no transcript yet)"; fi ;;
+    bridge) if task_readable "$id" bridge.log; then plain < "$(task_dir "$id")/bridge.log"; else echo "(no bridge log yet)"; fi ;;
     start) docker logs "$(task_container "$id")" 2>&1 | plain ;;
   esac
 }
@@ -531,7 +533,7 @@ cmd_task_shell() {
 
 cmd_takeover() {
   need_config; need_task "${1:-}"
-  local id="$1" agent session img c mounts=() argv=() tty=(-i)
+  local id="$1" agent session img c argv=() tty=(-i)
   agent="$(record_get "$id" .agent)"; session="$(record_get "$id" .session)"; c="$(task_container "$id")"
   [ -n "$session" ] || die "task $id has no session yet"
   case "$agent" in
@@ -545,12 +547,12 @@ cmd_takeover() {
     timeout 30 docker wait "$c" >/dev/null 2>&1 || docker stop "$c" >/dev/null 2>&1 || true
   fi
   img="$(docker inspect -f '{{.Config.Image}}' "$c" 2>/dev/null || run_image)"
-  mapfile -t mounts < "$(task_file "$id" mounts)"
+  read_mounts "$id"
   RUN_ARGS=(); shared_run_args "$img"
   if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
   echo "Taking over $id with $agent; the task stays stopped afterwards." >&2
   # A plain docker run skips the interactive shell's profile, so load the harness homes first.
-  docker run --rm "${tty[@]}" "${mounts[@]}" "${RUN_ARGS[@]}" -e AGENTIC_GATE=1 "$img" \
+  docker run --rm "${tty[@]}" "${TASK_MOUNTS[@]}" "${RUN_ARGS[@]}" -e AGENTIC_GATE=1 "$img" \
     bash -c '[ ! -f "$HOME/.agentic/env" ] || . "$HOME/.agentic/env"; exec "$@"' bash "${argv[@]}"
 }
 
@@ -572,9 +574,11 @@ cmd_clean() {
       if ! { clone_ok "$clone" && [ ! -L "$wt" ] && gd="$(wt_gitdir "$clone" "$wt")"; }; then
         die "cannot check $wt (its .git does not name a worktree of $clone); run agentic clean $id --force"
       fi
-      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- status --porcelain 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
+      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- status --porcelain 2>&1)" \
+        || die "cannot check $wt ($(printf '%s' "$why" | plain)); run agentic clean $id --force"
       [ -z "$why" ] || die "$wt has uncommitted changes; commit and push them, or run agentic clean $id --force"
-      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- log --oneline "$branch" --not --remotes 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
+      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- log --oneline "$branch" --not --remotes 2>&1)" \
+        || die "cannot check $wt ($(printf '%s' "$why" | plain)); run agentic clean $id --force"
       [ -z "$why" ] || die "$wt has commits on no remote branch ($branch); push them, or run agentic clean $id --force"
     done < "$(task_file "$id" repos)"
   fi

@@ -161,6 +161,7 @@ id="$(AGENTIC_IDLE_TIMEOUT=6 ag run --allow open-pr "hello")"
 wait_state "$id" idle || fail "task: first turn"
 out="$(ag status)"
 grep -q "^$id " <<<"$out" || fail "task: not listed"
+if [ ! -f "$AGENTIC_DATA/projects/smoke-project/tasks/$id/env" ] || [ -e "$tasks/$id.env" ]; then fail "task: the tokens are not host-private"; fi
 
 ag send "$id" "SHELL:git push origin HEAD" >/dev/null
 wait_state "$id" idle || fail "task: refused push"
@@ -207,7 +208,7 @@ rm -f "$g/FETCH_HEAD"; ln -s "$tmp/victim-file" "$g/FETCH_HEAD"
 ln -s "$tmp/victim-dir" "$g/worktrees/planted"
 ln -sf "$tmp/victim-refs" "$g/packed-refs"
 [ -d "$AGENTIC_DATA/projects/smoke-project/mirrors/smoke-project.git" ] || fail "task: no private mirror"
-if grep -q mirrors "$tasks/$id.mounts"; then fail "task: the mirror is mounted into a task"; fi
+if grep -q mirrors "$AGENTIC_DATA/projects/smoke-project/tasks/$id/mounts"; then fail "task: the mirror is mounted into a task"; fi
 
 id2="$(AGENTIC_IDLE_TIMEOUT=300 ag run "second")"
 wait_state "$id2" idle || fail "task 2: first turn"

@@ -15,16 +15,18 @@ setup() {
   A="$REPO_ROOT/bin/agentic"
   export DOCKER_STATUS=running DOCKER_PORT=49153 AGENTIC_WSLG_DIR="$BATS_TEST_TMPDIR/no-wslg"
   T="$AGENTIC_WORKSPACES/demo/tasks"
+  H="$AGENTIC_DATA/projects/demo/tasks"
 }
 
 ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
 # record ID STATE: a task directory with a state.json, as the bridge leaves it.
 record() {
   mkdir -p "$T/$1"
+  mkdir -p "$H/$1"
   jq -n --arg id "$1" --arg s "$2" '{version:1, task:$id, project:"demo", agent:"claude", state:$s, reason:"",
     session:"s1", branch:("agentic/" + $id), created:"2026-10-12T10:00:00Z", updated:"t", seq:1,
     allowed_actions:[], summary:"", stopped_by_user:false}' > "$T/$1/state.json"
-  printf 'AGENTIC_TASK_TOKEN=tok-task-0123456789\nAGENTIC_AGENT_TOKEN=tok-agent-0123456789\n' > "$T/$1.env"
+  printf 'AGENTIC_TASK_TOKEN=tok-task-0123456789\nAGENTIC_AGENT_TOKEN=tok-agent-0123456789\n' > "$H/$1/env"
 }
 
 @test "run creates the worktree, the task directory and tokens, starts the bridge and prints the id" {
@@ -35,9 +37,9 @@ record() {
   wt="$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-1"
   [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" = agentic/T-1-fix-the-login-bug ]
   [ "$(cat "$T/T-1/prompt.md")" = "Fix the login bug" ]
-  [ "$(stat -c %a "$T/T-1.env")" = 600 ]
-  grep -Eq '^AGENTIC_TASK_TOKEN=[0-9a-f]{64}$' "$T/T-1.env"
-  grep -Eq '^AGENTIC_AGENT_TOKEN=[0-9a-f]{64}$' "$T/T-1.env"
+  [ "$(stat -c %a "$H/T-1/env")" = 600 ]
+  grep -Eq '^AGENTIC_TASK_TOKEN=[0-9a-f]{64}$' "$H/T-1/env"
+  grep -Eq '^AGENTIC_AGENT_TOKEN=[0-9a-f]{64}$' "$H/T-1/env"
   call="$(docker_run_with agentic-bridge)"
   grep -qx -- '-d' <<<"$call"
   grep -qx 'agentic-demo-task-T-1' <<<"$call"
@@ -47,10 +49,10 @@ record() {
   grep -qx "$T/T-1:/task" <<<"$call"
   grep -qx "$AGENTIC_WORKSPACES/demo/events:/events" <<<"$call"
   grep -qx "$AGENTIC_WORKSPACES/demo/repos/proj/.git:$AGENTIC_WORKSPACES/demo/repos/proj/.git" <<<"$call"
-  grep -qx "$T/T-1.env" <<<"$call"
+  grep -qx "$H/T-1/env" <<<"$call"
   grep -qx 'AGENTIC_ALLOWED_ACTIONS=push,open-pr' <<<"$call"
   [ "$(tail -n 1 <<<"$call")" = agentic-bridge ]
-  run grep -q "$(grep TASK_TOKEN "$T/T-1.env" | cut -d= -f2)" "$DOCKER_LOG"
+  run grep -q "$(grep TASK_TOKEN "$H/T-1/env" | cut -d= -f2)" "$DOCKER_LOG"
   [ "$status" -ne 0 ]
 }
 
@@ -103,7 +105,7 @@ record() {
 @test "a failed start rolls back the container, worktree, branch and files" {
   DOCKER_RUN_RC=1 run ag run --id T-5 "x"
   [ "$status" -eq 1 ]
-  [ ! -e "$T/T-5" ] && [ ! -e "$T/T-5.env" ]
+  [ ! -e "$T/T-5" ] && [ ! -e "$H/T-5/env" ]
   [ ! -e "$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-5" ]
   run git -C "$AGENTIC_WORKSPACES/demo/repos/proj" rev-parse --verify -q agentic/T-5-x
   [ "$status" -ne 0 ]
@@ -130,7 +132,8 @@ record() {
   record T-9 running
   DOCKER_STATUS="" ag status >/dev/null
   DOCKER_STATUS="" ag status >/dev/null
-  [ "$(grep -c '"state":"interrupted"' "$AGENTIC_WORKSPACES/demo/events/events.jsonl")" -eq 1 ]
+  [ "$(grep -c '"state":"interrupted"' "$AGENTIC_DATA/projects/demo/events.jsonl")" -eq 1 ]
+  [ ! -e "$AGENTIC_WORKSPACES/demo/events/events.jsonl" ]
 }
 
 @test "a bridge that does not answer gives a clear message, not a curl error" {
@@ -152,7 +155,7 @@ record() {
   run grep -q '^arg: .*tok-task' "$CURL_LOG"
   [ "$status" -ne 0 ]
   ag run --id T-12 "x" 2>/dev/null
-  run grep -q "$(grep AGENT_TOKEN "$T/T-12.env" | cut -d= -f2)" "$DOCKER_LOG"
+  run grep -q "$(grep AGENT_TOKEN "$H/T-12/env" | cut -d= -f2)" "$DOCKER_LOG"
   [ "$status" -ne 0 ]
 }
 
@@ -160,7 +163,7 @@ record() {
   printf 'A="quoted"\n' > "$PROJ/.agentic/.env"
   run ag run --id T-13 "x"
   [ "$status" -eq 1 ]
-  [ ! -e "$T/T-13" ] && [ ! -e "$T/T-13.env" ]
+  [ ! -e "$T/T-13" ] && [ ! -e "$H/T-13/env" ]
   [ ! -e "$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-13" ]
   if [ -d "$AGENTIC_WORKSPACES/demo/repos/proj" ]; then
     run git -C "$AGENTIC_WORKSPACES/demo/repos/proj" rev-parse --verify -q agentic/T-13-x
@@ -173,10 +176,10 @@ record() {
 
 @test "a failure after creation (set -e, signal-free) still rolls back" {
   # the mounts file cannot be written when its path is a directory
-  mkdir -p "$T/T-14.mounts"
+  mkdir -p "$H/T-14/mounts"
   run ag run --id T-14 "x"
   [ "$status" -ne 0 ]
-  [ ! -e "$T/T-14" ] && [ ! -e "$T/T-14.env" ]
+  [ ! -e "$T/T-14" ] && [ ! -e "$H/T-14" ]
   [ ! -e "$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-14" ]
 }
 
@@ -196,7 +199,7 @@ record() {
 @test "rollback_task never removes a path outside the workspace" {
   mkdir -p "$BATS_TEST_TMPDIR/keep"; touch "$BATS_TEST_TMPDIR/keep/f"
   record T-17 idle
-  printf 'x\t%s\tb\n' "$BATS_TEST_TMPDIR/keep" > "$T/T-17.repos"
+  printf 'x\t%s\tb\n' "$BATS_TEST_TMPDIR/keep" > "$H/T-17/repos"
   run bash -c "cd '$PROJ' && source '$REPO_ROOT/lib/host/common.sh' && source '$REPO_ROOT/lib/host/task.sh' && rollback_task T-17"
   [ -f "$BATS_TEST_TMPDIR/keep/f" ]
   [ ! -e "$T/T-17" ]
@@ -209,7 +212,7 @@ record() {
   [ "$status" -eq 0 ]
   [[ "$output" =~ T-18\ +interrupted ]]
   [ ! -e "$AGENTIC_WORKSPACES/x" ]
-  grep -q '"project":"demo"' "$AGENTIC_WORKSPACES/demo/events/events.jsonl"
+  grep -q '"project":"demo"' "$AGENTIC_DATA/projects/demo/events.jsonl"
 }
 
 @test "a docker failure shows unknown and records no interruption" {
@@ -217,8 +220,8 @@ record() {
   DOCKER_DOWN=1 run ag status T-19 --json
   [ "$status" -eq 0 ]
   [ "$(jq -r .state <<<"$output")" = unknown ]
-  [ ! -e "$AGENTIC_WORKSPACES/demo/events/events.jsonl" ]
-  [ ! -e "$T/T-19.interrupted" ]
+  [ ! -e "$AGENTIC_DATA/projects/demo/events.jsonl" ]
+  [ ! -e "$H/T-19/interrupted" ]
 }
 
 @test "a prompt over 64 KB starts a task with a short branch" {
@@ -407,7 +410,7 @@ MIRRORS_REL=projects/demo/mirrors
   ag run --id T-45 "x" 2>/dev/null
   m="$AGENTIC_DATA/$MIRRORS_REL/proj.git"
   [ "$(git --git-dir="$m" rev-parse --is-bare-repository)" = true ]
-  run grep -F mirrors "$T/T-45.mounts"
+  run grep -F mirrors "$H/T-45/mounts"
   [ "$status" -ne 0 ]
   clone="$AGENTIC_WORKSPACES/demo/repos/proj"
   git -C "$clone" config remote.origin.url https://example.invalid/x.git
@@ -515,4 +518,89 @@ MIRRORS_REL=projects/demo/mirrors
   [ "$status" -eq 0 ]
   DOCKER_STATUS=running CURL_BODY='{"task":"T-48","state":"waiting","questions":[{"id":"Q1","options":"pg"},7]}' run ag status T-48
   [ "$status" -eq 0 ]; [[ "$output" == *"Q1 ("* ]]
+}
+
+@test "the host's task files (tokens, mounts, repos) live outside the workspace a dev container mounts" {
+  ag run --id T-60 "x" 2>/dev/null
+  [ "$(stat -c %a "$H/T-60/env")" = 600 ] && [ -f "$H/T-60/mounts" ] && [ -f "$H/T-60/repos" ]
+  run ls "$T"
+  [ "$output" = T-60 ]
+  call="$(docker_run_with agentic-bridge)"
+  grep -qx "$H/T-60/env" <<<"$call"
+  run grep -F "$AGENTIC_DATA" "$H/T-60/mounts"
+  [ "$status" -ne 0 ]
+}
+
+@test "a task from before the move: its files are taken from the workspace once" {
+  ag run --id T-61 "x" 2>/dev/null
+  record T-61 idle
+  for f in env mounts repos; do mv "$H/T-61/$f" "$T/T-61.$f"; done
+  rmdir "$H/T-61"
+  DOCKER_STATUS=exited run ag clean T-61
+  [ "$status" -eq 0 ]
+  [ ! -e "$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-61" ]
+  [ ! -e "$T/T-61.repos" ] && [ ! -e "$H/T-61" ]
+}
+
+@test "the interrupted line is never written through a planted symlink or into a FIFO" {
+  record T-62 running
+  mkdir -p "$AGENTIC_WORKSPACES/demo/events"
+  echo keep > "$BATS_TEST_TMPDIR/victim"
+  ln -s "$BATS_TEST_TMPDIR/victim" "$AGENTIC_WORKSPACES/demo/events/events.jsonl"
+  DOCKER_STATUS="" run ag status T-62 --json
+  [ "$status" -eq 0 ]; [ "$(jq -r .state <<<"$output")" = interrupted ]
+  [ "$(cat "$BATS_TEST_TMPDIR/victim")" = keep ]
+  grep -q '"task":"T-62"' "$AGENTIC_DATA/projects/demo/events.jsonl"
+  rm "$AGENTIC_WORKSPACES/demo/events/events.jsonl" "$H/T-62/interrupted"
+  mkfifo "$AGENTIC_WORKSPACES/demo/events/events.jsonl"
+  DOCKER_STATUS="" run timeout 20 bash -c "cd '$PROJ' && bash '$A' status T-62 --json </dev/null"
+  [ "$status" -eq 0 ]
+  rm "$AGENTIC_WORKSPACES/demo/events/events.jsonl" "$H/T-62/interrupted"
+  rmdir "$AGENTIC_WORKSPACES/demo/events"; ln -s "$BATS_TEST_TMPDIR" "$AGENTIC_WORKSPACES/demo/events"
+  DOCKER_STATUS="" run ag status T-62 --json
+  [ "$status" -eq 0 ]; [ ! -e "$BATS_TEST_TMPDIR/events.jsonl" ]
+}
+
+@test "safe_rm refuses a path with a symlink below the root" {
+  mkdir -p "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/outside/x"; touch "$BATS_TEST_TMPDIR/outside/x/f"
+  ln -s "$BATS_TEST_TMPDIR/outside" "$BATS_TEST_TMPDIR/root/link"
+  lib safe_rm "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/root/link/x"
+  [ -f "$BATS_TEST_TMPDIR/outside/x/f" ]
+  mkdir -p "$BATS_TEST_TMPDIR/root/real/x"
+  lib safe_rm "$BATS_TEST_TMPDIR/root" "$BATS_TEST_TMPDIR/root/real/x"
+  [ ! -e "$BATS_TEST_TMPDIR/root/real/x" ]
+}
+
+@test "the host reads no task file that is a symlink or not a regular file" {
+  echo 'host secret' > "$BATS_TEST_TMPDIR/secret"
+  record T-63 suspended
+  ln -s "$BATS_TEST_TMPDIR/secret" "$T/T-63/transcript.md"
+  mkfifo "$T/T-63/bridge.log"
+  printf '%s\n' '{"id":"Q1","source":"ask","text":"Which?","options":[],"status":"open"}' > "$BATS_TEST_TMPDIR/q.jsonl"
+  ln -s "$BATS_TEST_TMPDIR/q.jsonl" "$T/T-63/questions.jsonl"
+  export DOCKER_STATUS=exited
+  run ag logs T-63
+  [ "$status" -eq 0 ]; [[ "$output" != *"host secret"* ]]
+  run timeout 20 bash -c "cd '$PROJ' && bash '$A' logs T-63 --bridge </dev/null"
+  [ "$status" -eq 0 ]
+  run ag status T-63
+  [ "$status" -eq 0 ]; [[ "$output" != *"Which?"* ]]
+  cp "$T/T-63/state.json" "$BATS_TEST_TMPDIR/state.json"; rm "$T/T-63/state.json"
+  ln -s "$BATS_TEST_TMPDIR/state.json" "$T/T-63/state.json"
+  run ag status T-63
+  [ "$status" -eq 1 ]
+  run ag status
+  [ "$status" -eq 0 ]; [[ "$output" != *T-63* ]]
+}
+
+@test "git errors from a clone reach the terminal without control characters" {
+  ag run --id T-64 "x" 2>/dev/null
+  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
+  printf '#!/bin/sh\nprintf "bad\\033[2Jfilter\\n" >&2\nexit 1\n' > "$BATS_TEST_TMPDIR/loud"; chmod +x "$BATS_TEST_TMPDIR/loud"
+  git -C "$clone" config filter.x.smudge "$BATS_TEST_TMPDIR/loud"; git -C "$clone" config filter.x.required true
+  echo '* filter=x' > "$clone/.git/info/attributes"
+  run ag run --id T-65 "y"
+  [[ "$output" == *"badfilter"* || "$output" == *"bad[2Jfilter"* ]]
+  run grep -qP '[\x00-\x08\x0b-\x1f\x7f]' <<<"$output"
+  [ "$status" -ne 0 ]
 }

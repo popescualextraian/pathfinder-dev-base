@@ -7,7 +7,29 @@ TASK_ACTIVE="starting running waiting idle"
 task_project() { printf '%s\n' "${TASK_PROJECT:-$(project_name)}"; }
 task_ws() { printf '%s/%s\n' "$AGENTIC_WORKSPACES" "$(task_project)"; }
 task_dir() { printf '%s/tasks/%s\n' "$(task_ws)" "$1"; }
-task_file() { printf '%s/tasks/%s.%s\n' "$(task_ws)" "$1" "$2"; }
+# The host's own files of a task (tokens, mounts, repos, the interrupted marker) live outside the
+# workspace, which task and dev containers can write: task_hdir is never mounted.
+task_hdir() { printf '%s/projects/%s/tasks/%s\n' "$AGENTIC_DATA" "$(task_project)" "$1"; }
+task_file() { printf '%s/%s\n' "$(task_hdir "$1")" "$2"; }
+# task_migrate ID: moves the host files of a task made before they left the workspace
+# (tasks/<ID>.<name>) into task_hdir, once; a symlink or anything but a regular file stays behind.
+task_migrate() {
+  local f old
+  [ ! -L "$(task_ws)/tasks" ] || return 0
+  for f in env mounts repos interrupted; do
+    old="$(task_ws)/tasks/$1.$f"
+    if [ -f "$old" ] && [ ! -L "$old" ] && [ ! -e "$(task_file "$1" "$f")" ]; then
+      (umask 077; mkdir -p "$(task_hdir "$1")")
+      mv -- "$old" "$(task_file "$1" "$f")"
+    fi
+  done
+}
+# task_readable ID NAME: NAME in the task directory, which the agent writes, is a regular file and
+# no symlink, under no symlinked directory: the host never prints a host file or blocks on a FIFO.
+task_readable() {
+  local d; d="$(task_dir "$1")"
+  [ ! -L "$(task_ws)/tasks" ] && [ ! -L "$d" ] && [ -f "$d/$2" ] && [ ! -L "$d/$2" ]
+}
 task_container() { printf 'agentic-%s-task-%s\n' "$(task_project)" "$1"; }
 new_task_id() { printf 'T-%s-%s\n' "$(date -u +%Y%m%d)" "$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"; }
 new_token() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
@@ -61,6 +83,14 @@ clone_ok() {
     mkdir -p "$g/$d"
   done
 }
+# cgit_err ARG...: cgit with its output on stderr, without control characters (filters the agent
+# planted can write there).
+cgit_err() {
+  local out rc=0
+  out="$(cgit "$@" 2>&1)" || rc=$?
+  if [ -n "$out" ]; then printf '%s\n' "$out" | plain >&2; fi
+  return "$rc"
+}
 # cgit IMAGE CLONE GIT_DIR [DOCKER-ARG...] -- GIT-ARG...: git in a throwaway container of IMAGE: no
 # network, the invoking user, no capabilities, a read-only root, GIT_DIR pinned (GIT_COMMON_DIR is
 # the clone's .git), the clone's .git with its config, info/ and hooks/ read-only, and only the
@@ -92,7 +122,8 @@ task_image() {
 valid_task_id() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]; }
 need_task() {
   valid_task_id "${1:-}" || die "usage: a task id ([A-Za-z0-9._-]+)"
-  [ -f "$(task_dir "$1")/state.json" ] || die "no task $1 in $(task_project)"
+  task_readable "$1" state.json || die "no task $1 in $(task_project)"
+  task_migrate "$1"
 }
 
 # container_status ID: the docker state, missing when there is no such container, unknown when
@@ -104,7 +135,7 @@ container_status() {
   else echo unknown; fi
 }
 task_port() { docker port "$(task_container "$1")" "$TASK_PORT/tcp" 2>/dev/null | head -n 1 | sed 's/.*://'; }
-record_get() { jq -r "$2 // empty" "$(task_dir "$1")/state.json" 2>/dev/null || true; }
+record_get() { if task_readable "$1" state.json; then jq -r "$2 // empty" "$(task_dir "$1")/state.json" 2>/dev/null || true; fi; }
 
 # task_state ID: the record's state; active while no container runs means interrupted (spec §6).
 task_state() {
@@ -149,11 +180,17 @@ check_cap() {
   [ "$n" -lt "$max" ] || die "$n tasks are running (AGENTIC_MAX_RUNNING=$max); stop one or wait"
 }
 
-# safe_rm ROOT PATH: rm -rf PATH only when it is absolute, free of .. and strictly inside ROOT.
+# safe_rm ROOT PATH: rm -rf PATH only when it is absolute, free of .., strictly inside ROOT and no
+# component below ROOT is a symlink.
 safe_rm() {
-  local root="$1" path="$2"
+  local root="$1" path="$2" p
   [ -n "$root" ] && [ -n "$path" ] || return 0
   [[ "$path" == /* && "$path" != *"/../"* && "$path" != */.. && "$path" == "$root"/?* ]] || return 0
+  p="$path"
+  while [ "$p" != "$root" ] && [ "$p" != / ]; do
+    [ ! -L "$p" ] || return 0
+    p="$(dirname "$p")"
+  done
   rm -rf -- "$path"
 }
 
@@ -163,6 +200,7 @@ rollback_task() {
   local id="$1" clone wt branch ws f img g
   valid_task_id "$id" || return 0
   ws="$(task_ws)"
+  task_migrate "$id"
   img="$(task_image "$id")"
   docker rm -f "$(task_container "$id")" >/dev/null 2>&1 || true
   if [ -f "$(task_file "$id" repos)" ]; then
@@ -183,7 +221,8 @@ rollback_task() {
     done < "$(task_file "$id" repos)"
   fi
   safe_rm "$ws/tasks" "$(task_dir "$id")"
-  for f in env mounts repos interrupted; do safe_rm "$ws/tasks" "$(task_file "$id" "$f")"; done
+  for f in env mounts repos interrupted; do safe_rm "$ws/tasks" "$ws/tasks/$id.$f"; done
+  safe_rm "$AGENTIC_DATA/projects/$(task_project)/tasks" "$(task_hdir "$id")"
 }
 
 # project_url: the project's origin (credentials stripped), else the checkout itself.
@@ -242,15 +281,15 @@ add_worktree() {
   url="$(repo_url "$1")" || url=""
   [ -n "$url" ] || { say "repos/$1 has no origin to fetch from"; return 1; }
   sync_mirror "$1" "$url" || { say "could not mirror $url"; return 1; }
-  cgit "$img" "$clone" "$clone/.git" -v "$m:$m:ro" -- fetch -q --no-write-fetch-head --no-tags --no-recurse-submodules \
-    --upload-pack=git-upload-pack "$m" '+refs/heads/*:refs/remotes/origin/*' >&2 || return 1
+  cgit_err "$img" "$clone" "$clone/.git" -v "$m:$m:ro" -- fetch -q --no-write-fetch-head --no-tags --no-recurse-submodules \
+    --upload-pack=git-upload-pack "$m" '+refs/heads/*:refs/remotes/origin/*' || return 1
   if [ -z "$base" ]; then
     head="$(mgit "$1" symbolic-ref -q --short HEAD 2>/dev/null || true)"
     base="${head:+origin/$head}"; base="${base:-HEAD}"
   fi
   [ ! -L "$clone/.worktrees" ] || return 1
   mkdir -p "$wt"
-  cgit "$img" "$clone" "$clone/.git" -v "$wt:$wt" -- worktree add -q --no-track -b "$3" "$wt" "$base" >&2 \
+  cgit_err "$img" "$clone" "$clone/.git" -v "$wt:$wt" -- worktree add -q --no-track -b "$3" "$wt" "$base" \
     || { safe_rm "$(task_ws)/repos" "$wt"; return 1; }
   printf '%s\t%s\t%s\n' "$clone" "$wt" "$3" >> "$(task_file "$2" repos)"
 }
@@ -275,6 +314,27 @@ task_mounts() {
   } > "$(task_file "$id" mounts)"
 }
 
+# read_mounts ID: the task's -v arguments into TASK_MOUNTS, only in the forms task_mounts writes
+# (a workspace or config source; /work, /task, /events, /agentic-config, /workspaces/<name>, or a
+# clone's .git path at its own place); dies on anything else.
+read_mounts() {
+  local f ws cfg lines=() i v src dst
+  f="$(task_file "$1" mounts)"; ws="$(task_ws)"; cfg="$(cfg_dir)"; TASK_MOUNTS=()
+  if [ ! -f "$f" ] || [ -L "$f" ]; then die "task $1 has no mounts file"; fi
+  mapfile -t lines < "$f"
+  [ $(( ${#lines[@]} % 2 )) -eq 0 ] || die "the mounts file of $1 is not one the host wrote"
+  for ((i = 0; i < ${#lines[@]}; i += 2)); do
+    v="${lines[i+1]}"; v="${v%:ro}"; src="${v%%:*}"; dst="${v#*:}"
+    if [ "${lines[i]}" != -v ] || [[ "$dst" == *:* || "$src/" == *"/../"* || "$dst/" == *"/../"* ]] \
+      || ! [[ "$src" == "$ws/"?* || "$src" == "$cfg" ]] \
+      || ! [[ "$dst" =~ ^/(work|task|events|agentic-config)$ || "$dst" =~ ^/workspaces/[A-Za-z0-9._-]+$ \
+              || ( "$dst" == "$ws/repos/"?* && "$dst" == "$src" ) ]]; then
+      die "the mounts file of $1 is not one the host wrote"
+    fi
+    TASK_MOUNTS+=(-v "${lines[i+1]}")
+  done
+}
+
 # age ISO: minutes, hours or days since ISO.
 age() {
   local s; s=$(( $(date +%s) - $(date -d "$1" +%s 2>/dev/null || date +%s) ))
@@ -286,20 +346,21 @@ age() {
 # agent can write the file: lines that are not objects are skipped, options that are not a list are [].
 open_questions() {
   local f out; f="$(task_dir "$1")/questions.jsonl"
-  [ -f "$f" ] || { echo '[]'; return; }
+  task_readable "$1" questions.jsonl || { echo '[]'; return; }
   out="$(jq -cs 'map(select(type == "object")) | group_by(.id | tostring) | map(last) | map(select(.status == "open"))
     | sort_by(.id | tostring | ltrimstr("Q") | tonumber? // 0)
     | map({id, source, text, options: (.options | if type == "array" then . else [] end), recommendation, asked})' "$f" 2>/dev/null)" || out='[]'
   printf '%s\n' "${out:-[]}"
 }
 
-# note_interrupted ID: appends interrupted to the project events log the first time it is seen.
+# note_interrupted ID: appends interrupted to the host's events log the first time it is seen. Not
+# to the shared log under the workspace: tasks write that directory (a planted symlink or device).
 note_interrupted() {
   local m; m="$(task_file "$1" interrupted)"
   [ -e "$m" ] && return 0
-  mkdir -p "$(task_ws)/events"
+  (umask 077; mkdir -p "$(task_hdir "$1")")
   jq -cn --arg t "$1" --arg p "$(task_project)" '{ts: (now | todate), task: $t, project: $p, state: "interrupted", reason: "container gone without stop"}' \
-    >> "$(task_ws)/events/events.jsonl"
+    >> "$AGENTIC_DATA/projects/$(task_project)/events.jsonl"
   : > "$m"
 }
 
@@ -314,9 +375,10 @@ task_status_json() {
   fi
   st="$(task_state "$1")"
   [ "$st" != interrupted ] || note_interrupted "$1"
-  jq -cs --arg s "$st" --argjson q "$(open_questions "$1")" 'select(length == 1 and (.[0] | type) == "object") | .[0]
+  { task_readable "$1" state.json && jq -cs --arg s "$st" --argjson q "$(open_questions "$1")" \
+    'select(length == 1 and (.[0] | type) == "object") | .[0]
     | .inbox = (.inbox | if type == "array" then length else 0 end) | .state = $s | .questions = $q' \
-    "$(task_dir "$1")/state.json" 2>/dev/null | grep . \
+    "$(task_dir "$1")/state.json" 2>/dev/null; } | grep . \
     || jq -cn --arg id "$1" '{task: $id, state: "unknown", inbox: 0, questions: []}'
 }
 
