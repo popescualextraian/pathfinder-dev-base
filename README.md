@@ -70,7 +70,9 @@ several agents side by side, one per tmux window, and leave them working while y
 fresh container from it. Parallel agents that change code each need their own git worktree. Full
 guide: [`docs/dev-mode.md`](docs/dev-mode.md).
 
-## Detached tasks
+## Detached tasks (WIP)
+
+> **Work in progress:** detached tasks are not finished yet; commands and behaviour may change.
 
 `agentic run` starts an unattended task in its own container and git worktree; Claude Code or
 Copilot works on it through a small bridge, asks you with `agentic-ask` when it needs a decision,
@@ -89,7 +91,9 @@ agentic clean T-20261012-a3f1
 Full guide: [`docs/detached-mode.md`](docs/detached-mode.md). States, API, events, files and
 environment: [`docs/tasks.md`](docs/tasks.md).
 
-## Project wiki
+## Project wiki (WIP)
+
+> **Work in progress:** the wiki skill is not finished yet; commands and page layout may change.
 
 `/wiki seed` writes what agents cannot read from the code into `docs/wiki/`: components and their
 boundaries, decisions, contracts, concepts, flows and the shared code to reuse. It also writes a
