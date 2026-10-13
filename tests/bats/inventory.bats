@@ -42,3 +42,10 @@ setup() {
   PATH="$B:$PATH" run "$I"
   grep -qx -- '- agentic-wiki' <<<"$output"
 }
+
+@test "says where git credentials come from" {
+  PATH="$B:$PATH" run "$I"
+  grep -q -- '^## Git credentials' <<<"$output"
+  grep -q 'AGENTIC_GIT_HOSTS' <<<"$output"
+  grep -q 'git.hosts' <<<"$output"
+}

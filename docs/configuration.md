@@ -9,7 +9,8 @@ Generated from `schema/agentic.schema.json` and `config/defaults.yaml` by
 | `project` | string |  | Project name. Names the image agentic-<project>:local and the workspace directory. |
 | `base_image` | string | `"agentic-dev-base:local"` | Image the derived image is built FROM: the base or an overlay built FROM the base. |
 | `git` | object | `{"host":"github.com","user_name":"","user_email":""}` | Git settings. |
-| `git.host` | string | `"github.com"` | Git host for the credential helper and GH_HOST. |
+| `git.host` | string | `"github.com"` | Git host for GH_HOST, and for the credential helper with GH_TOKEN or GIT_TOKEN unless git.hosts lists it. |
+| `git.hosts` | object |  | Further git hosts, each with its own token: host -> {kind: github (default) or gitlab, token: "${VAR}" naming a variable in .env}. Each host with a token gets a credential helper; the first gitlab host also gets GITLAB_HOST and GITLAB_TOKEN. |
 | `git.user_name` | string | `""` | Commit author name. Empty uses the host's git config. |
 | `git.user_email` | string | `""` | Commit author email. Empty uses the host's git config. |
 | `tools` | object | `{"java":{"versions":[21],"default":21},"maven":"3.9.9","gradle":false,"node":{"versions":[22],"default":22},"python":["3.12"],"apt":[],"extra_dockerfile":".agentic/Dockerfile.extra"}` | Build-time tools. Changing them needs agentic build. |

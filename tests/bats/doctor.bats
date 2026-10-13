@@ -102,3 +102,18 @@ step() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$AGENTIC_STEPS_DIR/$1.sh"; }
   run grep -qx -- '--entrypoint' <<<"$call"
   [ "$status" -ne 0 ]
 }
+
+@test "doctor lists each git host with its token variable, never the value" {
+  resolved '{"project":"demo","git":{"host":"github.com","hosts":{"gitlab.example.com":{"kind":"gitlab","token":"${GITLAB_TOKEN}"},"git.example.org":{"token":"${ORG_TOKEN}"}}},"tools":{"apt":[]},"mcp":{"custom":[]},"docker":{"socket":false}}'
+  GH_TOKEN=ghsecret GITLAB_TOKEN=glsecret run bash "$D"
+  [[ "$output" == *"ok    git host github.com (GH_TOKEN)"* ]]
+  [[ "$output" == *"ok    git host gitlab.example.com (GITLAB_TOKEN)"* ]]
+  [[ "$output" == *"warn  git host git.example.org: ORG_TOKEN is not set (.agentic/.env)"* ]]
+  [[ "$output" != *secret* ]]
+}
+
+@test "doctor probes every git host over https" {
+  resolved '{"project":"demo","git":{"host":"github.com","hosts":{"gitlab.example.com":{"token":"${GL}"}}},"tools":{"apt":[]},"mcp":{"custom":[]},"docker":{"socket":false}}'
+  GL=x CURL_RC=60 run bash "$D"
+  [[ "$output" == *"git host gitlab.example.com: TLS certificate not trusted (https://gitlab.example.com)"* ]]
+}

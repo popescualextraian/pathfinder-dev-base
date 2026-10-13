@@ -61,7 +61,7 @@ after a change marked *build*, run `agentic build`, then `agentic dev recreate`.
 | Path | Purpose | Takes effect |
 |---|---|---|
 | `agentic.yaml` | Project config: tools, plugins, MCP servers, Docker socket, hooks ([reference](docs/configuration.md)) | build; MCP at next start |
-| `.env` (git-ignored), `.env.example` | Secrets and logins (`ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`, …); loaded at start, never in the image | next start |
+| `.env` (git-ignored), `.env.example` | Secrets and logins (`ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`, …); env vars of a new container, never in the image | new container (`dev recreate`) |
 | `certs/` | `*.crt` files trusted by the system, Java, Node, Python and Chromium (for example a proxy CA) | build |
 | `skills/` | Project skills (`<name>/SKILL.md`), copied into Claude and Copilot | build |
 | `hooks/on-build.sh` | Runs as `dev` at the end of the build, without `.env`; user-level installs (`npm i -g`, `pipx`) | build |
@@ -139,6 +139,19 @@ The repository (`AGENTIC_REPO_URL`) clones over https with `GIT_TOKEN` or `GH_TO
 `.agentic/.env`. Never put a token in the URL itself (`https://user:token@...`): URLs end up in
 configs and logs. `git@host:` and `ssh://git@host/` URLs are rewritten to https, because no SSH
 keys are mounted.
+
+`git.host` gets a credential helper with `GH_TOKEN` (or `GIT_TOKEN`). Every other host, for
+example a GitLab next to GitHub, gets an entry in `git.hosts` that names its own variable:
+
+```yaml
+git:
+  hosts:
+    gitlab.example.com: {kind: gitlab, token: "${GITLAB_TOKEN}"}
+```
+
+A `gitlab` host also sets up glab (`GITLAB_HOST`, `GITLAB_TOKEN`). Inside the container,
+`$AGENTIC_GIT_HOSTS` lists every host with a token (`host=VARIABLE`) and `agentic doctor` flags
+a missing one.
 
 ## Extending
 

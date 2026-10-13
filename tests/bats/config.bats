@@ -181,3 +181,18 @@ write() { printf '%s\n' "$2" > "$1"; }
   [[ "$output" == *".repos: no longer supported; delete it"* ]]
   [[ "$output" != *"unknown key"* ]]
 }
+
+@test "git.hosts takes a kind and a token reference per host" {
+  write "$P/agentic.yaml" $'version: 1\nproject: demo\ngit:\n  hosts:\n    gitlab.example.com: {kind: gitlab, token: "${GITLAB_TOKEN}"}'
+  run "$AC" validate "$P"
+  [ "$status" -eq 0 ]
+}
+
+@test "git.hosts rejects a literal token and an unknown kind" {
+  write "$P/agentic.yaml" $'version: 1\nproject: demo\ngit:\n  hosts:\n    gitlab.example.com: {kind: svn, token: glpat-secret}'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".git.hosts.gitlab.example.com.kind"* ]]
+  [[ "$output" == *".git.hosts.gitlab.example.com.token"* ]]
+  [[ "$output" != *glpat-secret* ]]
+}

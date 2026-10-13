@@ -59,6 +59,34 @@ from `agentic.yaml` are not in it yet.
 State these facts; do not guess. Other files in `.agentic/` are the user's own; mention them only if
 they look like a mistaken copy of one of the files above.
 
+## Git hosts
+
+Git pushes over https with a token; no SSH keys are mounted, and `git@` and `ssh://` URLs are
+rewritten to https. At start the container wires a credential helper for every host that has a
+token and lists them in `$AGENTIC_GIT_HOSTS` as `host=VARIABLE`.
+
+- `git.host` (default `github.com`) uses `GH_TOKEN`, or `GIT_TOKEN`, and sets `GH_HOST` for gh.
+- Every other host, or a host that needs its own token, gets an entry in `git.hosts`:
+
+  ```yaml
+  git:
+    hosts:
+      gitlab.example.com: {kind: gitlab, token: "${GITLAB_TOKEN}"}
+      git.example.org: {token: "${ORG_GIT_TOKEN}"}
+  ```
+
+  `kind` is `github` (default) or `gitlab`; the first `gitlab` host with a token is also glab's
+  host (`GITLAB_HOST`, `GITLAB_TOKEN`). `token` names a variable in `.env`; never a value.
+  A host listed here uses only its own variable, even when it is also `git.host`.
+- Take hosts from the remotes, CI files and submodules; ask the user for any other host they
+  push to, and for its kind when the host name does not make it obvious. Then add the variable
+  with `agentic-env add GITLAB_TOKEN --comment "GitLab personal access token, scope
+  write_repository (api for glab)"` (or `--comment` with the GitHub equivalent).
+- A GitHub token never works for a GitLab host. If a push fails with `Authentication failed`,
+  check `$AGENTIC_GIT_HOSTS` for the host before anything else; a host missing there needs a
+  `git.hosts` entry or its token in `.env`, then a container restart (no rebuild).
+  `agentic doctor` shows which tokens are missing.
+
 ## Procedure
 
 0. **Fix a broken config first**: if `~/.agentic/config-errors.txt` exists, `agentic.yaml` is
@@ -76,7 +104,9 @@ they look like a mistaken copy of one of the files above.
    - tests use a compose file or Testcontainers while `docker.socket` is false (explain that
      the socket is host root before suggesting it);
    - Jira keys appear in commit messages or branch names but `mcp.atlassian` is disabled;
-   - Terraform has no exact version.
+   - Terraform has no exact version;
+   - a git remote (`git -C /work remote -v`, submodules, a repository the user pushes to) is on
+     a host that `$AGENTIC_GIT_HOSTS` does not list: see **Git hosts** above.
 3. **Ask for what you cannot see** (after checking the inventory): tools used day to day that are not in the repository or the image, deploy
    targets and their CLIs, the Atlassian URLs, extra MCP servers, the preferred harness,
    headless or headed browser, corporate CA certificates (they go into `.agentic/certs/*.crt`).
@@ -98,8 +128,8 @@ they look like a mistaken copy of one of the files above.
    (schema, presets present in this image, build paths inside `.agentic/`); only a clean result
    means the build will accept the config.
 6. **Hand over**: summarise what changed; say whether a rebuild is needed (tools, certs,
-   plugins, `Dockerfile.extra`, `on-build.sh`, `docker.socket` need one; MCP servers, skills
-   and `on-start.sh` do not); list every key you added with `agentic-env` and which ones still
+   plugins, `Dockerfile.extra`, `on-build.sh`, `docker.socket` need one; MCP servers, skills,
+   `git` and `on-start.sh` do not); list every key you added with `agentic-env` and which ones still
    need a value from the user (never the values); and tell the user
    to run, on the host, `agentic build` (if needed) and `agentic doctor`.
    If the project has no `docs/wiki/`, suggest running `/wiki seed` next, which writes the wiki,
