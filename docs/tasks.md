@@ -149,15 +149,21 @@ Host git on task clones: no host git process opens a `.git` directory a task can
   `$AGENTIC_DATA/projects/<project>/mirrors/<name>.git`, which is never mounted into a container
   (not even a dev container, which sees only `repos/`). Each mirror fetches from the URL it
   recorded when it was made (pinned): for the project's own clone, the checkout's `origin`
-  (credentials stripped, else the checkout itself) at the first `run`; for a `--repo` clone, its
-  origin, read from the clone before any task had write access to it. Later changes to either
-  origin are not read. To change the URL on purpose, delete the mirror (the next `run` records the
-  current origin) or set it there: `git --git-dir=<mirror> remote set-url origin <url>`. A URL that
-  starts with `-` is refused, and every URL or path operand of host git follows `--`, so no URL is
-  taken for an option such as `--upload-pack`. Host git on a mirror keeps the user's own settings for what could run a
-  command (the ssh command and askpass from the user's config, credential helpers reset and
-  replayed from the system and global config, a `git://` proxy only from the user, `ext::` off), no
-  hooks, no fsmonitor, `gc.auto=0`, `maintenance.auto=false`.
+  (credentials stripped; without an origin, the checkout itself) at the first `run`; for a `--repo`
+  clone, its origin, read before any task has had access to the clone, though a dev agent may have
+  written it. A recorded origin must name a remote: `https://`, `ssh://`, `git://` or scp-style
+  `[user@]host:path`. A local path, `file://` or a `<name>::` transport helper is refused, so no
+  origin can make a mirror copy another repository of the host. Later changes to either origin are
+  not read. To change the URL on purpose, delete the mirror (the next `run` records the current
+  origin) or set it there: `git --git-dir=<mirror> remote set-url origin <url>`. A URL that starts
+  with `-` is refused, and every URL or path operand of host git follows `--`, so no URL is taken
+  for an option such as `--upload-pack`. Host git that talks to a remote allows only the `https`,
+  `ssh` and `git` transports (`protocol.allow=never`); `file` only for the checkout fallback and
+  from the mirror itself (the host's new clone, and the fetch into a clone in a throwaway
+  container). Host git on a mirror keeps the user's own settings for what could run a command (the
+  ssh command and askpass from the user's config, credential helpers reset and replayed from the
+  system and global config, a `git://` proxy only from the user, `ext::` off), no hooks, no
+  fsmonitor, `gc.auto=0`, `maintenance.auto=false`.
 - Every operation on a clone (fetch from the mirror into `refs/remotes/origin/`, `worktree add`,
   `clean`'s `status` and `log`, rollback's `worktree remove`, `worktree prune`, `branch -D`) runs in a
   throwaway container of the task's image: `--network none`, the invoking user, `--cap-drop ALL`,
@@ -202,12 +208,15 @@ the throwaway containers and the canonical-path checks above.
 
 The dev container also mounts the user's checkout read-write at `/work`, so a dev agent can change
 everything in it that the host reads: the `origin` URL in `.git/config`, `.agentic/.env` (tokens,
-`AGENTIC_GATE`, which reach every task) and `.agentic/agentic.yaml` (the next `agentic build`). What
-is pinned: once a mirror exists, `run` no longer reads the checkout's or a clone's origin, and a URL
-is never taken for a git option. What remains: before a mirror exists, the first `run` (or the
-first use of a `--repo` clone) records whatever origin a dev agent left there; `.env` and
-`agentic.yaml` are trusted as written, so review a checkout a dev agent worked in before the next
-`run` or `build`; and the harness homes are shared, so a dev agent can replace a login a task copies.
+`AGENTIC_GATE`, which reach every task) and `.agentic/agentic.yaml` (the next `agentic build`). Host
+git also runs in the checkout itself (`rev-parse`, `remote get-url`, `config user.name` and
+`user.email`), with no fsmonitor and no hooks, but it reads the checkout's `.git/config`. What is
+pinned: once a mirror exists, `run` no longer reads the checkout's or a clone's origin; an origin
+is recorded only when it names a remote, and a URL is never taken for a git option. What remains:
+before a mirror exists, the first `run` (or the first use of a `--repo` clone) records whatever
+remote origin a dev agent left there; `.git/config`, `.env` and `agentic.yaml` are trusted as
+written, so review a checkout a dev agent worked in before the next `run` or `build`; and the
+harness homes are shared, so a dev agent can replace a login a task copies.
 
 Known limit, check then use: the host checks a path (a clone's `.git`, its `.worktrees/`, a
 worktree's `.git` file) and later uses it (a bind source of `docker run`, a throwaway container).
