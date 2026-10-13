@@ -49,8 +49,26 @@ another directory.
      `copilot`. Detach with `Ctrl-b d`; `agentic dev` again re-attaches. `agentic dev stop`,
      `recreate` and `status` manage it.
    - `agentic shell [CMD...]` → a throwaway container, removed on exit.
+   More in [Dev mode](#dev-mode).
 7. **Check.** `agentic doctor` → start steps, tools, logins, MCP servers and certificates, each
    with `ok` or what is wrong (for example `ok claude`).
+
+## Dev mode
+
+`agentic dev` keeps one container per project running, with a tmux session in `/work`. Run
+several agents side by side, one per tmux window, and leave them working while you are away.
+
+| Keys | Action |
+|---|---|
+| `Ctrl-b c` | new window; type `claude` for another agent |
+| `Ctrl-b w` | all windows, each titled with its agent's current task |
+| `Ctrl-b 0`…`9`, `n`, `p`, `l` | go to a window, the next, the previous, the last used |
+| `Ctrl-b d` | detach; `agentic dev` re-attaches to the same windows |
+| `Ctrl-b [` | scroll, `q` to leave |
+
+`agentic dev status` reports when the image was rebuilt, and `agentic dev recreate` starts a
+fresh container from it. Parallel agents that change code each need their own git worktree. Full
+guide: [`docs/dev-mode.md`](docs/dev-mode.md).
 
 ## Project wiki
 
