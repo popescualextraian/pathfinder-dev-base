@@ -355,22 +355,84 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   done
 }
 
-@test "a second task on a clone checks out in a throwaway container: no network, the user, only the clone" {
+# cg_head CALL: the docker run options of a throwaway git container call, up to the image, on one line.
+cg_head() { sed -n '2,/^--entrypoint$/p' <<<"$1" | tr '\n' ' '; }
+# cg_base CLONE GITDIR: the options every throwaway git container has, before its own mounts.
+cg_base() {
+  local g="$1/.git"
+  printf '%s ' --rm --network none --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+    --read-only --tmpfs /tmp -e HOME=/tmp -e "GIT_DIR=$2" -e "GIT_COMMON_DIR=$g" \
+    -v "$g:$g" -v "$g/config:$g/config:ro" -v "$g/info:$g/info:ro" -v "$g/hooks:$g/hooks:ro"
+}
+MIRRORS_REL=projects/demo/mirrors
+
+@test "every operation on a task clone runs in a hardened throwaway container with only what it needs" {
   ag run --id T-41 "x" 2>/dev/null
-  run docker_run_with --entrypoint
-  [ -z "$output" ]   # a clone made by this run has nothing a task wrote: host git
+  clone="$AGENTIC_WORKSPACES/demo/repos/proj"; g="$clone/.git"; m="$AGENTIC_DATA/$MIRRORS_REL/proj.git"; wt="$clone/.worktrees/T-41"
+  [ "$(git -C "$wt" rev-parse --abbrev-ref HEAD)" = agentic/T-41-x ]
+  call="$(docker_run_with fetch)"
+  [ "$(cg_head "$call")" = "$(cg_base "$clone" "$g")-v $m:$m:ro --entrypoint " ]
+  [ "$(sed -n '/^--entrypoint$/,$p' <<<"$call" | sed -n '4,11p' | tr '\n' ' ')" = "-c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/dev/null -c core.fsmonitor=false " ]
+  grep -qx -- '--no-write-fetch-head' <<<"$call"
+  call="$(docker_run_with worktree)"
+  [ "$(cg_head "$call")" = "$(cg_base "$clone" "$g")-v $wt:$wt --entrypoint " ]
+  grep -qx -- '--no-track' <<<"$call"
+  record T-41 idle
   : > "$DOCKER_LOG"
-  ag run --id T-42 "y" 2>/dev/null
+  DOCKER_STATUS=exited run ag clean T-41
+  [ "$status" -eq 0 ]
+  [ "$(cg_head "$(docker_run_with status)")" = "$(cg_base "$clone" "$g/worktrees/T-41")-v $wt:$wt -e GIT_WORK_TREE=$wt --entrypoint " ]
+  [ "$(cg_head "$(docker_run_with remove)")" = "$(cg_base "$clone" "$g")-v $wt:$wt --entrypoint " ]
+  [ "$(cg_head "$(docker_run_with prune)")" = "$(cg_base "$clone" "$g")-v $clone/.worktrees:$clone/.worktrees:ro --entrypoint " ]
+  [ "$(cg_head "$(docker_run_with -D)")" = "$(cg_base "$clone" "$g")--entrypoint " ]
+  [ ! -e "$wt" ]
+  run git -C "$clone" rev-parse --verify -q agentic/T-41-x
+  [ "$status" -ne 0 ]
+}
+
+@test "host git never opens a task clone once it exists: a second run, clean and rollback" {
+  ag run --id T-42 "x" 2>/dev/null
+  install_git_log
+  ag run --id T-43 "y" 2>/dev/null
+  record T-43 idle
+  DOCKER_STATUS=exited ag clean T-43 >/dev/null
+  DOCKER_STATUS=exited DOCKER_RUN_RC=1 run ag run --id T-44 "z"
+  [ "$status" -eq 1 ]
+  [ -s "$BATS_TEST_TMPDIR/hostgit.log" ]   # the mirror fetches ran through it
+  run grep -F "$AGENTIC_WORKSPACES/demo/repos" "$BATS_TEST_TMPDIR/hostgit.log"
+  [ "$status" -ne 0 ]
+}
+
+@test "the mirror is private: made from the project's remote, never mounted into a task, deaf to the clone's config" {
+  ag run --id T-45 "x" 2>/dev/null
+  m="$AGENTIC_DATA/$MIRRORS_REL/proj.git"
+  [ "$(git --git-dir="$m" rev-parse --is-bare-repository)" = true ]
+  run grep -F mirrors "$T/T-45.mounts"
+  [ "$status" -ne 0 ]
   clone="$AGENTIC_WORKSPACES/demo/repos/proj"
-  [ "$(git -C "$clone/.worktrees/T-42" rev-parse --abbrev-ref HEAD)" = agentic/T-42-y ]
-  call="$(docker_run_with --entrypoint)"
-  [ "$(sed -n '2,11p' <<<"$call" | tr '\n' ' ')" = "--rm --network none --user $(id -u):$(id -g) -v $clone:$clone --entrypoint git agentic-demo:local " ]
-  grep -qx 'worktree' <<<"$call"
-  [ "$(grep -c -- '^-v$' <<<"$call")" -eq 1 ]
+  git -C "$clone" config remote.origin.url https://example.invalid/x.git
+  git -C "$clone" config http.proxy http://127.0.0.1:9
+  git -C "$clone" config "url.https://example.invalid/.insteadOf" "$PROJ"
+  git -C "$PROJ" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m second
+  ag run --id T-46 "y" 2>/dev/null
+  [ "$(git -C "$clone/.worktrees/T-46" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse HEAD)" ]
+  [ "$(git --git-dir="$m" config remote.origin.url)" = "$PROJ" ]
+}
+
+@test "a --repo clone's origin is recorded in its mirror on first use; the clone's config is not read again" {
+  ws="$AGENTIC_WORKSPACES/demo"
+  git clone -q "$PROJ" "$ws/repos/lib"
+  ag run --id T-47 --repo lib "x" 2>/dev/null
+  m="$AGENTIC_DATA/$MIRRORS_REL/lib.git"
+  [ "$(git --git-dir="$m" config remote.origin.url)" = "$PROJ" ]
+  git -C "$ws/repos/lib" config remote.origin.url https://example.invalid/x.git
+  git -C "$PROJ" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m second
+  ag run --id T-48 --repo lib "y" 2>/dev/null
+  [ "$(git -C "$ws/repos/lib/.worktrees/T-48" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse HEAD)" ]
 }
 
 @test "commands planted in a clone never run on the host: checkout, fetch and clean" {
-  ag run --id T-43 "x" 2>/dev/null
+  ag run --id T-49 "x" 2>/dev/null
   clone="$AGENTIC_WORKSPACES/demo/repos/proj"
   plant upload; plant smudge cat; plant clean cat; plant askpass
   git -C "$clone" config remote.origin.uploadpack "$BATS_TEST_TMPDIR/upload"
@@ -378,61 +440,57 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   git -C "$clone" config filter.x.clean "$BATS_TEST_TMPDIR/clean"
   git -C "$clone" config core.askPass "$BATS_TEST_TMPDIR/askpass"
   echo '* filter=x' > "$clone/.git/info/attributes"
-  run ag run --id T-44 "y"
+  run ag run --id T-50 "y"
   [ "$status" -eq 0 ]
   grep -qx 'smudge container' "$BATS_TEST_TMPDIR/ran"   # the planted filter is live, and ran in the container
-  record T-44 idle
+  record T-50 idle
   # a new mtime, same content: status runs the clean filter to compare
-  touch -d "@$(( $(date +%s) + 7 ))" "$clone/.worktrees/T-44/.agentic/agentic.yaml"
-  DOCKER_STATUS=exited run ag clean T-44
+  touch -d "@$(( $(date +%s) + 7 ))" "$clone/.worktrees/T-50/.agentic/agentic.yaml"
+  DOCKER_STATUS=exited run ag clean T-50
   [ "$status" -eq 0 ]
   grep -qx 'clean container' "$BATS_TEST_TMPDIR/ran"
-  run grep host "$BATS_TEST_TMPDIR/ran"
+  run grep -E 'host|upload' "$BATS_TEST_TMPDIR/ran"
   [ "$status" -ne 0 ]
 }
 
-@test "clean checks the worktrees in a throwaway container of the task's image" {
-  ag run --id T-45 "x" 2>/dev/null
-  record T-45 idle
-  : > "$DOCKER_LOG"
-  DOCKER_STATUS=exited DOCKER_RUNNING=agentic-other:local run ag clean T-45
-  [ "$status" -eq 0 ]
-  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
-  call="$(docker_run_with status)"
-  [ "$(sed -n '2,11p' <<<"$call" | tr '\n' ' ')" = "--rm --network none --user $(id -u):$(id -g) -v $clone:$clone --entrypoint git agentic-other:local " ]
-  grep -qx "$clone/.worktrees/T-45" <<<"$call"
-  docker_run_with log | grep -qx -- '--not'
+@test "FETCH_HEAD and packed-refs symlinks planted in a clone never change a host file" {
+  ag run --id T-51 "x" 2>/dev/null
+  g="$AGENTIC_WORKSPACES/demo/repos/proj/.git"
+  echo keep > "$BATS_TEST_TMPDIR/victim1"; cp "$g/packed-refs" "$BATS_TEST_TMPDIR/victim2"; cp "$BATS_TEST_TMPDIR/victim2" "$BATS_TEST_TMPDIR/victim2.orig"
+  rm -f "$g/FETCH_HEAD"; ln -s "$BATS_TEST_TMPDIR/victim1" "$g/FETCH_HEAD"
+  ln -sf "$BATS_TEST_TMPDIR/victim2" "$g/packed-refs"
+  ag run --id T-52 "y" 2>/dev/null
+  record T-52 idle
+  DOCKER_STATUS=exited ag clean T-52 >/dev/null
+  DOCKER_STATUS=exited ag clean T-51 --force >/dev/null 2>&1 || true
+  [ "$(cat "$BATS_TEST_TMPDIR/victim1")" = keep ]
+  cmp "$BATS_TEST_TMPDIR/victim2" "$BATS_TEST_TMPDIR/victim2.orig"
 }
 
-@test "host fetch keeps the user's credential helpers and ignores the clone's command settings" {
+@test "clean refuses a worktree whose .git does not name one of the clone's worktrees" {
+  ag run --id T-53 "x" 2>/dev/null
+  record T-53 idle
+  wt="$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-53"
+  echo "gitdir: $BATS_TEST_TMPDIR/elsewhere" > "$wt/.git"
+  DOCKER_STATUS=exited run ag clean T-53
+  [ "$status" -eq 1 ]; [[ "$output" == *"cannot check"* ]]
+  rm "$wt/.git"; ln -s "$BATS_TEST_TMPDIR/elsewhere" "$wt/.git"
+  DOCKER_STATUS=exited run ag clean T-53
+  [ "$status" -eq 1 ]; [[ "$output" == *"cannot check"* ]]
+}
+
+@test "the host's own git (mirror fetch) keeps the user's credential helpers, not other command settings" {
   unset GIT_ASKPASS SSH_ASKPASS GIT_PROXY_COMMAND GIT_SSH_COMMAND GIT_SSH
-  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
-  mkdir -p "$AGENTIC_WORKSPACES/demo/repos"; git clone -q "$PROJ" "$clone"
-  plant local-helper; plant global-helper; plant url-helper; plant askpass; plant ssh; plant proxy
-  git -C "$clone" config credential.helper "!$BATS_TEST_TMPDIR/local-helper"
-  git -C "$clone" config core.askPass "$BATS_TEST_TMPDIR/askpass"
-  git -C "$clone" config core.sshCommand "$BATS_TEST_TMPDIR/ssh"
-  git -C "$clone" config core.gitProxy "$BATS_TEST_TMPDIR/proxy"
+  plant global-helper; plant url-helper
   git config --global credential.helper "!$BATS_TEST_TMPDIR/global-helper"
   git config --global credential.https://example.com.helper "!$BATS_TEST_TMPDIR/url-helper"
-  printf 'protocol=https\nhost=example.com\n\n' | GIT_TERMINAL_PROMPT=0 lib hfetch "$clone" credential fill >/dev/null 2>&1 || true
+  printf 'protocol=https\nhost=example.com\n\n' | GIT_TERMINAL_PROMPT=0 lib ugit credential fill >/dev/null 2>&1 || true
   grep -qx 'global-helper host' "$BATS_TEST_TMPDIR/ran"
   grep -qx 'url-helper host' "$BATS_TEST_TMPDIR/ran"
-  GIT_TERMINAL_PROMPT=0 timeout 60 bash -c "$(declare -f lib); lib hfetch '$clone' ls-remote ssh://git@example.invalid/x" >/dev/null 2>&1 || true
-  GIT_TERMINAL_PROMPT=0 timeout 60 bash -c "$(declare -f lib); lib hfetch '$clone' ls-remote git://example.invalid/x" >/dev/null 2>&1 || true
-  run grep -E '^(local-helper|askpass|ssh|proxy) ' "$BATS_TEST_TMPDIR/ran"
-  [ "$status" -ne 0 ]
-}
-
-@test "host git reads the clone's own git directory, not one a planted commondir file names" {
-  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
-  mkdir -p "$AGENTIC_WORKSPACES/demo/repos"; git clone -q "$PROJ" "$clone"
-  cp -r "$clone/.git" "$BATS_TEST_TMPDIR/decoy"
-  git config -f "$BATS_TEST_TMPDIR/decoy/config" remote.origin.url https://example.com/decoy.git
-  echo "$BATS_TEST_TMPDIR/decoy" > "$clone/.git/commondir"
-  [ "$(git -C "$clone" config remote.origin.url)" = https://example.com/decoy.git ]   # the vector is live
-  [ "$(lib hgit "$clone" config remote.origin.url)" = "$PROJ" ]
-  [ "$(lib hfetch "$clone" config remote.origin.url)" = "$PROJ" ]
+  [ "$(lib ugit config gc.auto)" = 0 ]
+  [ "$(lib ugit config maintenance.auto)" = false ]
+  [ "$(lib ugit config protocol.ext.allow)" = never ]
+  [ "$(lib ugit config core.sshCommand)" = ssh ]
 }
 
 @test "a malformed state.json or questions file never breaks status" {

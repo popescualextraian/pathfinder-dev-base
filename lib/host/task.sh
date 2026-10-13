@@ -21,25 +21,22 @@ task_slug() {
   slug="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//' | cut -c1-40 | sed -E 's/-+$//')"
   printf '%s\n' "${slug:-task}"
 }
-# Task clones: the task container writes into their .git, so host git never runs a command the
-# clone configures. Their config, info/ and hooks/ are mounted read-only (task_mounts); the commands
-# that read what the agent can still change (checkout filters, status) run in a throwaway container.
-# hgit CLONE ARG...: host git on the clone's own git directory, pinned so a planted commondir file
-# is ignored, without hooks and fsmonitor. For commands that run nothing the clone configures.
-hgit() {
-  local g="$1/.git"; shift
-  GIT_DIR="$g" GIT_COMMON_DIR="$g" git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
-}
-# user_cfg KEY: KEY from the user's global, else the system git config; never from a clone.
+# Task clones: a task container writes into their .git, so no host git process opens one once it
+# exists. Host git only touches a private bare mirror per clone (mirror_dir, never mounted into a
+# container); every operation on a clone runs in a throwaway container (cgit).
+mirror_dir() { printf '%s/projects/%s/mirrors/%s.git\n' "$AGENTIC_DATA" "$(task_project)" "$1"; }
+# user_cfg KEY: KEY from the user's global, else the system git config.
 user_cfg() { git config --includes --global --get "$1" 2>/dev/null || git config --includes --system --get "$1" 2>/dev/null || true; }
-# hfetch CLONE ARG...: hgit for fetch, which runs on the host with the user's credentials. The ssh
-# command and askpass come from the user's config, the credential helpers are reset and replayed
-# from the system and global config, ext:: is off and a git:// proxy only comes from the user.
-hfetch() {
-  local clone="$1" ssh scope e args=(); shift
+# ugit ARG...: host git (mirrors, a brand-new clone) with the user's own settings for what could run
+# a command: the ssh command and askpass from the user's config, the credential helpers reset and
+# replayed from the system and global config, a git:// proxy only from the user, ext:: off, no
+# hooks, no fsmonitor, no automatic gc or maintenance.
+ugit() {
+  local ssh scope e args=()
   ssh="$(user_cfg core.sshCommand)"
   args=(-c "core.sshCommand=${ssh:-ssh}" -c "core.askPass=$(user_cfg core.askPass)" -c core.attributesFile=/dev/null
-    -c protocol.ext.allow=never -c credential.helper=)
+    -c protocol.ext.allow=never -c core.hooksPath=/dev/null -c core.fsmonitor=false -c gc.auto=0
+    -c maintenance.auto=false -c credential.helper=)
   for scope in system global; do
     if [ "$scope" = system ] && [ -n "${GIT_CONFIG_NOSYSTEM:-}" ]; then continue; fi
     while IFS= read -r -d '' e; do
@@ -47,18 +44,50 @@ hfetch() {
     done < <(git config --includes "--$scope" -z --get-regexp '^credential\..*helper$' 2>/dev/null || true)
   done
   (
-    # the first core.gitProxy read wins, so a clone's would beat -c; the variable beats both
+    # the first core.gitProxy read wins, so -c could not override one; the variable beats all
     if [ -z "${GIT_PROXY_COMMAND+x}" ] && [ -z "$(user_cfg core.gitProxy)" ]; then export GIT_PROXY_COMMAND=; fi
-    hgit "$clone" "${args[@]}" "$@"
+    git "${args[@]}" "$@"
   )
 }
-# cgit IMAGE CLONE ARG...: git in a throwaway container of IMAGE: no network, the invoking user and
-# only the clone, at its own path. --entrypoint git stays right before the image (the test stub
-# relies on it).
+# mgit NAME ARG...: ugit on the private mirror of repos/NAME.
+mgit() { local m; m="$(mirror_dir "$1")"; shift; GIT_DIR="$m" GIT_COMMON_DIR="$m" ugit "$@"; }
+# clone_ok CLONE: the clone's .git, config, info/ and hooks/ are no symlinks (a mount source would
+# follow one); creates info/ and hooks/ so they can be mounted.
+clone_ok() {
+  local g="$1/.git" d
+  [ -d "$g" ] && [ ! -L "$1" ] && [ ! -L "$g" ] && [ -f "$g/config" ] && [ ! -L "$g/config" ] || return 1
+  for d in info hooks; do
+    [ ! -L "$g/$d" ] || return 1
+    mkdir -p "$g/$d"
+  done
+}
+# cgit IMAGE CLONE GIT_DIR [DOCKER-ARG...] -- GIT-ARG...: git in a throwaway container of IMAGE: no
+# network, the invoking user, no capabilities, a read-only root, GIT_DIR pinned (GIT_COMMON_DIR is
+# the clone's .git), the clone's .git with its config, info/ and hooks/ read-only, and only the
+# extra mounts a call names. --entrypoint git stays right before the image (the test stub relies on it).
 cgit() {
-  local img="$1" clone="$2"; shift 2
-  docker run --rm --network none --user "$(id -u):$(id -g)" -v "$clone:$clone" --entrypoint git "$img" \
-    -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+  local img="$1" g="$2/.git" dir="$3" extra=(); shift 3
+  while [ "$1" != -- ]; do extra+=("$1"); shift; done
+  shift
+  docker run --rm --network none --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges \
+    --read-only --tmpfs /tmp -e HOME=/tmp -e "GIT_DIR=$dir" -e "GIT_COMMON_DIR=$g" \
+    -v "$g:$g" -v "$g/config:$g/config:ro" -v "$g/info:$g/info:ro" -v "$g/hooks:$g/hooks:ro" "${extra[@]}" \
+    --entrypoint git "$img" -c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+}
+# wt_gitdir CLONE WT: the worktree's git directory from its .git file, only when that is a regular
+# file naming CLONE/.git/worktrees/<name>.
+wt_gitdir() {
+  local line d n
+  [ -f "$2/.git" ] && [ ! -L "$2/.git" ] || return 1
+  line="$(head -c 4096 "$2/.git" | head -n 1)"
+  d="${line#gitdir: }"; n="${d#"$1/.git/worktrees/"}"
+  [ "$d" != "$line" ] && [ "$n" != "$d" ] && [[ "$n" =~ ^[A-Za-z0-9._-]+$ ]] && [ "$n" != . ] && [ "$n" != .. ] || return 1
+  printf '%s\n' "$d"
+}
+# task_image ID: the image of the task's container, else the project image, else its base.
+task_image() {
+  docker inspect -f '{{.Config.Image}}' "$(task_container "$1")" 2>/dev/null && return 0
+  if image_exists "$(project_image)"; then project_image; else base_image_of; fi
 }
 valid_task_id() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]; }
 need_task() {
@@ -131,49 +160,99 @@ safe_rm() {
 # rollback_task ID: removes the container, worktrees, branches and files of a task. The repos file
 # holds one tab-separated clone, worktree and branch per line.
 rollback_task() {
-  local id="$1" clone wt branch ws f
+  local id="$1" clone wt branch ws f img g
   valid_task_id "$id" || return 0
   ws="$(task_ws)"
+  img="$(task_image "$id")"
   docker rm -f "$(task_container "$id")" >/dev/null 2>&1 || true
   if [ -f "$(task_file "$id" repos)" ]; then
     while IFS=$'\t' read -r clone wt branch; do
       [[ "$clone" == "$ws/repos/"?* && "$wt" == "$ws/repos/"?* ]] || continue
-      hgit "$clone" -C "$clone" worktree remove --force "$wt" >/dev/null 2>&1 || safe_rm "$ws/repos" "$wt"
-      hgit "$clone" -C "$clone" worktree prune >/dev/null 2>&1 || true
-      hgit "$clone" -C "$clone" branch -D "$branch" >/dev/null 2>&1 || true
+      if clone_ok "$clone"; then
+        g="$clone/.git"
+        # git cannot remove its own mount point: the directory (and what is left) goes after
+        if [ -d "$wt" ] && [ ! -L "$wt" ]; then cgit "$img" "$clone" "$g" -v "$wt:$wt" -- worktree remove --force "$wt" >/dev/null 2>&1 || true; fi
+        safe_rm "$ws/repos" "$wt"
+        if [ -d "$clone/.worktrees" ] && [ ! -L "$clone/.worktrees" ]; then
+          cgit "$img" "$clone" "$g" -v "$clone/.worktrees:$clone/.worktrees:ro" -- worktree prune >/dev/null 2>&1 || true
+        fi
+        cgit "$img" "$clone" "$g" -- branch -D "$branch" >/dev/null 2>&1 || true
+      else
+        safe_rm "$ws/repos" "$wt"
+      fi
     done < "$(task_file "$id" repos)"
   fi
   safe_rm "$ws/tasks" "$(task_dir "$id")"
   for f in env mounts repos interrupted; do safe_rm "$ws/tasks" "$(task_file "$id" "$f")"; done
 }
 
-# project_clone: the project's own repository under repos/, cloned from origin (credentials
-# stripped) or from the checkout itself. Sets CLONE_NAME, and CLONE_NEW=1 when cloned just now.
-# shellcheck disable=SC2034  # both are read by bin/agentic
-project_clone() {
-  local root clone url
-  root="$(project_root)"; CLONE_NAME="$(basename "$root")"; CLONE_NEW=0; clone="$(task_ws)/repos/$CLONE_NAME"
-  if [ ! -d "$clone/.git" ]; then
-    url="$(git -C "$root" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#' || true)"
-    mkdir -p "$(task_ws)/repos"
-    git -c core.hooksPath=/dev/null -c core.fsmonitor=false clone -q "${url:-$root}" "$clone" >&2 || return 1
-    printf '.worktrees/\n' >> "$clone/.git/info/exclude"
-    CLONE_NEW=1
+# project_url: the project's origin (credentials stripped), else the checkout itself.
+project_url() {
+  local root url; root="$(project_root)"
+  url="$(git -C "$root" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#' || true)"
+  printf '%s\n' "${url:-$root}"
+}
+
+# repo_url NAME: where the mirror of repos/NAME fetches from: the project's remote for the project's
+# own clone; else the URL its mirror recorded; else, on first use, the clone's origin, read before
+# any task had write access to the clone (a clone only becomes writable after its mirror exists).
+repo_url() {
+  local clone m; clone="$(task_ws)/repos/$1"; m="$(mirror_dir "$1")"
+  if [ "$1" = "$(basename "$(project_root)")" ]; then project_url; return; fi
+  if [ -d "$m" ]; then mgit "$1" config --get remote.origin.url; return; fi
+  clone_ok "$clone" || return 1
+  git config --file "$clone/.git/config" --get remote.origin.url
+}
+
+# sync_mirror NAME URL: makes the private bare mirror of repos/NAME from URL, or fetches into it.
+sync_mirror() {
+  local m; m="$(mirror_dir "$1")"
+  if [ ! -d "$m" ]; then
+    mkdir -p "$(dirname "$m")"
+    ugit clone -q --bare "$2" "$m" >&2
+  else
+    mgit "$1" fetch -q --prune --no-recurse-submodules "$2" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' >&2 || true
   fi
 }
 
-# add_worktree NAME ID BRANCH BASE [IMAGE]: a worktree of repos/NAME on BRANCH from BASE (default
-# origin/HEAD). With IMAGE the checkout runs in a throwaway container of it (a clone a task may
-# have touched); without, on the host (a clone made just now).
+# project_clone: the project's own clone under repos/; prints its name. A missing clone is made by
+# the host from the mirror, in a fresh directory no task has seen, with origin set to the remote.
+project_clone() {
+  local name clone url m
+  name="$(basename "$(project_root)")"; clone="$(task_ws)/repos/$name"; m="$(mirror_dir "$name")"
+  if [ ! -e "$clone" ]; then
+    url="$(project_url)"
+    sync_mirror "$name" "$url" || return 1
+    mkdir -p "$(task_ws)/repos"
+    ugit clone -q --no-hardlinks "$m" "$clone" >&2 || return 1
+    ugit -C "$clone" remote set-url origin "$url" || return 1
+    printf '.worktrees/\n' >> "$clone/.git/info/exclude"
+  fi
+  printf '%s\n' "$name"
+}
+
+# add_worktree NAME ID BRANCH BASE IMAGE: a worktree of repos/NAME on BRANCH from BASE (default the
+# remote's default branch): the mirror fetches, then a throwaway container of IMAGE fetches from it
+# into the clone's refs/remotes/origin/ and checks the worktree out.
 add_worktree() {
-  local clone base="$4" img="${5:-}" add; clone="$(task_ws)/repos/$1"
+  local clone wt m url base="$4" img="$5" head; clone="$(task_ws)/repos/$1"; wt="$clone/.worktrees/$2"; m="$(mirror_dir "$1")"
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != . && "$1" != .. ]] || { say "bad repository name $1"; return 1; }
   [ -d "$clone/.git" ] || { say "no clone $clone; clone the repository there first"; return 1; }
-  hfetch "$clone" -C "$clone" fetch -q --no-recurse-submodules --upload-pack=git-upload-pack origin >/dev/null 2>&1 || true
-  [ -n "$base" ] || base="$(hgit "$clone" -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)"
-  add=(worktree add -q -b "$3" "$clone/.worktrees/$2" "$base")
-  if [ -n "$img" ]; then cgit "$img" "$clone" -C "$clone" "${add[@]}" >&2 || return 1
-  else hgit "$clone" -C "$clone" "${add[@]}" >&2 || return 1; fi
-  printf '%s\t%s\t%s\n' "$clone" "$clone/.worktrees/$2" "$3" >> "$(task_file "$2" repos)"
+  clone_ok "$clone" || { say "$clone/.git has a symlink where a directory or file belongs"; return 1; }
+  url="$(repo_url "$1")" || url=""
+  [ -n "$url" ] || { say "repos/$1 has no origin to fetch from"; return 1; }
+  sync_mirror "$1" "$url" || { say "could not mirror $url"; return 1; }
+  cgit "$img" "$clone" "$clone/.git" -v "$m:$m:ro" -- fetch -q --no-write-fetch-head --no-tags --no-recurse-submodules \
+    --upload-pack=git-upload-pack "$m" '+refs/heads/*:refs/remotes/origin/*' >&2 || return 1
+  if [ -z "$base" ]; then
+    head="$(mgit "$1" symbolic-ref -q --short HEAD 2>/dev/null || true)"
+    base="${head:+origin/$head}"; base="${base:-HEAD}"
+  fi
+  [ ! -L "$clone/.worktrees" ] || return 1
+  mkdir -p "$wt"
+  cgit "$img" "$clone" "$clone/.git" -v "$wt:$wt" -- worktree add -q --no-track -b "$3" "$wt" "$base" >&2 \
+    || { safe_rm "$(task_ws)/repos" "$wt"; return 1; }
+  printf '%s\t%s\t%s\n' "$clone" "$wt" "$3" >> "$(task_file "$2" repos)"
 }
 
 # task_mounts ID REPO...: the -v arguments of a task, one per line, into the mounts file. A changed
@@ -186,7 +265,6 @@ task_mounts() {
     for r in "$@"; do
       [ "$r" = "$first" ] || printf -- '-v\n%s\n' "$ws/repos/$r/.worktrees/$id:/workspaces/$r"
       g="$ws/repos/$r/.git"
-      mkdir -p "$g/info" "$g/hooks"
       printf -- '-v\n%s\n' "$g:$g" "$g/config:$g/config:ro" "$g/info:$g/info:ro" "$g/hooks:$g/hooks:ro"
     done
     for clone in "$ws"/repos/*/; do

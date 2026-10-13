@@ -328,7 +328,7 @@ cmd_run() {
   check_cap
 
   # Everything that can refuse (the .env file, the AWS directory) runs before anything is created.
-  local p ws dir c own r data port wimg
+  local p ws dir c own r data port
   p="$(task_project)"; ws="$(task_ws)"; dir="$(task_dir "$id")"; c="$(task_container "$id")"
   RUN_ARGS=()
   shared_run_args "$img"
@@ -344,14 +344,9 @@ cmd_run() {
   RUN_ROLLBACK_ID="$id"; RUN_KEEP="$keep"
   trap run_cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
   mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
-  project_clone || die "could not clone the project's repository into $ws/repos"
-  own="$CLONE_NAME"
+  own="$(project_clone)" || die "could not clone the project's repository into $ws/repos"
   [ "${#repos[@]}" -gt 0 ] || repos=("$own")
-  for r in "${repos[@]}"; do
-    # only a clone made just now is free of what a task wrote; others check out in a container
-    wimg="$img"; if [ "$r" = "$own" ] && [ "$CLONE_NEW" = 1 ]; then wimg=""; fi
-    add_worktree "$r" "$id" "$branch" "$base" "$wimg" || die "could not create the worktree of $r"
-  done
+  for r in "${repos[@]}"; do add_worktree "$r" "$id" "$branch" "$base" "$img" || die "could not create the worktree of $r"; done
   printf '%s\n' "$prompt" > "$dir/prompt.md"
   (umask 077; printf 'AGENTIC_TASK_TOKEN=%s\nAGENTIC_AGENT_TOKEN=%s\n' "$(new_token)" "$(new_token)" > "$(task_file "$id" env)")
   data="$AGENTIC_DATA/projects/$p/harness"
@@ -561,7 +556,7 @@ cmd_takeover() {
 
 cmd_clean() {
   need_config
-  local id="" force=0 a clone wt branch why img
+  local id="" force=0 a clone wt branch why img gd
   for a in "$@"; do case "$a" in --force) force=1 ;; -*) die "unknown option $a" ;; *) id="$a" ;; esac; done
   need_task "$id"
   if [ "$(container_status "$id")" = running ]; then
@@ -571,12 +566,15 @@ cmd_clean() {
   if [ "$force" = 0 ]; then
     [ -f "$(task_file "$id" repos)" ] || die "task $id has no repos file, so unpushed work cannot be checked; run agentic clean $id --force"
     # the worktrees are the agent's: git checks them in a throwaway container of the task's image
-    img="$(docker inspect -f '{{.Config.Image}}' "$(task_container "$id")" 2>/dev/null)" || img="$(run_image)"
+    img="$(task_image "$id")"
     while IFS=$'\t' read -r clone wt branch; do
       [ -d "$wt" ] || continue
-      why="$(cgit "$img" "$clone" -C "$wt" status --porcelain 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
+      if ! { clone_ok "$clone" && [ ! -L "$wt" ] && gd="$(wt_gitdir "$clone" "$wt")"; }; then
+        die "cannot check $wt (its .git does not name a worktree of $clone); run agentic clean $id --force"
+      fi
+      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- status --porcelain 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
       [ -z "$why" ] || die "$wt has uncommitted changes; commit and push them, or run agentic clean $id --force"
-      why="$(cgit "$img" "$clone" -C "$wt" log --oneline "$branch" --not --remotes 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
+      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- log --oneline "$branch" --not --remotes 2>&1)" || die "cannot check $wt ($why); run agentic clean $id --force"
       [ -z "$why" ] || die "$wt has commits on no remote branch ($branch); push them, or run agentic clean $id --force"
     done < "$(task_file "$id" repos)"
   fi

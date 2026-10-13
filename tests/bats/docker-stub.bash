@@ -4,7 +4,8 @@
 # DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PS (docker ps ids, space-separated),
 # `docker start` makes later status inspects say running. DOCKER_DOWN (inspect .State.Status fails like an unreachable daemon).
 # A throwaway git container (`run ... --entrypoint git IMAGE ARG...`, the image right after the entrypoint)
-# runs git here on ARG... with DOCKER_STUB_CONTAINER=1, so a planted command can tell where it ran.
+# runs git here on ARG... with its -e variables and DOCKER_STUB_CONTAINER=1, so a planted command can
+# tell where it ran. It does not isolate: mounts are only recorded.
 install_docker_stub() {
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat > "$BATS_TEST_TMPDIR/bin/docker" <<'EOF'
@@ -27,9 +28,13 @@ case "$1" in
   ps) [ -z "${DOCKER_PS:-}" ] || printf '%s\n' $DOCKER_PS ;;
   run)
     if [[ " $* " == *" --entrypoint git "* ]]; then
-      while [ "$1" != --entrypoint ]; do shift; done
+      envs=()
+      while [ "$1" != --entrypoint ]; do
+        if [ "$1" = -e ]; then envs+=("$2"); shift; fi
+        shift
+      done
       shift 3
-      DOCKER_STUB_CONTAINER=1 exec git "$@"
+      exec env "${envs[@]}" DOCKER_STUB_CONTAINER=1 git "$@"
     fi
     if [ -n "${DOCKER_RUN_OUT:-}" ]; then printf '%s\n' "$DOCKER_RUN_OUT"; fi; exit "${DOCKER_RUN_RC:-0}" ;;
 esac
@@ -50,4 +55,14 @@ docker_run_with() {
     /^--- /{ out(); on = ($2 == "run"); hit = 0; buf = ""; next }
     on { buf = buf $0 "\n"; if ($0 == l) hit = 1 }
     END { out() }' "$DOCKER_LOG"
+}
+
+# install_git_log: a git in front of the real one that logs each host call (not the stub's container
+# calls) to $BATS_TEST_TMPDIR/hostgit.log as "pwd=... git_dir=... args: ...".
+install_git_log() {
+  local real; real="$(command -v git)"
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/usr/bin/env bash\n[ -n "${DOCKER_STUB_CONTAINER:-}" ] || echo "pwd=$PWD git_dir=${GIT_DIR:-} args: $*" >> "%s/hostgit.log"\nexec %q "$@"\n' \
+    "$BATS_TEST_TMPDIR" "$real" > "$BATS_TEST_TMPDIR/bin/git"
+  chmod +x "$BATS_TEST_TMPDIR/bin/git"
 }

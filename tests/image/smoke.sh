@@ -199,6 +199,16 @@ grep -Eq 'history: [1-9]' "$tasks/$id/transcript.md" || fail "task: the session 
 ag stop "$id" >/dev/null
 [ "$(ag status "$id" --json | jq -r .state)" = stopped ] || fail "task: stop"
 
+# what an agent could plant in the clone's .git for host git to follow: none of it reaches a host file
+g="$AGENTIC_WORKSPACES/smoke-project/repos/smoke-project/.git"
+echo keep > "$tmp/victim-file"; mkdir -p "$tmp/victim-dir" "$g/worktrees"; echo keep > "$tmp/victim-dir/keep"
+cp "$g/packed-refs" "$tmp/victim-refs"; cp "$tmp/victim-refs" "$tmp/victim-refs.orig"
+rm -f "$g/FETCH_HEAD"; ln -s "$tmp/victim-file" "$g/FETCH_HEAD"
+ln -s "$tmp/victim-dir" "$g/worktrees/planted"
+ln -sf "$tmp/victim-refs" "$g/packed-refs"
+[ -d "$AGENTIC_DATA/projects/smoke-project/mirrors/smoke-project.git" ] || fail "task: no private mirror"
+if grep -q mirrors "$tasks/$id.mounts"; then fail "task: the mirror is mounted into a task"; fi
+
 id2="$(AGENTIC_IDLE_TIMEOUT=300 ag run "second")"
 wait_state "$id2" idle || fail "task 2: first turn"
 out="$(ag follow "$id2" </dev/null)" || fail "task 2: follow failed"
@@ -214,6 +224,9 @@ ag clean "$id" --force >/dev/null
 ag stop "$id2" >/dev/null
 ag clean "$id2" >/dev/null || fail "task 2: clean of an unchanged task"
 [ -z "$(docker ps -aq "${mine[@]}")" ] || fail "task: clean left a container"
+[ "$(cat "$tmp/victim-file")" = keep ] || fail "task: host git wrote through a planted FETCH_HEAD symlink"
+[ -f "$tmp/victim-dir/keep" ] || fail "task: worktree prune followed a planted .git/worktrees symlink"
+cmp -s "$tmp/victim-refs" "$tmp/victim-refs.orig" || fail "task: git wrote through a planted packed-refs symlink"
 unset AGENTIC_TASK_DOCKER_ARGS
 
 step "doctor passes on the good setup"
