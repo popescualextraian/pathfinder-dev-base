@@ -136,13 +136,14 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
 
 # --- 20-onboarding
 @test "20 seeds Claude onboarding and trusts /work, /workspaces and each clone" {
-  mkdir -p "$AGENTIC_WORKSPACES_DIR/lib/.git"
+  mkdir -p "$AGENTIC_WORKSPACES_DIR/lib/.git" "$AGENTIC_WORKSPACES_DIR/repos/app/.git"
   config $'version: 1\nproject: demo'; bash "$S/10-validate.sh"
   run bash "$S/20-onboarding.sh"
   [ "$status" -eq 0 ]
   f="$HOME/.claude.json"
   [ "$(jq -r .hasCompletedOnboarding "$f")" = true ]
-  for d in "$AGENTIC_WORK" "$AGENTIC_WORKSPACES_DIR" "$AGENTIC_WORKSPACES_DIR/lib"; do
+  # a task mounts clones as /workspaces/<name>, a dev container as /workspaces/repos/<name>
+  for d in "$AGENTIC_WORK" "$AGENTIC_WORKSPACES_DIR" "$AGENTIC_WORKSPACES_DIR/lib" "$AGENTIC_WORKSPACES_DIR/repos/app"; do
     [ "$(jq -r --arg d "$d" '.projects[$d].hasTrustDialogAccepted' "$f")" = true ]
   done
   [ "$(stat -c %a "$f")" = 600 ]

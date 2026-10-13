@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Marks harness first-run dialogs as done and trusts /work, /workspaces and every clone in it.
+# Marks harness first-run dialogs as done and trusts /work, /workspaces and every clone in it: a
+# task mounts clones as /workspaces/<name>, a dev container as /workspaces/repos/<name>.
 set -uo pipefail
 source "${AGENTIC_DIR:-/opt/agentic}/lib/common.sh"
 check=0; [ "${1:-}" = --check ] && check=1
@@ -7,7 +8,7 @@ work="${AGENTIC_WORK:-/work}"; ws="${AGENTIC_WORKSPACES_DIR:-/workspaces}"
 trust=("$work")
 if [ -d "$ws" ]; then
   trust+=("$ws")
-  for d in "$ws"/*/; do [ -e "$d.git" ] && trust+=("${d%/}"); done
+  for d in "$ws"/*/ "$ws"/repos/*/; do [ -e "$d.git" ] && trust+=("${d%/}"); done
 fi
 
 read_json() { if [ -s "$1" ] && jq -e . "$1" >/dev/null 2>&1; then cat "$1"; else echo '{}'; fi; }

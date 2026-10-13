@@ -72,14 +72,16 @@ proxy_build_args() {
   done
 }
 
-# build_run_args IMAGE: docker run arguments for this project, in the global array RUN_ARGS.
+# build_run_args IMAGE: docker run arguments for this project, in the global array RUN_ARGS. Of the
+# workspace only repos/ (the clones) is mounted, canonical: its tasks/ and events/ hold what the
+# host trusts or writes, and stay out of interactive containers.
 build_run_args() {
-  local root cfg p data ws
+  local root cfg p data repos
   root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"
-  data="$AGENTIC_DATA/projects/$p"; ws="$AGENTIC_WORKSPACES/$p"
-  mkdir -p "$data/harness/claude" "$data/harness/copilot" "$ws"
+  data="$AGENTIC_DATA/projects/$p"; repos="$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/repos"
+  mkdir -p "$data/harness/claude" "$data/harness/copilot" "$repos"
   RUN_ARGS=(--label "agentic.project=$p"
-    -v "$root:/work" -v "$ws:/workspaces" -v "$cfg:/agentic-config:ro"
+    -v "$root:/work" -v "$repos:/workspaces/repos" -v "$cfg:/agentic-config:ro"
     -v "$data/harness/claude:/home/dev/.claude" -v "$data/harness/copilot:/home/dev/.copilot")
   shared_run_args "$1"
 }
