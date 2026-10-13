@@ -53,6 +53,24 @@ another directory.
 7. **Check.** `agentic doctor` → start steps, tools, logins, MCP servers and certificates, each
    with `ok` or what is wrong (for example `ok claude`).
 
+## The `.agentic/` folder
+
+`agentic init` writes it into your project; commit it, except `.env`. Nothing rebuilds by itself:
+after a change marked *build*, run `agentic build`, then `agentic dev recreate`.
+
+| Path | Purpose | Takes effect |
+|---|---|---|
+| `agentic.yaml` | Project config: tools, plugins, MCP servers, Docker socket, hooks ([reference](docs/configuration.md)) | build; MCP at next start |
+| `.env` (git-ignored), `.env.example` | Secrets and logins (`ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`, …); loaded at start, never in the image | next start |
+| `certs/` | `*.crt` files trusted by the system, Java, Node, Python and Chromium (for example a proxy CA) | build |
+| `skills/` | Project skills (`<name>/SKILL.md`), copied into Claude and Copilot | build |
+| `hooks/on-build.sh` | Runs as `dev` at the end of the build, without `.env`; user-level installs (`npm i -g`, `pipx`) | build |
+| `hooks/on-start.sh` | Runs as `dev` in `/work` at every start, with `.env`; a failure only warns unless `hooks.on_start_required` | next start |
+| `Dockerfile.extra` (optional) | Extra Dockerfile lines, run as root, appended to the project image | build |
+| `detect-report.md` | Which build files `init` read to detect your tools; for information only | — |
+
+`agentic doctor` warns when `agentic.yaml` changed since the last build.
+
 ## Dev mode
 
 `agentic dev` keeps one container per project running, with a tmux session in `/work`. Run
@@ -66,9 +84,14 @@ several agents side by side, one per tmux window, and leave them working while y
 | `Ctrl-b d` | detach; `agentic dev` re-attaches to the same windows |
 | `Ctrl-b [` | scroll, `q` to leave |
 
-`agentic dev status` reports when the image was rebuilt, and `agentic dev recreate` starts a
-fresh container from it. Parallel agents that change code each need their own git worktree. Full
-guide: [`docs/dev-mode.md`](docs/dev-mode.md).
+The running container keeps the image it started from. After `agentic build` (or a change to
+`.env` or `on-start.sh`), `agentic dev recreate` removes the container, starts a fresh one from the
+current image and attaches; `agentic dev status` tells you when that is due. Files in `/work`,
+logins and Claude/Copilot history survive a recreate; running agents, tmux windows and anything
+installed by hand inside the container do not. `claude --continue` brings a conversation back.
+
+Parallel agents that change code each need their own git worktree. Full guide:
+[`docs/dev-mode.md`](docs/dev-mode.md).
 
 ## Detached tasks (WIP)
 
