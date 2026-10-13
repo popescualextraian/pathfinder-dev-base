@@ -8,10 +8,13 @@ PROXY_VARS=(HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy)
 die() { echo "agentic: $*" >&2; exit 1; }
 say() { echo "agentic: $*" >&2; }
 
+# pgit ARG...: host git in the project's checkout, which a dev container can write: no fsmonitor,
+# no hooks.
+pgit() { git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"; }
 # project_root: the git top level of $AGENTIC_PROJECT (default: the current directory).
 project_root() {
   local d="${AGENTIC_PROJECT:-$PWD}"
-  git -C "$d" rev-parse --show-toplevel 2>/dev/null || (cd "$d" && pwd)
+  pgit -C "$d" rev-parse --show-toplevel 2>/dev/null || (cd "$d" && pwd)
 }
 cfg_dir() { printf '%s\n' "$(project_root)/.agentic"; }
 need_config() {
@@ -93,7 +96,7 @@ shared_run_args() {
   root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"; data="$AGENTIC_DATA/projects/$p"
   check_env_file "$cfg/.env"
   if [ -f "$cfg/.env" ]; then RUN_ARGS+=(--env-file "$cfg/.env"); fi
-  name="$(git -C "$root" config user.name || true)"; email="$(git -C "$root" config user.email || true)"
+  name="$(pgit -C "$root" config user.name || true)"; email="$(pgit -C "$root" config user.email || true)"
   if [ -n "$name" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_NAME=$name"); fi
   if [ -n "$email" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_EMAIL=$email"); fi
   for v in "${PROXY_VARS[@]}"; do

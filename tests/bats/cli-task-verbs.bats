@@ -204,6 +204,15 @@ mkclean() {   # a task with a worktree, as run leaves it, container exited
   [ "$status" -eq 0 ]; [ ! -e "$T/T-20" ]
 }
 
+@test "clean takes the branch from the repos file as a revision, never as an option" {
+  mkclean T-24
+  f="$H/T-24/repos"
+  awk -v o="--output=$BATS_TEST_TMPDIR/written" 'BEGIN { FS = OFS = "\t" } { $3 = o; print }' "$f" > "$f.new"; mv "$f.new" "$f"
+  run ag clean T-24
+  [ "$status" -eq 1 ]; [[ "$output" == *"cannot check"* ]]
+  [ ! -e "$BATS_TEST_TMPDIR/written" ]
+}
+
 @test "clean of a clean, pushed-nowhere-but-unchanged task succeeds" {
   mkclean T-21
   run ag clean T-21

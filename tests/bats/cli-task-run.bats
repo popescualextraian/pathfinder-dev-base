@@ -57,7 +57,8 @@ record() {
 }
 
 @test "run --repo gives each named repository a worktree and mounts the other clones read-only" {
-  git clone -q "$PROJ" "$AGENTIC_WORKSPACES/demo/repos/lib"
+  fake_ssh
+  remote_clone "$PROJ" "$AGENTIC_WORKSPACES/demo/repos/lib"
   git clone -q "$PROJ" "$AGENTIC_WORKSPACES/demo/repos/docs"
   ag run --id T-R --repo lib --repo proj "x" 2>/dev/null
   ws="$AGENTIC_WORKSPACES/demo"
@@ -341,10 +342,20 @@ plant() {
   chmod +x "$BATS_TEST_TMPDIR/$1"
 }
 lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_ROOT/lib/host/task.sh" && "$@"); }
+# fake_ssh: the user's core.sshCommand runs the remote command here, so ssh://example.invalid/<path>
+# reaches the local repository <path>.
+fake_ssh() {
+  printf '#!/bin/sh\nfor a; do c="$a"; done\nexec sh -c "$c"\n' > "$BATS_TEST_TMPDIR/fake-ssh"
+  chmod +x "$BATS_TEST_TMPDIR/fake-ssh"
+  git config --global core.sshCommand "$BATS_TEST_TMPDIR/fake-ssh"
+  git config --global ssh.variant simple
+}
+# remote_clone SRC DEST: a clone of SRC whose origin is SRC over the fake ssh.
+remote_clone() { git clone -q "$1" "$2"; git -C "$2" remote set-url origin "ssh://example.invalid$1"; }
 
 @test "run mounts each changed clone's git config, info and hooks read-only over its writable .git" {
   ws="$AGENTIC_WORKSPACES/demo"
-  git clone -q "$PROJ" "$ws/repos/lib"; rm -rf "$ws/repos/lib/.git/hooks" "$ws/repos/lib/.git/info"
+  fake_ssh; remote_clone "$PROJ" "$ws/repos/lib"; rm -rf "$ws/repos/lib/.git/hooks" "$ws/repos/lib/.git/info"
   ag run --id T-40 --repo lib --repo proj "x" 2>/dev/null
   [ -d "$ws/repos/lib/.git/hooks" ] && [ -d "$ws/repos/lib/.git/info" ]
   call="$(docker_run_with agentic-bridge)"
@@ -424,10 +435,10 @@ MIRRORS_REL=projects/demo/mirrors
 
 @test "a --repo clone's origin is recorded in its mirror on first use; the clone's config is not read again" {
   ws="$AGENTIC_WORKSPACES/demo"
-  git clone -q "$PROJ" "$ws/repos/lib"
+  fake_ssh; remote_clone "$PROJ" "$ws/repos/lib"
   ag run --id T-47 --repo lib "x" 2>/dev/null
   m="$AGENTIC_DATA/$MIRRORS_REL/lib.git"
-  [ "$(git --git-dir="$m" config remote.origin.url)" = "$PROJ" ]
+  [ "$(git --git-dir="$m" config remote.origin.url)" = "ssh://example.invalid$PROJ" ]
   git -C "$ws/repos/lib" config remote.origin.url https://example.invalid/x.git
   git -C "$PROJ" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m second
   ag run --id T-48 --repo lib "y" 2>/dev/null
@@ -703,7 +714,7 @@ MIRRORS_REL=projects/demo/mirrors
   [ "$(git --git-dir="$m" config remote.origin.url)" = "$PROJ" ]
   OTHER="$BATS_TEST_TMPDIR/other"; git init -q -b main "$OTHER"
   git -C "$OTHER" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m other
-  git -C "$PROJ" remote add origin "$OTHER"
+  fake_ssh; git -C "$PROJ" remote add origin "ssh://example.invalid$OTHER"
   git -C "$PROJ" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m second
   git -C "$PROJ" update-ref refs/remotes/origin/main "$(git -C "$PROJ" rev-parse HEAD)"
   ag run --id T-95 "y" 2>/dev/null
@@ -712,7 +723,7 @@ MIRRORS_REL=projects/demo/mirrors
   [ "$(git --git-dir="$m" config remote.origin.url)" = "$PROJ" ]
   rm -rf "$m"
   ag run --id T-96 "z" 2>/dev/null
-  [ "$(git --git-dir="$m" config remote.origin.url)" = "$OTHER" ]
+  [ "$(git --git-dir="$m" config remote.origin.url)" = "ssh://example.invalid$OTHER" ]
   [ "$(git -C "$wt/T-96" rev-parse HEAD)" = "$(git -C "$OTHER" rev-parse HEAD)" ]
 }
 
@@ -738,4 +749,74 @@ MIRRORS_REL=projects/demo/mirrors
   rm "$wt/.git"; mkfifo "$wt/.git"
   run timeout 10 bash -c "cd '$PROJ' && source '$REPO_ROOT/lib/host/common.sh' && source '$REPO_ROOT/lib/host/task.sh' && wt_gitdir '$clone' '$wt'"
   [ "$status" -ne 0 ]; [ "$status" -ne 124 ]
+}
+
+@test "a pinned origin must be https, ssh, git or scp-style: a local path, file:// and a transport helper are refused" {
+  fake_ssh
+  OTHER="$BATS_TEST_TMPDIR/other"; git init -q -b main "$OTHER"
+  git -C "$OTHER" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m other
+  m="$AGENTIC_DATA/$MIRRORS_REL/proj.git"; n=0
+  for bad in /other/host/repo "$OTHER" file:///x "file://$OTHER" foo::bar "ext::sh -c touch% $BATS_TEST_TMPDIR/pwned"; do
+    n=$((n + 1))
+    git -C "$PROJ" config remote.origin.url "$bad"
+    run ag run --id "T-A$n" "x"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"is not an https://, ssh://, git:// or scp-style [user@]host:path URL; refused"* ]]
+    [ ! -e "$m" ]
+  done
+  [ ! -e "$BATS_TEST_TMPDIR/pwned" ]
+  # a --repo clone's origin on first use
+  git -C "$PROJ" config --unset remote.origin.url
+  remote_clone "$OTHER" "$AGENTIC_WORKSPACES/demo/repos/lib"
+  git -C "$AGENTIC_WORKSPACES/demo/repos/lib" remote set-url origin "file://$OTHER"
+  run ag run --id T-A9 --repo lib "x"
+  [ "$status" -ne 0 ]; [[ "$output" == *"scp-style [user@]host:path URL; refused"* ]]
+  [ ! -e "$AGENTIC_DATA/$MIRRORS_REL/lib.git" ]
+}
+
+@test "an https origin is accepted and pinned" {
+  fake_ssh
+  git -C "$PROJ" remote add origin "https://example.invalid$PROJ"
+  git -C "$PROJ" update-ref refs/remotes/origin/main "$(git -C "$PROJ" rev-parse HEAD)"
+  [ "$(lib project_url)" = "https://example.invalid$PROJ" ]
+  # the user's own rewrite to the fake ssh, so the mirror can be made here
+  git config --global url.ssh://example.invalid/.insteadOf https://example.invalid/
+  run ag run --id T-B1 "x"
+  [ "$status" -eq 0 ]
+  m="$AGENTIC_DATA/$MIRRORS_REL/proj.git"
+  [ "$(git --git-dir="$m" rev-parse --is-bare-repository)" = true ]
+  [ "$(git -C "$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-B1" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse HEAD)" ]
+  for u in "ssh://git@example.invalid/x.git" "git://example.invalid/x.git" "git@example.invalid:x/y.git" "example.invalid:x.git"; do
+    lib remote_url_ok "$u"
+  done
+}
+
+@test "host git talks to a remote only over https, ssh and git; file only for the project root and the mirror" {
+  [ "$(lib ugit config protocol.allow)" = never ]
+  for p in https ssh git; do [ "$(lib ugit config "protocol.$p.allow")" = always ]; done
+  run lib ugit config protocol.file.allow
+  [ "$status" -ne 0 ]
+  # the project root (no origin) is the fallback: mirrored and cloned over file
+  ag run --id T-C1 "x" 2>/dev/null
+  m="$AGENTIC_DATA/$MIRRORS_REL/proj.git"
+  [ "$(git --git-dir="$m" config remote.origin.url)" = "$PROJ" ]
+  # a mirror that recorded another local path fetches nothing from it
+  OTHER="$BATS_TEST_TMPDIR/other"; git init -q -b main "$OTHER"
+  git -C "$OTHER" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m other
+  git --git-dir="$m" config remote.origin.url "$OTHER"
+  ag run --id T-C2 "y" 2>/dev/null || true
+  run git --git-dir="$m" cat-file -e "$(git -C "$OTHER" rev-parse HEAD)"
+  [ "$status" -ne 0 ]
+}
+
+@test "host git in the checkout runs without fsmonitor or hooks" {
+  install_git_log
+  git -C "$PROJ" config user.name t
+  ag run --id T-D1 "x" 2>/dev/null
+  log="$BATS_TEST_TMPDIR/hostgit.log"
+  for c in "rev-parse --show-toplevel" "remote get-url origin" "config user.name"; do
+    grep -qF -- "args: -c core.fsmonitor=false -c core.hooksPath=/dev/null -C $PROJ $c" "$log"
+  done
+  run grep -E -- "args: -C " "$log"
+  [ "$status" -ne 0 ]
 }

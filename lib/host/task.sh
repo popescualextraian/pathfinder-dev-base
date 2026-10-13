@@ -67,12 +67,14 @@ mirror_dir() { printf '%s/projects/%s/mirrors/%s.git\n' "$AGENTIC_DATA" "$(task_
 user_cfg() { git config --includes --global --get "$1" 2>/dev/null || git config --includes --system --get "$1" 2>/dev/null || true; }
 # ugit ARG...: host git (mirrors, a brand-new clone) with the user's own settings for what could run
 # a command: the ssh command and askpass from the user's config, the credential helpers reset and
-# replayed from the system and global config, a git:// proxy only from the user, ext:: off, no
+# replayed from the system and global config, a git:// proxy only from the user, only the https, ssh
+# and git transports (a caller that needs file passes -c protocol.file.allow=always first), no
 # hooks, no fsmonitor, no automatic gc or maintenance.
 ugit() {
   local ssh scope e args=()
   ssh="$(user_cfg core.sshCommand)"
   args=(-c "core.sshCommand=${ssh:-ssh}" -c "core.askPass=$(user_cfg core.askPass)" -c core.attributesFile=/dev/null
+    -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always -c protocol.git.allow=always
     -c protocol.ext.allow=never -c core.hooksPath=/dev/null -c core.fsmonitor=false -c gc.auto=0
     -c maintenance.auto=false -c credential.helper=)
   for scope in system global; do
@@ -248,20 +250,33 @@ url_ok() {
   [[ "$1" != -* ]] || { say "the origin URL $(printf '%s' "$1" | plain) starts with -; refused"; return 1; }
 }
 
-# project_url: the checkout's origin (credentials stripped), else the checkout itself. A dev agent
-# can change the checkout's origin: it is read only when the project's mirror is first made.
+# remote_url_ok URL: url_ok, and URL names a remote: https://, ssh://, git:// or scp-style
+# [user@]host:path. A local path, file:// or a <name>:: transport helper is refused: the mirror
+# would copy another repository of the host into a clone a task can read.
+remote_url_ok() {
+  url_ok "$1" || return 1
+  if [[ "$1" == *://* ]]; then [[ "$1" =~ ^(https|ssh|git)://[^/] ]] && return 0
+  elif [[ "$1" =~ ^([A-Za-z0-9._~%+-]+@)?([A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9A-Fa-f:.]+\]):[^:] ]]; then return 0; fi
+  say "the origin URL $(printf '%s' "$1" | plain) is not an https://, ssh://, git:// or scp-style [user@]host:path URL; refused"
+  return 1
+}
+
+# project_url: the checkout's origin (credentials stripped), which must be a remote URL, else the
+# checkout itself. A dev agent can change the checkout's origin: it is read only when the project's
+# mirror is first made.
 project_url() {
   local root url; root="$(project_root)"
-  url="$(git -C "$root" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#' || true)"
-  url="${url:-$root}"
-  url_ok "$url" || return 1
+  url="$(pgit -C "$root" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#' || true)"
+  if [ -n "$url" ]; then remote_url_ok "$url" || return 1
+  else url="$root"; url_ok "$url" || return 1; fi
   printf '%s\n' "$url"
 }
 
 # repo_url NAME: where the mirror of repos/NAME fetches from: the URL its mirror recorded when it was
 # made (pinned: delete the mirror to take the origin again); else, on first use, the checkout's
-# origin for the project's own clone, or the clone's origin, read before any task had write access
-# to the clone (a clone only becomes writable after its mirror exists).
+# origin for the project's own clone, or the clone's origin (a remote URL), read before any task
+# had access to the clone (a clone is only mounted into a task after its mirror exists), though a
+# dev agent may have written it.
 repo_url() {
   local clone m url; clone="$(task_ws)/repos/$1"; m="$(mirror_dir "$1")"
   if [ -d "$m" ]; then url="$(mgit "$1" config --get remote.origin.url)" || return 1
@@ -269,20 +284,23 @@ repo_url() {
   else
     clone_ok "$clone" || return 1
     url="$(git config --file "$clone/.git/config" --get remote.origin.url)" || return 1
+    remote_url_ok "$url" || return 1
   fi
   url_ok "$url" || return 1
   printf '%s\n' "$url"
 }
 
 # sync_mirror NAME URL: makes the private bare mirror of repos/NAME from URL, or fetches into it. The
-# URL follows --, so it is never taken for an option.
+# URL follows --, so it is never taken for an option. The file transport only for the project root,
+# the fallback of a checkout without an origin.
 sync_mirror() {
-  local m; m="$(mirror_dir "$1")"
+  local m file=(); m="$(mirror_dir "$1")"
+  if [ "$2" = "$(project_root)" ]; then file=(-c protocol.file.allow=always); fi
   if [ ! -d "$m" ]; then
     mkdir -p "$(dirname "$m")"
-    ugit clone -q --bare -- "$2" "$m" >&2
+    ugit "${file[@]}" clone -q --bare -- "$2" "$m" >&2
   else
-    mgit "$1" fetch -q --prune --no-recurse-submodules -- "$2" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' >&2 || true
+    mgit "$1" "${file[@]}" fetch -q --prune --no-recurse-submodules -- "$2" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' >&2 || true
   fi
 }
 
@@ -295,7 +313,7 @@ project_clone() {
     url="$(repo_url "$name")" || return 1
     sync_mirror "$name" "$url" || return 1
     mkdir -p "$(task_ws)/repos"
-    ugit clone -q --no-hardlinks -- "$m" "$clone" >&2 || return 1
+    ugit -c protocol.file.allow=always clone -q --no-hardlinks -- "$m" "$clone" >&2 || return 1
     ugit -C "$clone" remote set-url -- origin "$url" || return 1
     printf '.worktrees/\n' >> "$clone/.git/info/exclude"
   fi
@@ -313,7 +331,7 @@ add_worktree() {
   url="$(repo_url "$1")" || url=""
   [ -n "$url" ] || { say "repos/$1 has no origin to fetch from"; return 1; }
   sync_mirror "$1" "$url" || { say "could not mirror $url"; return 1; }
-  cgit_err "$img" "$clone" "$clone/.git" -v "$m:$m:ro" -- fetch -q --no-write-fetch-head --no-tags --no-recurse-submodules \
+  cgit_err "$img" "$clone" "$clone/.git" -v "$m:$m:ro" -- -c protocol.allow=never -c protocol.file.allow=always fetch -q --no-write-fetch-head --no-tags --no-recurse-submodules \
     --upload-pack=git-upload-pack -- "$m" '+refs/heads/*:refs/remotes/origin/*' || return 1
   if [ -z "$base" ]; then
     head="$(mgit "$1" symbolic-ref -q --short HEAD 2>/dev/null || true)"

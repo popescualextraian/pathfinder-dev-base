@@ -111,7 +111,7 @@ cmd_init() {
   done
   det="$(detect_tools "$root")"
   name="$(slugify "$(basename "$root")")"
-  url="$(git -C "$root" remote get-url origin 2>/dev/null || true)"
+  url="$(pgit -C "$root" remote get-url origin 2>/dev/null || true)"
   url="$(sed -E 's#^(https?://)[^/@]*@#\1#' <<<"$url")"   # no credentials in a committed file
   host="github.com"
   if [ -n "$url" ]; then host="$(sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*$##' <<<"$url")"; fi
@@ -585,7 +585,7 @@ cmd_clean() {
       why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- status --porcelain 2>&1)" \
         || die "cannot check $wt ($(printf '%s' "$why" | plain)); run agentic clean $id --force"
       [ -z "$why" ] || die "$wt has uncommitted changes; commit and push them, or run agentic clean $id --force"
-      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- log --oneline "$branch" --not --remotes 2>&1)" \
+      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- log --oneline --not --remotes --not --end-of-options "$branch" 2>&1)" \
         || die "cannot check $wt ($(printf '%s' "$why" | plain)); run agentic clean $id --force"
       [ -z "$why" ] || die "$wt has commits on no remote branch ($branch); push them, or run agentic clean $id --force"
     done < "$(task_file "$id" repos)"
