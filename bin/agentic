@@ -155,18 +155,21 @@ cmd_shell() {
   docker run --rm "${tty[@]}" "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" "$@"
 }
 
+# login_file F: a harness login file's content, only when it is a regular file and no symlink, read
+# with read_agent_file (a dev agent can write the harness homes).
+login_file() { if [ -f "$1" ] && [ ! -L "$1" ]; then read_agent_file "$1"; fi; }
+
 # harness_authenticated claude|copilot: a login on disk or a token in .env.
 harness_authenticated() {
   local h="$1" data env
   data="$AGENTIC_DATA/projects/$(project_name)/harness/$h"; env="$(cfg_dir)/.env"
   case "$h" in
     claude)
-      [ -s "$data/.credentials.json" ] \
+      [ -n "$(login_file "$data/.credentials.json")" ] \
         || [ -n "$(token_value "$env" ANTHROPIC_API_KEY)$(token_value "$env" CLAUDE_CODE_OAUTH_TOKEN)$(token_value "$env" CLAUDE_CODE_USE_BEDROCK)" ] ;;
     copilot)
       [ -n "$(token_value "$env" COPILOT_GITHUB_TOKEN)$(token_value "$env" GH_TOKEN)" ] \
-        || { [ -r "$data/config.json" ] \
-             && tr -d '[:space:]' < "$data/config.json" | grep -q '"logged_in_users":\[{'; } ;;
+        || login_file "$data/config.json" | tr -d '[:space:]' | grep -q '"logged_in_users":\[{' ;;
     *) return 1 ;;
   esac
 }
@@ -352,8 +355,9 @@ cmd_run() {
   printf '%s\n' "$prompt" > "$dir/prompt.md"
   (umask 077; printf 'AGENTIC_TASK_TOKEN=%s\nAGENTIC_AGENT_TOKEN=%s\n' "$(new_token)" "$(new_token)" > "$(task_file "$id" env)")
   data="$AGENTIC_DATA/projects/$p/harness"
-  if [ -f "$data/claude/.credentials.json" ]; then install -m 600 "$data/claude/.credentials.json" "$dir/home/claude/"; fi
-  if [ -f "$data/copilot/config.json" ]; then install -m 600 "$data/copilot/config.json" "$dir/home/copilot/"; fi
+  for v in claude/.credentials.json copilot/config.json; do
+    if [ -f "$data/$v" ] && [ ! -L "$data/$v" ]; then (umask 077; read_agent_file "$data/$v" > "$dir/home/$v"); fi
+  done
   task_mounts "$id" "${repos[@]}"
 
   local extra=()

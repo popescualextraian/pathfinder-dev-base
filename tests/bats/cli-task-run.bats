@@ -672,3 +672,70 @@ MIRRORS_REL=projects/demo/mirrors
   printf 'a\nb\n' > "$BATS_TEST_TMPDIR/plain"
   [ "$(lib read_agent_file "$BATS_TEST_TMPDIR/plain")" = $'a\nb' ]
 }
+
+@test "an origin URL that is a git option never runs on the host: project, --repo and the mirror fetch" {
+  X="$BATS_TEST_TMPDIR/pwned"; bad="--upload-pack=touch $X;git-upload-pack"
+  # first use: the checkout's origin is refused, nothing is mirrored
+  git -C "$PROJ" config remote.origin.url "$bad"
+  run ag run --id T-90 "x"
+  [ "$status" -ne 0 ]; [[ "$output" == *"starts with -"* ]]
+  [ ! -e "$X" ]; [ ! -e "$AGENTIC_DATA/$MIRRORS_REL/proj.git" ]
+  # after the mirror is made, the checkout's origin is no longer read
+  git -C "$PROJ" config --unset remote.origin.url
+  ag run --id T-91 "x" 2>/dev/null
+  git -C "$PROJ" config remote.origin.url "$bad"
+  run ag run --id T-92 "y"
+  [ "$status" -eq 0 ]; [ ! -e "$X" ]
+  # a --repo clone's origin on first use
+  git clone -q "$PROJ" "$AGENTIC_WORKSPACES/demo/repos/lib"
+  git -C "$AGENTIC_WORKSPACES/demo/repos/lib" config remote.origin.url "$bad"
+  run ag run --id T-93 --repo lib "z"
+  [ "$status" -ne 0 ]; [[ "$output" == *"starts with -"* ]]; [ ! -e "$X" ]
+  # the mirror fetch and clone take the URL as an operand, never as an option
+  lib sync_mirror proj "$bad" 2>/dev/null || true
+  lib sync_mirror other "$bad" 2>/dev/null || true
+  [ ! -e "$X" ]
+}
+
+@test "the project's URL is pinned in its mirror when first made; deleting the mirror takes the origin again" {
+  ag run --id T-94 "x" 2>/dev/null
+  m="$AGENTIC_DATA/$MIRRORS_REL/proj.git"
+  [ "$(git --git-dir="$m" config remote.origin.url)" = "$PROJ" ]
+  OTHER="$BATS_TEST_TMPDIR/other"; git init -q -b main "$OTHER"
+  git -C "$OTHER" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m other
+  git -C "$PROJ" remote add origin "$OTHER"
+  git -C "$PROJ" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m second
+  git -C "$PROJ" update-ref refs/remotes/origin/main "$(git -C "$PROJ" rev-parse HEAD)"
+  ag run --id T-95 "y" 2>/dev/null
+  wt="$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees"
+  [ "$(git -C "$wt/T-95" rev-parse HEAD)" = "$(git -C "$PROJ" rev-parse HEAD)" ]
+  [ "$(git --git-dir="$m" config remote.origin.url)" = "$PROJ" ]
+  rm -rf "$m"
+  ag run --id T-96 "z" 2>/dev/null
+  [ "$(git --git-dir="$m" config remote.origin.url)" = "$OTHER" ]
+  [ "$(git -C "$wt/T-96" rev-parse HEAD)" = "$(git -C "$OTHER" rev-parse HEAD)" ]
+}
+
+@test "run copies a harness login only from a regular file: never through a symlink, never blocking on a FIFO" {
+  hd="$AGENTIC_DATA/projects/demo/harness"; mkdir -p "$hd/claude" "$hd/copilot"
+  echo hostsecret > "$BATS_TEST_TMPDIR/secret"
+  ln -s "$BATS_TEST_TMPDIR/secret" "$hd/claude/.credentials.json"
+  mkfifo "$hd/copilot/config.json"
+  run timeout 60 bash -c "cd '$PROJ' && bash '$A' run --id T-97 x </dev/null"
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/T-97/home/claude/.credentials.json" ]
+  [ ! -e "$T/T-97/home/copilot/config.json" ]
+  run grep -rq hostsecret "$T/T-97"
+  [ "$status" -ne 0 ]
+}
+
+@test "wt_gitdir reads the worktree's .git file without following a symlink or blocking" {
+  clone="$BATS_TEST_TMPDIR/c"; wt="$clone/.worktrees/T-1"; mkdir -p "$wt"
+  echo "gitdir: $clone/.git/worktrees/T-1" > "$wt/.git"
+  [ "$(lib wt_gitdir "$clone" "$wt")" = "$clone/.git/worktrees/T-1" ]
+  mv "$wt/.git" "$BATS_TEST_TMPDIR/g"; ln -s "$BATS_TEST_TMPDIR/g" "$wt/.git"
+  run lib wt_gitdir "$clone" "$wt"; [ "$status" -ne 0 ]
+  rm "$wt/.git"; mkfifo "$wt/.git"
+  run timeout 10 bash -c "cd '$PROJ' && source '$REPO_ROOT/lib/host/common.sh' && source '$REPO_ROOT/lib/host/task.sh' && wt_gitdir '$clone' '$wt'"
+  [ "$status" -ne 0 ]; [ "$status" -ne 124 ]
+}

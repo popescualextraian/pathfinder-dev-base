@@ -125,7 +125,7 @@ cgit() {
 wt_gitdir() {
   local line d n
   [ -f "$2/.git" ] && [ ! -L "$2/.git" ] || return 1
-  line="$(head -c 4096 "$2/.git" | head -n 1)"
+  line="$(read_agent_file "$2/.git" | head -c 4096 | head -n 1)" || return 1
   d="${line#gitdir: }"; n="${d#"$1/.git/worktrees/"}"
   [ "$d" != "$line" ] && [ "$n" != "$d" ] && [[ "$n" =~ ^[A-Za-z0-9._-]+$ ]] && [ "$n" != . ] && [ "$n" != .. ] || return 1
   printf '%s\n' "$d"
@@ -226,12 +226,12 @@ rollback_task() {
       if clone_ok "$clone"; then
         g="$clone/.git"
         # git cannot remove its own mount point: the directory (and what is left) goes after
-        if [ -d "$wt" ] && [ ! -L "$wt" ]; then cgit "$img" "$clone" "$g" -v "$wt:$wt" -- worktree remove --force "$wt" >/dev/null 2>&1 || true; fi
+        if [ -d "$wt" ] && [ ! -L "$wt" ]; then cgit "$img" "$clone" "$g" -v "$wt:$wt" -- worktree remove --force -- "$wt" >/dev/null 2>&1 || true; fi
         safe_rm "$ws/repos" "$wt"
         if [ -d "$clone/.worktrees" ] && [ ! -L "$clone/.worktrees" ]; then
           cgit "$img" "$clone" "$g" -v "$clone/.worktrees:$clone/.worktrees:ro" -- worktree prune >/dev/null 2>&1 || true
         fi
-        cgit "$img" "$clone" "$g" -- branch -D "$branch" >/dev/null 2>&1 || true
+        cgit "$img" "$clone" "$g" -- branch -D -- "$branch" >/dev/null 2>&1 || true
       else
         safe_rm "$ws/repos" "$wt"
       fi
@@ -242,32 +242,47 @@ rollback_task() {
   safe_rm "$AGENTIC_DATA/projects/$(task_project)/tasks" "$(task_hdir "$id")"
 }
 
-# project_url: the project's origin (credentials stripped), else the checkout itself.
+# url_ok URL: URL is not empty and cannot be taken for a git option (no leading -).
+url_ok() {
+  [ -n "$1" ] || return 1
+  [[ "$1" != -* ]] || { say "the origin URL $(printf '%s' "$1" | plain) starts with -; refused"; return 1; }
+}
+
+# project_url: the checkout's origin (credentials stripped), else the checkout itself. A dev agent
+# can change the checkout's origin: it is read only when the project's mirror is first made.
 project_url() {
   local root url; root="$(project_root)"
   url="$(git -C "$root" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#' || true)"
-  printf '%s\n' "${url:-$root}"
+  url="${url:-$root}"
+  url_ok "$url" || return 1
+  printf '%s\n' "$url"
 }
 
-# repo_url NAME: where the mirror of repos/NAME fetches from: the project's remote for the project's
-# own clone; else the URL its mirror recorded; else, on first use, the clone's origin, read before
-# any task had write access to the clone (a clone only becomes writable after its mirror exists).
+# repo_url NAME: where the mirror of repos/NAME fetches from: the URL its mirror recorded when it was
+# made (pinned: delete the mirror to take the origin again); else, on first use, the checkout's
+# origin for the project's own clone, or the clone's origin, read before any task had write access
+# to the clone (a clone only becomes writable after its mirror exists).
 repo_url() {
-  local clone m; clone="$(task_ws)/repos/$1"; m="$(mirror_dir "$1")"
-  if [ "$1" = "$(basename "$(project_root)")" ]; then project_url; return; fi
-  if [ -d "$m" ]; then mgit "$1" config --get remote.origin.url; return; fi
-  clone_ok "$clone" || return 1
-  git config --file "$clone/.git/config" --get remote.origin.url
+  local clone m url; clone="$(task_ws)/repos/$1"; m="$(mirror_dir "$1")"
+  if [ -d "$m" ]; then url="$(mgit "$1" config --get remote.origin.url)" || return 1
+  elif [ "$1" = "$(basename "$(project_root)")" ]; then url="$(project_url)" || return 1
+  else
+    clone_ok "$clone" || return 1
+    url="$(git config --file "$clone/.git/config" --get remote.origin.url)" || return 1
+  fi
+  url_ok "$url" || return 1
+  printf '%s\n' "$url"
 }
 
-# sync_mirror NAME URL: makes the private bare mirror of repos/NAME from URL, or fetches into it.
+# sync_mirror NAME URL: makes the private bare mirror of repos/NAME from URL, or fetches into it. The
+# URL follows --, so it is never taken for an option.
 sync_mirror() {
   local m; m="$(mirror_dir "$1")"
   if [ ! -d "$m" ]; then
     mkdir -p "$(dirname "$m")"
-    ugit clone -q --bare "$2" "$m" >&2
+    ugit clone -q --bare -- "$2" "$m" >&2
   else
-    mgit "$1" fetch -q --prune --no-recurse-submodules "$2" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' >&2 || true
+    mgit "$1" fetch -q --prune --no-recurse-submodules -- "$2" '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*' >&2 || true
   fi
 }
 
@@ -277,11 +292,11 @@ project_clone() {
   local name clone url m
   name="$(basename "$(project_root)")"; clone="$(task_ws)/repos/$name"; m="$(mirror_dir "$name")"
   if [ ! -e "$clone" ]; then
-    url="$(project_url)"
+    url="$(repo_url "$name")" || return 1
     sync_mirror "$name" "$url" || return 1
     mkdir -p "$(task_ws)/repos"
-    ugit clone -q --no-hardlinks "$m" "$clone" >&2 || return 1
-    ugit -C "$clone" remote set-url origin "$url" || return 1
+    ugit clone -q --no-hardlinks -- "$m" "$clone" >&2 || return 1
+    ugit -C "$clone" remote set-url -- origin "$url" || return 1
     printf '.worktrees/\n' >> "$clone/.git/info/exclude"
   fi
   printf '%s\n' "$name"
@@ -299,14 +314,14 @@ add_worktree() {
   [ -n "$url" ] || { say "repos/$1 has no origin to fetch from"; return 1; }
   sync_mirror "$1" "$url" || { say "could not mirror $url"; return 1; }
   cgit_err "$img" "$clone" "$clone/.git" -v "$m:$m:ro" -- fetch -q --no-write-fetch-head --no-tags --no-recurse-submodules \
-    --upload-pack=git-upload-pack "$m" '+refs/heads/*:refs/remotes/origin/*' || return 1
+    --upload-pack=git-upload-pack -- "$m" '+refs/heads/*:refs/remotes/origin/*' || return 1
   if [ -z "$base" ]; then
     head="$(mgit "$1" symbolic-ref -q --short HEAD 2>/dev/null || true)"
     base="${head:+origin/$head}"; base="${base:-HEAD}"
   fi
   [ ! -L "$clone/.worktrees" ] || return 1
   mkdir -p "$wt"
-  cgit_err "$img" "$clone" "$clone/.git" -v "$wt:$wt" -- worktree add -q --no-track -b "$3" "$wt" "$base" \
+  cgit_err "$img" "$clone" "$clone/.git" -v "$wt:$wt" -- worktree add -q --no-track -b "$3" -- "$wt" "$base" \
     || { safe_rm "$(task_ws)/repos" "$wt"; return 1; }
   printf '%s\t%s\t%s\n' "$clone" "$wt" "$3" >> "$(task_file "$2" repos)"
 }
