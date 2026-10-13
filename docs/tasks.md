@@ -147,10 +147,14 @@ Host git on task clones: no host git process opens a `.git` directory a task can
   `git push -u` pushes but cannot record one, and `git config` needs `--global`.
 - The host fetches with the user's credentials only into a private bare mirror per clone,
   `$AGENTIC_DATA/projects/<project>/mirrors/<name>.git`, which is never mounted into a container
-  (not even a dev container, which sees only `repos/`). The mirror fetches from the project's
-  remote (the checkout's `origin`, credentials stripped, else the checkout itself); for a `--repo`
-  clone, from the origin its mirror recorded on first use, read from the clone before any task had
-  write access to it. Host git on a mirror keeps the user's own settings for what could run a
+  (not even a dev container, which sees only `repos/`). Each mirror fetches from the URL it
+  recorded when it was made (pinned): for the project's own clone, the checkout's `origin`
+  (credentials stripped, else the checkout itself) at the first `run`; for a `--repo` clone, its
+  origin, read from the clone before any task had write access to it. Later changes to either
+  origin are not read. To change the URL on purpose, delete the mirror (the next `run` records the
+  current origin) or set it there: `git --git-dir=<mirror> remote set-url origin <url>`. A URL that
+  starts with `-` is refused, and every URL or path operand of host git follows `--`, so no URL is
+  taken for an option such as `--upload-pack`. Host git on a mirror keeps the user's own settings for what could run a
   command (the ssh command and askpass from the user's config, credential helpers reset and
   replayed from the system and global config, a `git://` proxy only from the user, `ext::` off), no
   hooks, no fsmonitor, `gc.auto=0`, `maintenance.auto=false`.
@@ -184,7 +188,9 @@ control characters removed, also git's messages from the throwaway containers. R
 Every bind source in a task's mounts must be its own canonical path (no symlink in any component),
 because Docker follows symlinks in bind sources; rollback and `clean` take only canonical clone and
 worktree paths under `repos/`. Host task files are used only when they are regular files, and
-agent-written files are opened without following a symlink and without blocking. Task containers
+agent-written files are opened without following a symlink and without blocking: also a worktree's
+`.git` file, and the harness logins (`.credentials.json`, `config.json`) that the login check reads
+and `run` copies into a task's home, which must be regular files and no symlinks. Task containers
 (and `takeover`) run with `--cap-drop ALL` and `no-new-privileges`.
 
 Dev mode: `agentic dev`, `shell`, `login`, `setup` and `doctor` mount only the workspace's
@@ -192,8 +198,23 @@ Dev mode: `agentic dev`, `shell`, `login`, `setup` and `doctor` mount only the w
 transcripts, sessions) and `events/` are out of reach of an interactive container, and so is
 everything under `$AGENTIC_DATA` other than the harness homes. A dev agent can still change the
 clones in `repos/`, as a task's agent can: the host meets them only through the private mirrors,
-the throwaway containers and the canonical-path checks above. One exception: the first use of a
-`--repo` clone reads its origin URL from the clone's config, which a dev agent could have changed.
+the throwaway containers and the canonical-path checks above.
+
+The dev container also mounts the user's checkout read-write at `/work`, so a dev agent can change
+everything in it that the host reads: the `origin` URL in `.git/config`, `.agentic/.env` (tokens,
+`AGENTIC_GATE`, which reach every task) and `.agentic/agentic.yaml` (the next `agentic build`). What
+is pinned: once a mirror exists, `run` no longer reads the checkout's or a clone's origin, and a URL
+is never taken for a git option. What remains: before a mirror exists, the first `run` (or the
+first use of a `--repo` clone) records whatever origin a dev agent left there; `.env` and
+`agentic.yaml` are trusted as written, so review a checkout a dev agent worked in before the next
+`run` or `build`; and the harness homes are shared, so a dev agent can replace a login a task copies.
+
+Known limit, check then use: the host checks a path (a clone's `.git`, its `.worktrees/`, a
+worktree's `.git` file) and later uses it (a bind source of `docker run`, a throwaway container).
+An agent that can write `repos/` (a dev agent, or a running task) and swaps `repos/<name>/.git` or
+`.worktrees` for a symlink between the check and the `docker run` is not stopped: Docker resolves
+the bind source when the container starts. Avoid running a dev agent while a task starts or is
+cleaned.
 
 Outside the model: an image built with the Docker socket label (`agentic.docker_socket`) mounts
 the Docker socket into every task, which is host root access for the agent.
