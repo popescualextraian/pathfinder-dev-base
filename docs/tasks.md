@@ -35,7 +35,8 @@ of this project (`--all`: every project; `--json`: one JSON object, or an array 
 failure.
 
 `status` shows the task's state; a task recorded as active whose container is gone shows
-`interrupted`, and one whose container state cannot be read (Docker failed) shows `unknown`.
+`interrupted`, and one whose container state cannot be read (Docker failed) shows `unknown`, as
+does one whose `state.json` is not a single JSON object; questions that are not objects are skipped.
 `status ID` lists the open questions and the `reply:` hint also when the container has exited; it
 then reads them from the task files (`state.json`, `questions.jsonl`). `status ID --json` prints
 one shape whether or not the bridge is live: the status object (see The status object).
@@ -135,10 +136,32 @@ Threat model: the bridge and the agent run as one user in one container, so the 
 the bridge's environment or edit `state.json`. The tokens keep other host processes and browsers
 (DNS rebinding) out; they do not contain the agent. The gate guards against slips, not a hostile
 agent. Anyone with access to the Docker socket can read the tokens (`docker inspect`) and is root
-on the host anyway. Each changed clone's `.git` is mounted read-write, so the agent could plant a
-hook or `core.fsmonitor` there; host git ignores clone hooks and fsmonitor: `bin/agentic` runs
-every git command on task clones and worktrees with `-c core.hooksPath=/dev/null -c
-core.fsmonitor=false`.
+on the host anyway.
+
+Host git on task clones: each changed clone's `.git` is mounted read-write (commits, refs,
+objects), but its `config`, `info/` (attributes, exclude) and `hooks/` are mounted read-only over
+it, so the agent cannot add a remote, a credential helper, an ssh command, a filter driver or a
+hook to the clone. Inside the task, commit, branch, fetch and `git push origin HEAD` work; `git push
+-u` pushes but cannot record the upstream, and `git config` needs `--global`. What
+the agent can still change (the worktree's `.git` file, files under
+`.git/worktrees/<ID>/`, a `commondir` file, the worktree's own `.gitattributes`) never reaches a
+command on the host:
+
+- `run` on a clone that already existed and `clean`'s checks (`git worktree add`, `git status`,
+  `git log`) run in a throwaway container of the task's image: `--network none`, the invoking
+  user, only the clone mounted at its own path, no hooks, no fsmonitor. A filter or command the
+  agent planted runs there, with nothing to reach.
+- The other host git calls (`symbolic-ref`, and `worktree remove`, `worktree prune`, `branch -D`
+  on rollback and clean) run no configured command; they pin `GIT_DIR` and `GIT_COMMON_DIR` to
+  the clone's `.git` (a planted `commondir` file is ignored) and turn hooks and fsmonitor off.
+- What remains: `git fetch origin` runs on the host with the user's credentials, because a private
+  remote needs them. It reads the clone's config, which the agent cannot write, through the
+  pinned git directory, and also overrides what could run a command: the ssh command and askpass
+  come from the user's global or system config only, the credential helpers are reset and replayed
+  from the user's global and system config, a `git://` proxy comes only from the user
+  (`GIT_PROXY_COMMAND` or the global config), `--upload-pack=git-upload-pack`,
+  `--no-recurse-submodules`, `protocol.ext.allow=never`, `core.attributesFile=/dev/null`, no hooks,
+  no fsmonitor. The fetch still parses refs and objects the agent wrote.
 
 ### Routes
 
