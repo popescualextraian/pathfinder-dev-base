@@ -5,12 +5,24 @@ TASK_PORT=8765
 TASK_ACTIVE="starting running waiting idle"
 
 task_project() { printf '%s\n' "${TASK_PROJECT:-$(project_name)}"; }
-task_ws() { printf '%s/%s\n' "$AGENTIC_WORKSPACES" "$(task_project)"; }
+# The workspace root is canonical (no symlink), so paths under it can be checked with canon_in.
+task_ws() { printf '%s/%s\n' "$(realpath -m -- "$AGENTIC_WORKSPACES")" "$(task_project)"; }
 task_dir() { printf '%s/tasks/%s\n' "$(task_ws)" "$1"; }
 # The host's own files of a task (tokens, mounts, repos, the interrupted marker) live outside the
 # workspace, which task and dev containers can write: task_hdir is never mounted.
 task_hdir() { printf '%s/projects/%s/tasks/%s\n' "$AGENTIC_DATA" "$(task_project)" "$1"; }
 task_file() { printf '%s/%s\n' "$(task_hdir "$1")" "$2"; }
+# canon_in ROOT PATH: PATH is strictly inside ROOT, without . or .. components, and no component is
+# a symlink (realpath gives it back unchanged; a missing tail is allowed).
+canon_in() {
+  [[ "$2" == "$1"/?* && "$2/" != *"/../"* && "$2/" != *"/./"* && "$2" != *//* ]] || return 1
+  [ "$(realpath -m -- "$2" 2>/dev/null)" = "$2" ]
+}
+# host_file ID NAME: the host file NAME of a task, when it is a regular file and no symlink.
+host_file() { local f; f="$(task_file "$1" "$2")"; [ -f "$f" ] && [ ! -L "$f" ] && printf '%s\n' "$f"; }
+# read_agent_file FILE: FILE's content, opened without following a symlink and without blocking
+# (a FIFO gives nothing).
+read_agent_file() { dd if="$1" iflag=nofollow,nonblock status=none 2>/dev/null; }
 # task_migrate ID: moves the host files of a task made before they left the workspace
 # (tasks/<ID>.<name>) into task_hdir, once; a symlink or anything but a regular file stays behind.
 task_migrate() {
@@ -21,6 +33,7 @@ task_migrate() {
     if [ -f "$old" ] && [ ! -L "$old" ] && [ ! -e "$(task_file "$1" "$f")" ]; then
       (umask 077; mkdir -p "$(task_hdir "$1")")
       mv -- "$old" "$(task_file "$1" "$f")"
+      if ! host_file "$1" "$f" >/dev/null; then rm -f -- "$(task_file "$1" "$f")"; return 1; fi
     fi
   done
 }
@@ -30,6 +43,9 @@ task_readable() {
   local d; d="$(task_dir "$1")"
   [ ! -L "$(task_ws)/tasks" ] && [ ! -L "$d" ] && [ -f "$d/$2" ] && [ ! -L "$d/$2" ]
 }
+# task_read ID NAME: the content of NAME in the task directory, when task_readable, read with
+# read_agent_file; 1 otherwise.
+task_read() { task_readable "$1" "$2" && read_agent_file "$(task_dir "$1")/$2"; }
 task_container() { printf 'agentic-%s-task-%s\n' "$(task_project)" "$1"; }
 new_task_id() { printf 'T-%s-%s\n' "$(date -u +%Y%m%d)" "$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"; }
 new_token() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
@@ -123,7 +139,7 @@ valid_task_id() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]; }
 need_task() {
   valid_task_id "${1:-}" || die "usage: a task id ([A-Za-z0-9._-]+)"
   task_readable "$1" state.json || die "no task $1 in $(task_project)"
-  task_migrate "$1"
+  task_migrate "$1" || die "task $1 has a host file that is not a regular file"
 }
 
 # container_status ID: the docker state, missing when there is no such container, unknown when
@@ -135,7 +151,7 @@ container_status() {
   else echo unknown; fi
 }
 task_port() { docker port "$(task_container "$1")" "$TASK_PORT/tcp" 2>/dev/null | head -n 1 | sed 's/.*://'; }
-record_get() { if task_readable "$1" state.json; then jq -r "$2 // empty" "$(task_dir "$1")/state.json" 2>/dev/null || true; fi; }
+record_get() { { task_read "$1" state.json || true; } | jq -r "$2 // empty" 2>/dev/null || true; }
 
 # task_state ID: the record's state; active while no container runs means interrupted (spec §6).
 task_state() {
@@ -150,11 +166,12 @@ task_state() {
 # bridge_req ID METHOD PATH [BODY]: one API request; BRIDGE_CODE and BRIDGE_BODY. 1 when unreachable.
 # The token goes in a header file, never on a command line.
 bridge_req() {
-  local id="$1" method="$2" path="$3" body="${4:-}" port hdr out rc=0
+  local id="$1" method="$2" path="$3" body="${4:-}" port hdr out envf rc=0
+  envf="$(host_file "$id" env)" || return 1
   port="$(task_port "$id")"
   [ -n "$port" ] || return 1
   hdr="$(mktemp)"
-  (umask 077; printf 'Authorization: Bearer %s\n' "$(dotenv_value "$(task_file "$id" env)" AGENTIC_TASK_TOKEN)" > "$hdr")
+  (umask 077; printf 'Authorization: Bearer %s\n' "$(dotenv_value "$envf" AGENTIC_TASK_TOKEN)" > "$hdr")
   out="$(printf '%s' "$body" | curl -sS --noproxy '*' -m 30 -X "$method" -H "@$hdr" -H 'Content-Type: application/json' \
     --data-binary @- -w '\n%{http_code}' "http://127.0.0.1:$port$path" 2>/dev/null)" || rc=1
   rm -f "$hdr"
@@ -200,12 +217,12 @@ rollback_task() {
   local id="$1" clone wt branch ws f img g
   valid_task_id "$id" || return 0
   ws="$(task_ws)"
-  task_migrate "$id"
+  task_migrate "$id" || true
   img="$(task_image "$id")"
   docker rm -f "$(task_container "$id")" >/dev/null 2>&1 || true
-  if [ -f "$(task_file "$id" repos)" ]; then
+  if host_file "$id" repos >/dev/null; then
     while IFS=$'\t' read -r clone wt branch; do
-      [[ "$clone" == "$ws/repos/"?* && "$wt" == "$ws/repos/"?* ]] || continue
+      if ! { canon_in "$ws/repos" "$clone" && canon_in "$clone/.worktrees" "$wt"; }; then continue; fi
       if clone_ok "$clone"; then
         g="$clone/.git"
         # git cannot remove its own mount point: the directory (and what is left) goes after
@@ -325,6 +342,10 @@ read_mounts() {
   [ $(( ${#lines[@]} % 2 )) -eq 0 ] || die "the mounts file of $1 is not one the host wrote"
   for ((i = 0; i < ${#lines[@]}; i += 2)); do
     v="${lines[i+1]}"; v="${v%:ro}"; src="${v%%:*}"; dst="${v#*:}"
+    # docker follows a symlink in a bind source: each must be its own canonical path
+    if [ "${lines[i]}" = -v ] && [ "$(realpath -e -- "$src" 2>/dev/null)" != "$src" ]; then
+      die "the mounts of $1 name $src, which is missing or goes through a symlink"
+    fi
     if [ "${lines[i]}" != -v ] || [[ "$dst" == *:* || "$src/" == *"/../"* || "$dst/" == *"/../"* ]] \
       || ! [[ "$src" == "$ws/"?* || "$src" == "$cfg" ]] \
       || ! [[ "$dst" =~ ^/(work|task|events|agentic-config)$ || "$dst" =~ ^/workspaces/[A-Za-z0-9._-]+$ \
@@ -345,11 +366,11 @@ age() {
 # array, in the shape of the bridge's status; [] when there is no file or it cannot be read. The
 # agent can write the file: lines that are not objects are skipped, options that are not a list are [].
 open_questions() {
-  local f out; f="$(task_dir "$1")/questions.jsonl"
+  local out
   task_readable "$1" questions.jsonl || { echo '[]'; return; }
-  out="$(jq -cs 'map(select(type == "object")) | group_by(.id | tostring) | map(last) | map(select(.status == "open"))
+  out="$(task_read "$1" questions.jsonl | jq -cs 'map(select(type == "object")) | group_by(.id | tostring) | map(last) | map(select(.status == "open"))
     | sort_by(.id | tostring | ltrimstr("Q") | tonumber? // 0)
-    | map({id, source, text, options: (.options | if type == "array" then . else [] end), recommendation, asked})' "$f" 2>/dev/null)" || out='[]'
+    | map({id, source, text, options: (.options | if type == "array" then . else [] end), recommendation, asked})' 2>/dev/null)" || out='[]'
   printf '%s\n' "${out:-[]}"
 }
 
@@ -375,10 +396,9 @@ task_status_json() {
   fi
   st="$(task_state "$1")"
   [ "$st" != interrupted ] || note_interrupted "$1"
-  { task_readable "$1" state.json && jq -cs --arg s "$st" --argjson q "$(open_questions "$1")" \
+  { task_read "$1" state.json | jq -cs --arg s "$st" --argjson q "$(open_questions "$1")" \
     'select(length == 1 and (.[0] | type) == "object") | .[0]
-    | .inbox = (.inbox | if type == "array" then length else 0 end) | .state = $s | .questions = $q' \
-    "$(task_dir "$1")/state.json" 2>/dev/null; } | grep . \
+    | .inbox = (.inbox | if type == "array" then length else 0 end) | .state = $s | .questions = $q' 2>/dev/null; } | grep . \
     || jq -cn --arg id "$1" '{task: $id, state: "unknown", inbox: 0, questions: []}'
 }
 

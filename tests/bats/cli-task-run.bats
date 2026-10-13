@@ -604,3 +604,71 @@ MIRRORS_REL=projects/demo/mirrors
   run grep -qP '[\x00-\x08\x0b-\x1f\x7f]' <<<"$output"
   [ "$status" -ne 0 ]
 }
+
+@test "run refuses a bind source that goes through a symlink, and drops every capability of the task" {
+  mkdir -p "$AGENTIC_WORKSPACES/demo" "$BATS_TEST_TMPDIR/elsewhere"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$AGENTIC_WORKSPACES/demo/events"
+  run ag run --id T-80 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"symlink"* ]]
+  [ -z "$(docker_run_with agentic-bridge)" ]
+  [ ! -e "$T/T-80" ] && [ ! -e "$H/T-80" ]
+  rm "$AGENTIC_WORKSPACES/demo/events"
+  ag run --id T-81 "x" 2>/dev/null
+  call="$(docker_run_with agentic-bridge)"
+  grep -A1 -x -- '--cap-drop' <<<"$call" | grep -qx ALL
+  grep -A1 -x -- '--security-opt' <<<"$call" | grep -qx no-new-privileges
+}
+
+@test "rollback and clean take no clone or worktree path with .. or a symlink in it" {
+  mkdir -p "$BATS_TEST_TMPDIR/keep" "$BATS_TEST_TMPDIR/keep2"; touch "$BATS_TEST_TMPDIR/keep/f" "$BATS_TEST_TMPDIR/keep2/f"
+  mkdir -p "$AGENTIC_WORKSPACES/demo/repos"
+  ln -s "$BATS_TEST_TMPDIR" "$AGENTIC_WORKSPACES/demo/repos/link"
+  record T-82 idle
+  r="$AGENTIC_WORKSPACES/demo/repos"
+  # both name the real repository $PROJ (with a .git) from inside repos/
+  printf '%s\t%s\tb\n' "$r/x/../../../../proj" "$r/x/../../../../keep2" "$r/link/proj" "$r/link/keep2" > "$H/T-82/repos"
+  lib rollback_task T-82
+  [ -f "$BATS_TEST_TMPDIR/keep/f" ] && [ -f "$BATS_TEST_TMPDIR/keep2/f" ]
+  run grep -E -- '--- run' "$DOCKER_LOG"
+  [ "$status" -ne 0 ]
+  [ -d "$PROJ/.git" ]
+  record T-83 idle
+  mkdir -p "$PROJ/.worktrees/T-83"
+  printf '%s\t%s\tb\n' "$r/link/proj" "$r/link/proj/.worktrees/T-83" > "$H/T-83/repos"
+  DOCKER_STATUS=exited run ag clean T-83
+  [ "$status" -eq 1 ]; [[ "$output" == *"cannot check"* ]]
+  run grep -E -- '--- run' "$DOCKER_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "the host never follows a symlink in its own task files" {
+  echo 'AGENTIC_TASK_TOKEN=stolen-0123456789abcdef' > "$BATS_TEST_TMPDIR/victim"
+  record T-84 idle
+  rm "$H/T-84/env"; ln -s "$BATS_TEST_TMPDIR/victim" "$H/T-84/env"
+  run ag send T-84 "x"
+  [ "$status" -ne 0 ]
+  run grep -rq stolen "$CURL_LOG" "$BATS_TEST_TMPDIR"/tmp* 2>/dev/null
+  [ "$status" -ne 0 ]
+  # run over a stale host directory: a planted env symlink is replaced, never written through
+  mkdir -p "$H/T-85"; ln -s "$BATS_TEST_TMPDIR/victim" "$H/T-85/env"
+  ag run --id T-85 "x" 2>/dev/null
+  grep -q stolen "$BATS_TEST_TMPDIR/victim"
+  [ ! -L "$H/T-85/env" ]
+  # an old-layout file that turns out not to be a regular file after the move is refused
+  record T-86 idle
+  rm -rf "$H/T-86"; ln -s "$BATS_TEST_TMPDIR/victim" "$T/T-86.env"
+  run ag send T-86 "x"
+  [ "$status" -ne 0 ]
+  [ ! -e "$H/T-86/env" ]
+}
+
+@test "agent-written files are opened without following a symlink and without blocking" {
+  echo secret > "$BATS_TEST_TMPDIR/secret"; ln -s "$BATS_TEST_TMPDIR/secret" "$BATS_TEST_TMPDIR/link"
+  run lib read_agent_file "$BATS_TEST_TMPDIR/link"
+  [ "$status" -ne 0 ]; [[ "$output" != *secret* ]]
+  mkfifo "$BATS_TEST_TMPDIR/fifo"
+  run timeout 10 bash -c "cd '$PROJ' && source '$REPO_ROOT/lib/host/common.sh' && source '$REPO_ROOT/lib/host/task.sh' && read_agent_file '$BATS_TEST_TMPDIR/fifo'"
+  [ "$status" -ne 124 ]
+  printf 'a\nb\n' > "$BATS_TEST_TMPDIR/plain"
+  [ "$(lib read_agent_file "$BATS_TEST_TMPDIR/plain")" = $'a\nb' ]
+}

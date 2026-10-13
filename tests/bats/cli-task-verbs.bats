@@ -272,3 +272,16 @@ mkclean() {   # a task with a worktree, as run leaves it, container exited
   run grep -qx -- '--- run' "$DOCKER_LOG"
   [ "$status" -ne 0 ]
 }
+
+@test "takeover refuses a mounts source through a symlink and drops every capability" {
+  record T-71 stopped
+  ln -s "$T/T-71" "$AGENTIC_WORKSPACES/demo/tlink"
+  printf -- '-v\n%s\n' "$AGENTIC_WORKSPACES/demo/tlink:/task" > "$H/T-71/mounts"
+  run ag takeover T-71
+  [ "$status" -eq 1 ]; [[ "$output" == *"symlink"* ]]
+  printf -- '-v\n%s\n' "$T/T-71:/task" > "$H/T-71/mounts"
+  ag takeover T-71 >/dev/null 2>&1
+  call="$(docker_run_with AGENTIC_GATE=1)"
+  grep -A1 -x -- '--cap-drop' <<<"$call" | grep -qx ALL
+  grep -A1 -x -- '--security-opt' <<<"$call" | grep -qx no-new-privileges
+}

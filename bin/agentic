@@ -345,7 +345,7 @@ cmd_run() {
   trap run_cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
   mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
   (umask 077; mkdir -p "$(task_hdir "$id")")
-  rm -f "$(task_file "$id" repos)" "$(task_file "$id" interrupted)"
+  for v in env mounts repos interrupted; do rm -f -- "$(task_file "$id" "$v")"; done
   own="$(project_clone)" || die "could not clone the project's repository into $ws/repos"
   [ "${#repos[@]}" -gt 0 ] || repos=("$own")
   for r in "${repos[@]}"; do add_worktree "$r" "$id" "$branch" "$base" "$img" || die "could not create the worktree of $r"; done
@@ -358,8 +358,9 @@ cmd_run() {
 
   local extra=()
   read_mounts "$id"
+  host_file "$id" env >/dev/null || die "the env file of $id is not a regular file"
   read -ra extra <<<"${AGENTIC_TASK_DOCKER_ARGS:-}"
-  docker run -d --name "$c" --label agentic.kind=task --label "agentic.task=$id" --label "agentic.project=$p" \
+  docker run -d --name "$c" --cap-drop ALL --security-opt no-new-privileges --label agentic.kind=task --label "agentic.task=$id" --label "agentic.project=$p" \
     --label "agentic.agent=$agent" --label "agentic.branch=$branch" -p "127.0.0.1::$TASK_PORT" \
     "${TASK_MOUNTS[@]}" "${RUN_ARGS[@]}" --env-file "$(task_file "$id" env)" \
     -e "AGENTIC_TASK_ID=$id" -e "AGENTIC_PROJECT=$p" -e "AGENTIC_AGENT=$agent" -e "AGENTIC_MODEL=$model" \
@@ -368,7 +369,7 @@ cmd_run() {
   if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}"; then
     docker logs --tail 20 "$c" 2>&1 | plain >&2 || true
     # the bridge's own reason, before the rollback removes the task directory
-    if task_readable "$id" bridge.log && [ -s "$dir/bridge.log" ]; then { echo "bridge.log:"; tail -n 20 "$dir/bridge.log" | plain; } >&2; fi
+    if task_readable "$id" bridge.log && [ -s "$dir/bridge.log" ]; then { echo "bridge.log:"; task_read "$id" bridge.log | tail -n 20 | plain; } >&2; fi
     die "the bridge of $id did not come up"
   fi
   RUN_ROLLBACK_ID=""; trap - EXIT INT TERM
@@ -510,8 +511,8 @@ cmd_logs() {
   done
   need_task "$id"
   case "$what" in
-    transcript) if task_readable "$id" transcript.md; then plain < "$(task_dir "$id")/transcript.md"; else echo "(no transcript yet)"; fi ;;
-    bridge) if task_readable "$id" bridge.log; then plain < "$(task_dir "$id")/bridge.log"; else echo "(no bridge log yet)"; fi ;;
+    transcript) if task_readable "$id" transcript.md; then task_read "$id" transcript.md | plain; else echo "(no transcript yet)"; fi ;;
+    bridge) if task_readable "$id" bridge.log; then task_read "$id" bridge.log | plain; else echo "(no bridge log yet)"; fi ;;
     start) docker logs "$(task_container "$id")" 2>&1 | plain ;;
   esac
 }
@@ -552,7 +553,7 @@ cmd_takeover() {
   if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
   echo "Taking over $id with $agent; the task stays stopped afterwards." >&2
   # A plain docker run skips the interactive shell's profile, so load the harness homes first.
-  docker run --rm "${tty[@]}" "${TASK_MOUNTS[@]}" "${RUN_ARGS[@]}" -e AGENTIC_GATE=1 "$img" \
+  docker run --rm --cap-drop ALL --security-opt no-new-privileges "${tty[@]}" "${TASK_MOUNTS[@]}" "${RUN_ARGS[@]}" -e AGENTIC_GATE=1 "$img" \
     bash -c '[ ! -f "$HOME/.agentic/env" ] || . "$HOME/.agentic/env"; exec "$@"' bash "${argv[@]}"
 }
 
@@ -566,10 +567,13 @@ cmd_clean() {
     docker stop "$(task_container "$id")" >/dev/null || die "could not stop the container of $id"
   fi
   if [ "$force" = 0 ]; then
-    [ -f "$(task_file "$id" repos)" ] || die "task $id has no repos file, so unpushed work cannot be checked; run agentic clean $id --force"
+    host_file "$id" repos >/dev/null || die "task $id has no repos file, so unpushed work cannot be checked; run agentic clean $id --force"
     # the worktrees are the agent's: git checks them in a throwaway container of the task's image
     img="$(task_image "$id")"
     while IFS=$'\t' read -r clone wt branch; do
+      if ! { canon_in "$(task_ws)/repos" "$clone" && canon_in "$clone/.worktrees" "$wt"; }; then
+        die "cannot check $wt (not a worktree path under $(task_ws)/repos); run agentic clean $id --force"
+      fi
       [ -d "$wt" ] || continue
       if ! { clone_ok "$clone" && [ ! -L "$wt" ] && gd="$(wt_gitdir "$clone" "$wt")"; }; then
         die "cannot check $wt (its .git does not name a worktree of $clone); run agentic clean $id --force"
