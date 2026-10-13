@@ -59,33 +59,36 @@ from `agentic.yaml` are not in it yet.
 State these facts; do not guess. Other files in `.agentic/` are the user's own; mention them only if
 they look like a mistaken copy of one of the files above.
 
-## Git hosts
+## Git
 
-Git pushes over https with a token; no SSH keys are mounted, and `git@` and `ssh://` URLs are
-rewritten to https. At start the container wires a credential helper for every host that has a
-token and lists them in `$AGENTIC_GIT_HOSTS` as `host=VARIABLE`.
+Git is configured through `.env` only, the way git itself reads it: everything in `.env` reaches
+every process in the container. Never add a start step, hook or script for git.
 
-- `git.host` (default `github.com`) uses `GH_TOKEN`, or `GIT_TOKEN`, and sets `GH_HOST` for gh.
-- Every other host, or a host that needs its own token, gets an entry in `git.hosts`:
+- **Identity**: `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
+  `GIT_COMMITTER_EMAIL`. Ask the user for name and email; never guess them. `git.user_name` and
+  `git.user_email` in `agentic.yaml` are only for a shared project identity, such as a bot.
+- **Push over https** (no SSH keys are mounted): per host, a username and a helper that names the
+  token variable. Take the hosts from the remotes; ask which token variable to use. The username
+  is `oauth2` for GitLab and `x-access-token` for GitHub. Add the keys in order, numbering from 0
+  (one host shown; a second host continues with 2 and 3, and the count becomes 4):
 
-  ```yaml
-  git:
-    hosts:
-      gitlab.example.com: {kind: gitlab, token: "${GITLAB_TOKEN}"}
-      git.example.org: {token: "${ORG_GIT_TOKEN}"}
+  ```
+  agentic-env add GITLAB_TOKEN --comment "GitLab personal access token, scope write_repository"
+  agentic-env add GIT_CONFIG_COUNT 2 --comment "git config entries below (git reads them natively)"
+  agentic-env add GIT_CONFIG_KEY_0 credential.https://gitlab.example.com.username
+  agentic-env add GIT_CONFIG_VALUE_0 oauth2
+  agentic-env add GIT_CONFIG_KEY_1 credential.https://gitlab.example.com.helper
+  agentic-env add GIT_CONFIG_VALUE_1 '!f() { echo "password=$GITLAB_TOKEN"; }; f'
   ```
 
-  `kind` is `github` (default) or `gitlab`; the first `gitlab` host with a token is also glab's
-  host (`GITLAB_HOST`, `GITLAB_TOKEN`). `token` names a variable in `.env`; never a value.
-  A host listed here uses only its own variable, even when it is also `git.host`.
-- Take hosts from the remotes, CI files and submodules; ask the user for any other host they
-  push to, and for its kind when the host name does not make it obvious. Then add the variable
-  with `agentic-env add GITLAB_TOKEN --comment "GitLab personal access token, scope
-  write_repository (api for glab)"` (or `--comment` with the GitHub equivalent).
-- A GitHub token never works for a GitLab host. If a push fails with `Authentication failed`,
-  check `$AGENTIC_GIT_HOSTS` for the host before anything else; a host missing there needs a
-  `git.hosts` entry or its token in `.env`, then a container restart (no rebuild).
-  `agentic doctor` shows which tokens are missing.
+  The helper is literal text: `$GITLAB_TOKEN` is expanded by git when it runs, so the token is
+  stored once. `agentic-env` never changes an existing key, so if `GIT_CONFIG_COUNT` is already
+  set, show the user the lines to add and the new count instead.
+- **Check** after the container restarts (`.env` is read at start): `git ls-remote <remote> HEAD`
+  must succeed. `Authentication failed` means a wrong username or token, a missing entry, or a
+  count that does not match the entries; check them with
+  `git config --get-regexp '^credential'` (it shows the helper, never the token).
+- `GH_TOKEN` is gh's GitHub token; it never works for a GitLab host.
 
 ## Procedure
 
@@ -105,8 +108,8 @@ token and lists them in `$AGENTIC_GIT_HOSTS` as `host=VARIABLE`.
      the socket is host root before suggesting it);
    - Jira keys appear in commit messages or branch names but `mcp.atlassian` is disabled;
    - Terraform has no exact version;
-   - a git remote (`git -C /work remote -v`, submodules, a repository the user pushes to) is on
-     a host that `$AGENTIC_GIT_HOSTS` does not list: see **Git hosts** above.
+   - a git remote (`git -C /work remote -v`, submodules, a repository the user pushes to) has no
+     credential entry (`agentic-env names` shows no `GIT_CONFIG_COUNT`): see **Git** below.
 3. **Ask for what you cannot see** (after checking the inventory): tools used day to day that are not in the repository or the image, deploy
    targets and their CLIs, the Atlassian URLs, extra MCP servers, the preferred harness,
    headless or headed browser, corporate CA certificates (they go into `.agentic/certs/*.crt`).
@@ -129,7 +132,7 @@ token and lists them in `$AGENTIC_GIT_HOSTS` as `host=VARIABLE`.
    means the build will accept the config.
 6. **Hand over**: summarise what changed; say whether a rebuild is needed (tools, certs,
    plugins, `Dockerfile.extra`, `on-build.sh`, `docker.socket` need one; MCP servers, skills,
-   `git` and `on-start.sh` do not); list every key you added with `agentic-env` and which ones still
+   `.env` and `on-start.sh` do not; `.env` needs a container restart); list every key you added with `agentic-env` and which ones still
    need a value from the user (never the values); and tell the user
    to run, on the host, `agentic build` (if needed) and `agentic doctor`.
    If the project has no `docs/wiki/`, suggest running `/wiki seed` next, which writes the wiki,

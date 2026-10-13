@@ -84,6 +84,17 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
   grep -qx "HTTPS_PROXY" <<<"$output"
 }
 
+@test "a git identity in .env wins: the host's is passed only for what .env leaves unset" {
+  printf 'GIT_AUTHOR_NAME=Env Person\n' > "$PROJ/.agentic/.env"
+  git -C "$PROJ" config user.name "Dev Person"
+  git -C "$PROJ" config user.email dev@example.com
+  run in_project 'build_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
+  run grep -x "GIT_AUTHOR_NAME=Dev Person" <<<"$output"
+  [ "$status" -eq 1 ]
+  run in_project 'build_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
+  grep -qx "GIT_AUTHOR_EMAIL=dev@example.com" <<<"$output"
+}
+
 @test "the Docker socket is mounted only when the image label says so" {
   SOCK="$BATS_TEST_TMPDIR/docker.sock"
   python3 -c 'import socket,sys;s=socket.socket(socket.AF_UNIX);s.bind(sys.argv[1])' "$SOCK"

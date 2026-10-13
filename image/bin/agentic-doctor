@@ -58,20 +58,6 @@ if [ -n "$(token COPILOT_GITHUB_TOKEN)$(token GH_TOKEN)" ] \
   ok "copilot"
 else warn "copilot: not authenticated (agentic login copilot, or COPILOT_GITHUB_TOKEN in .agentic/.env)"; fi
 
-echo "git hosts"
-host="$(cfg .git.host)"
-mapfile -t git_hosts < <(jq -r '.git.hosts // {} | to_entries[] | [.key, (.value.token | ltrimstr("${") | rtrimstr("}"))] | @tsv' "$RESOLVED")
-if [ -n "$host" ] && ! jq -e --arg h "$host" '.git.hosts // {} | has($h)' "$RESOLVED" >/dev/null; then
-  if [ -n "$(token GH_TOKEN)" ]; then ok "git host $host (GH_TOKEN)"
-  elif [ -n "$(token GIT_TOKEN)" ]; then ok "git host $host (GIT_TOKEN)"
-  else ok "git host $host: no token, so no push over https"; fi
-fi
-for e in "${git_hosts[@]}"; do
-  IFS=$'\t' read -r h var <<<"$e"
-  if [ -n "$(token "$var")" ]; then ok "git host $h ($var)"
-  else warn "git host $h: $var is not set (.agentic/.env)"; fi
-done
-
 echo "mcp servers"
 while IFS=$'\t' read -r name type target; do
   case "$type" in
@@ -85,11 +71,8 @@ for key in .mcp.atlassian.jira_url .mcp.atlassian.confluence_url; do
   u="$(cfg "$key")"
   if [ -n "$u" ] && cfg_true .mcp.atlassian.enabled; then probe_url "${key##*.}" "$u"; fi
 done
-if [ -n "$host" ]; then probe_url "git host $host" "https://$host"; fi
-for e in "${git_hosts[@]}"; do
-  h="${e%%$'\t'*}"
-  if [ "$h" != "$host" ]; then probe_url "git host $h" "https://$h"; fi
-done
+host="$(cfg .git.host)"
+if [ -n "$host" ]; then probe_url "git host" "https://$host"; fi
 
 echo "docker"
 if cfg_true .docker.socket; then

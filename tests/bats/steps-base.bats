@@ -176,87 +176,21 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   grep -q '^export GIT_COMMITTER_NAME=Cfg\\ Name$' "$AGENTIC_STATE/env"
 }
 
-@test "30 wires the credential helper for git.host without writing the token" {
-  config $'version: 1\nproject: demo\ngit:\n  host: git.example.com'; bash "$S/10-validate.sh"
-  GH_TOKEN=supersecret run bash "$S/30-git.sh"
+@test "30 identity from the environment (.env) wins over git.user_* in the config" {
+  config $'version: 1\nproject: demo\ngit:\n  user_name: Bot\n  user_email: bot@example.com'; bash "$S/10-validate.sh"
+  GIT_AUTHOR_NAME="Env Name" GIT_AUTHOR_EMAIL=env@example.com run bash "$S/30-git.sh"
   [ "$status" -eq 0 ]
-  run grep -q supersecret "$AGENTIC_STATE/env"
-  [ "$status" -ne 0 ]
-  grep -q 'credential.https://git.example.com.helper' "$AGENTIC_STATE/env"
+  [ "$(git config --global user.name)" = "Env Name" ]
+  [ "$(git config --global user.email)" = env@example.com ]
+}
+
+@test "30 sets GH_HOST for git.host and leaves git credentials to GIT_CONFIG_* in .env" {
+  config $'version: 1\nproject: demo\ngit:\n  host: git.example.com'; bash "$S/10-validate.sh"
+  GH_TOKEN=supersecret GIT_TOKEN=other run bash "$S/30-git.sh"
+  [ "$status" -eq 0 ]
   grep -q '^export GH_HOST=git.example.com$' "$AGENTIC_STATE/env"
-  out="$(GH_TOKEN=supersecret bash -c "source '$AGENTIC_STATE/env'; printf 'protocol=https\nhost=git.example.com\n\n' | git credential fill")"
-  [[ "$out" == *"password=supersecret"* ]]
-}
-
-@test "30 with a token rewrites git@ and ssh:// URLs for git.host to https" {
-  config $'version: 1\nproject: demo\ngit:\n  host: git.example.com'; bash "$S/10-validate.sh"
-  GH_TOKEN=supersecret bash "$S/30-git.sh"
-  run bash -c "source '$AGENTIC_STATE/env'; git ls-remote --get-url git@git.example.com:team/x.git; git ls-remote --get-url ssh://git@git.example.com/team/y.git"
-  [ "${lines[0]}" = https://git.example.com/team/x.git ]
-  [ "${lines[1]}" = https://git.example.com/team/y.git ]
-}
-
-# fill HOST: the username and password git's credential helpers give for https://HOST.
-fill() { bash -c "source '$AGENTIC_STATE/env'; printf 'protocol=https\nhost=$1\n\n' | git credential fill" 2>/dev/null | grep -E '^(username|password)='; }
-
-HOSTS=$'version: 1\nproject: demo\ngit:\n  hosts:\n    github.com: {token: "${GH_TOKEN}"}\n    gitlab.example.com: {kind: gitlab, token: "${GITLAB_TOKEN}"}'
-
-@test "30 wires a helper for every git.hosts entry, each with its own token" {
-  config "$HOSTS"; bash "$S/10-validate.sh"
-  GH_TOKEN=ghsecret GITLAB_TOKEN=glsecret run bash "$S/30-git.sh"
-  [ "$status" -eq 0 ]
-  run grep -E 'ghsecret|glsecret' "$AGENTIC_STATE/env"
+  run grep -E 'GIT_CONFIG|GH_ENTERPRISE_TOKEN|supersecret' "$AGENTIC_STATE/env"
+  [ "$status" -eq 1 ]
+  run grep -s credential "$HOME/.gitconfig"
   [ "$status" -ne 0 ]
-  export GH_TOKEN=ghsecret GITLAB_TOKEN=glsecret
-  [ "$(fill github.com)" = $'username=x-access-token\npassword=ghsecret' ]
-  [ "$(fill gitlab.example.com)" = $'username=oauth2\npassword=glsecret' ]
-}
-
-@test "30 rewrites git@ and ssh:// URLs to https for every git.hosts entry" {
-  config "$HOSTS"; bash "$S/10-validate.sh"
-  GH_TOKEN=a GITLAB_TOKEN=b bash "$S/30-git.sh"
-  run bash -c "source '$AGENTIC_STATE/env'; git ls-remote --get-url git@github.com:o/x.git; git ls-remote --get-url ssh://git@gitlab.example.com/g/y.git"
-  [ "${lines[0]}" = https://github.com/o/x.git ]
-  [ "${lines[1]}" = https://gitlab.example.com/g/y.git ]
-}
-
-@test "30 points glab at a gitlab host by reference, never by value" {
-  config "$HOSTS"; bash "$S/10-validate.sh"
-  GITLAB_TOKEN=glsecret bash "$S/30-git.sh"
-  run bash -c "unset GITLAB_TOKEN; source '$AGENTIC_STATE/env'; echo \"\$GITLAB_HOST|\$GITLAB_TOKEN\""
-  [ "$output" = "https://gitlab.example.com|" ]
-  run bash -c "export GITLAB_TOKEN=glsecret; source '$AGENTIC_STATE/env'; echo \"\$GITLAB_TOKEN\""
-  [ "$output" = glsecret ]
-}
-
-@test "30 a gitlab host keeps its own token when git.host is the same host and GH_TOKEN is set" {
-  config $'version: 1\nproject: demo\ngit:\n  host: gitlab.example.com\n  hosts:\n    gitlab.example.com: {kind: gitlab, token: "${GL}"}'
-  bash "$S/10-validate.sh"
-  GH_TOKEN=ghsecret GL=glsecret run bash "$S/30-git.sh"
-  [ "$status" -eq 0 ]
-  ! grep -q GH_HOST "$AGENTIC_STATE/env"
-  ! grep -q GH_ENTERPRISE_TOKEN "$AGENTIC_STATE/env"
-  export GH_TOKEN=ghsecret GL=glsecret
-  [ "$(fill gitlab.example.com)" = $'username=oauth2\npassword=glsecret' ]
-}
-
-@test "30 exports AGENTIC_GIT_HOSTS naming each host and its variable" {
-  config "$HOSTS"; bash "$S/10-validate.sh"
-  GH_TOKEN=a GITLAB_TOKEN=b bash "$S/30-git.sh"
-  run bash -c "source '$AGENTIC_STATE/env'; echo \"\$AGENTIC_GIT_HOSTS\""
-  [ "$output" = "github.com=GH_TOKEN gitlab.example.com=GITLAB_TOKEN" ]
-}
-
-@test "30 skips a git.hosts entry whose variable is unset" {
-  config "$HOSTS"; bash "$S/10-validate.sh"
-  GH_TOKEN=a run bash "$S/30-git.sh"
-  [ "$status" -eq 0 ]
-  ! grep -q 'gitlab.example.com' "$AGENTIC_STATE/env"
-}
-
-@test "30 without a token sets no helper" {
-  config $'version: 1\nproject: demo'; bash "$S/10-validate.sh"
-  run bash "$S/30-git.sh"
-  [ "$status" -eq 0 ]
-  ! grep -q GIT_CONFIG_COUNT "$AGENTIC_STATE/env"
 }

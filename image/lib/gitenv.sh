@@ -20,28 +20,21 @@ git_clone() {
   return "$rc"
 }
 
-# git_cred_env SPEC...: export lines that make git send a token to each https://HOST, and rewrite
-# git@HOST: and ssh://git@HOST/ to https (no SSH keys are mounted). SPEC is HOST, for
-# ${GH_TOKEN:-$GIT_TOKEN} as x-access-token, or HOST=VAR[:USER]. The token is read when the helper
-# runs; it is never written anywhere.
+# git_cred_env HOST: export lines that make git send ${GH_TOKEN:-$GIT_TOKEN} to https://HOST, and
+# rewrite git@HOST: and ssh://git@HOST/ to https (no SSH keys are mounted). The token is read
+# when the helper runs; it is never written anywhere.
 git_cred_env() {
-  local spec host var user key helper rewrite i=0
-  for spec in "$@"; do
-    host="${spec%%=*}"; user=x-access-token
-    # shellcheck disable=SC2016 # a variable reference for the helper, expanded when it runs
-    var='GH_TOKEN:-$GIT_TOKEN'
-    if [ "$spec" != "$host" ]; then
-      var="${spec#*=}"
-      if [ "$var" != "${var%%:*}" ]; then user="${var#*:}"; var="${var%%:*}"; fi
-    fi
-    key="credential.https://$host.helper"
-    helper="!f() { test \"\$1\" = get && printf \"username=$user\\npassword=%s\\n\" \"\${$var}\"; }; f"
-    rewrite="url.https://$host/.insteadOf"
-    printf 'export GIT_CONFIG_KEY_%d=%q\nexport GIT_CONFIG_VALUE_%d=\n' "$i" "$key" "$i"
-    printf 'export GIT_CONFIG_KEY_%d=%q\nexport GIT_CONFIG_VALUE_%d=%q\n' "$((i + 1))" "$key" "$((i + 1))" "$helper"
-    printf 'export GIT_CONFIG_KEY_%d=%q\nexport GIT_CONFIG_VALUE_%d=%q\n' "$((i + 2))" "$rewrite" "$((i + 2))" "git@$host:"
-    printf 'export GIT_CONFIG_KEY_%d=%q\nexport GIT_CONFIG_VALUE_%d=%q\n' "$((i + 3))" "$rewrite" "$((i + 3))" "ssh://git@$host/"
-    i=$((i + 4))
-  done
-  printf 'export GIT_CONFIG_COUNT=%d\n' "$i"
+  local key="credential.https://$1.helper"
+  # shellcheck disable=SC2016 # expanded by git's shell when the helper runs
+  local helper='!f() { test "$1" = get && printf "username=x-access-token\npassword=%s\n" "${GH_TOKEN:-$GIT_TOKEN}"; }; f'
+  local rewrite="url.https://$1/.insteadOf"
+  printf 'export GIT_CONFIG_COUNT=4\n'
+  printf 'export GIT_CONFIG_KEY_0=%q\n' "$key"
+  printf 'export GIT_CONFIG_VALUE_0=\n'
+  printf 'export GIT_CONFIG_KEY_1=%q\n' "$key"
+  printf 'export GIT_CONFIG_VALUE_1=%q\n' "$helper"
+  printf 'export GIT_CONFIG_KEY_2=%q\n' "$rewrite"
+  printf 'export GIT_CONFIG_VALUE_2=%q\n' "git@$1:"
+  printf 'export GIT_CONFIG_KEY_3=%q\n' "$rewrite"
+  printf 'export GIT_CONFIG_VALUE_3=%q\n' "ssh://git@$1/"
 }

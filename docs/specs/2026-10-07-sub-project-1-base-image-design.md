@@ -135,7 +135,7 @@ repos:                              # first = primary, mounted or cloned at /wor
     url: git@git.example.com:team/orders-service.git
 
 git:
-  host: git.example.com             # credential helper and GH_HOST
+  host: git.example.com             # GH_HOST
   user_name: ""                     # empty → host git config at build
   user_email: ""
 
@@ -233,7 +233,7 @@ Config lookup order: `/agentic-config`, then `/work/.agentic`, then `AGENTIC_CON
 | `10-validate` | Find the config (§6.1) and validate it. Exit non-zero on error. |
 | `20-onboarding` | Seed harness onboarding and trust for `/work` and `/workspaces/*`. |
 | `25-harness` | `harness.claude.model` as `ANTHROPIC_MODEL`, `harness.copilot.model` as `model` in Copilot's `config.json`; empty leaves the harness default. |
-| `30-git` | `user.name` and `user.email`, credential helper for `git.host` from `GH_TOKEN` or `GIT_TOKEN` and for each `git.hosts` entry from its own variable, `GH_HOST`, `GITLAB_HOST`/`GITLAB_TOKEN` for a `gitlab` host, `AGENTIC_GIT_HOSTS`, `GIT_COMMITTER_*`. |
+| `30-git` | `user.name` and `user.email` (`GIT_AUTHOR_*` from the environment before `git.user_*`), `GH_HOST`, `GIT_COMMITTER_*`. Git credentials come from `GIT_CONFIG_*` in `.env`, not from a step. |
 | `40-mcp` | Reconcile managed MCP servers for both harnesses: remove disabled ones, add or update enabled ones, expand `${VAR}`. Servers added by hand are left alone. |
 | `50-plugins` | Link `~/.claude/plugins` (and Copilot's) to the baked plugins. Warn about configured plugins not in the image. |
 | `60-skills` | Copy base skills and `.agentic/skills/*` into both harnesses' skill folders. |

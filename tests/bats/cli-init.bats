@@ -31,7 +31,6 @@ setup() {
   [ -f "$PROJ/.agentic/.env.example" ]
   grep -qx 'CLAUDE_CODE_OAUTH_TOKEN=' "$PROJ/.agentic/.env.example"
   grep -q 'claude setup-token' "$PROJ/.agentic/.env.example"
-  grep -qx 'GITLAB_TOKEN=' "$PROJ/.agentic/.env.example"
   grep -qx '.env' "$PROJ/.agentic/.gitignore"
   [ -d "$PROJ/.agentic/certs" ]
   grep -q 'pom.xml' "$PROJ/.agentic/detect-report.md"

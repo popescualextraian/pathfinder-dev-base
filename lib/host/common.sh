@@ -96,9 +96,10 @@ shared_run_args() {
   root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"; data="$AGENTIC_DATA/projects/$p"
   check_env_file "$cfg/.env"
   if [ -f "$cfg/.env" ]; then RUN_ARGS+=(--env-file "$cfg/.env"); fi
+  # the host's git identity, for what .env leaves unset (-e would win over --env-file)
   name="$(pgit -C "$root" config user.name || true)"; email="$(pgit -C "$root" config user.email || true)"
-  if [ -n "$name" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_NAME=$name"); fi
-  if [ -n "$email" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_EMAIL=$email"); fi
+  if [ -n "$name" ] && [ -z "$(dotenv_value "$cfg/.env" GIT_AUTHOR_NAME)" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_NAME=$name"); fi
+  if [ -n "$email" ] && [ -z "$(dotenv_value "$cfg/.env" GIT_AUTHOR_EMAIL)" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_EMAIL=$email"); fi
   for v in "${PROXY_VARS[@]}"; do
     if [ -n "${!v:-}" ]; then RUN_ARGS+=(-e "$v"); fi
   done

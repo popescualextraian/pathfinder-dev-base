@@ -61,7 +61,7 @@ after a change marked *build*, run `agentic build`, then `agentic dev recreate`.
 | Path | Purpose | Takes effect |
 |---|---|---|
 | `agentic.yaml` | Project config: tools, plugins, MCP servers, Docker socket, hooks ([reference](docs/configuration.md)) | build; MCP at next start |
-| `.env` (git-ignored), `.env.example` | Secrets and logins (`ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`, …); env vars of a new container, never in the image | new container (`dev recreate`) |
+| `.env` (git-ignored), `.env.example` | Secrets and logins (`ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`, …); loaded at start, never in the image | next start |
 | `certs/` | `*.crt` files trusted by the system, Java, Node, Python and Chromium (for example a proxy CA) | build |
 | `skills/` | Project skills (`<name>/SKILL.md`), copied into Claude and Copilot | build |
 | `hooks/on-build.sh` | Runs as `dev` at the end of the build, without `.env`; user-level installs (`npm i -g`, `pipx`) | build |
@@ -137,21 +137,26 @@ and measurement. See [`docs/philosophy.md`](docs/philosophy.md).
 
 The repository (`AGENTIC_REPO_URL`) clones over https with `GIT_TOKEN` or `GH_TOKEN` from
 `.agentic/.env`. Never put a token in the URL itself (`https://user:token@...`): URLs end up in
-configs and logs. `git@host:` and `ssh://git@host/` URLs are rewritten to https, because no SSH
-keys are mounted.
+configs and logs. For that clone, `git@host:` and `ssh://git@host/` URLs are rewritten to https,
+because no SSH keys are mounted.
 
-`git.host` gets a credential helper with `GH_TOKEN` (or `GIT_TOKEN`). Every other host, for
-example a GitLab next to GitHub, gets an entry in `git.hosts` that names its own variable:
+After that, git is configured the way git itself is: every variable in `.agentic/.env` reaches
+every process in the container, and git reads its identity (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`)
+and any setting (`GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_n`, `GIT_CONFIG_VALUE_n`) from the
+environment. To push over https, give each host a username and a helper that names its token
+variable; git expands it when it runs, so the token is stored once:
 
-```yaml
-git:
-  hosts:
-    gitlab.example.com: {kind: gitlab, token: "${GITLAB_TOKEN}"}
+```
+GITLAB_TOKEN=glpat-...
+GIT_CONFIG_COUNT=2
+GIT_CONFIG_KEY_0=credential.https://gitlab.example.com.username
+GIT_CONFIG_VALUE_0=oauth2
+GIT_CONFIG_KEY_1=credential.https://gitlab.example.com.helper
+GIT_CONFIG_VALUE_1=!f() { echo "password=$GITLAB_TOKEN"; }; f
 ```
 
-A `gitlab` host also sets up glab (`GITLAB_HOST`, `GITLAB_TOKEN`). Inside the container,
-`$AGENTIC_GIT_HOSTS` lists every host with a token (`host=VARIABLE`) and `agentic doctor` flags
-a missing one.
+The username is `oauth2` for GitLab and `x-access-token` for GitHub. A remote runner sets the
+same variables. `.agentic/.env.example` has the template, and `/agentic-setup` writes and checks it.
 
 ## Extending
 

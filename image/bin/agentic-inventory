@@ -55,12 +55,6 @@ echo
 echo "## Claude plugins baked in"
 jq -r '.plugins // {} | keys[] | "- " + .' "$plugins/installed_plugins.json" 2>/dev/null
 echo
-echo "## Git credentials"
-echo "- Set at container start, not baked in. \$AGENTIC_GIT_HOSTS lists every host git can push to"
-echo "  over https as host=VARIABLE (the .env variable holding its token); never print the value."
-echo "- A host missing from it needs an entry in git.hosts in agentic.yaml and its token in"
-echo "  .agentic/.env; agentic-doctor shows which tokens are missing. SSH URLs are rewritten to https."
-echo
 echo "## Skills in the image"
 for d in "$AGENTIC_DIR"/skills/*/; do
   [ -f "$d/SKILL.md" ] && echo "- $(basename "$d")"

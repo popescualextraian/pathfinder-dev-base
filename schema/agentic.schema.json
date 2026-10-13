@@ -12,20 +12,9 @@
     "git": {
       "description": "Git settings.", "type": "object", "additionalProperties": false,
       "properties": {
-        "host": {"description": "Git host for GH_HOST, and for the credential helper with GH_TOKEN or GIT_TOKEN unless git.hosts lists it.", "type": "string"},
-        "hosts": {
-          "description": "Further git hosts, each with its own token: host -> {kind: github (default) or gitlab, token: \"${VAR}\" naming a variable in .env}. Each host with a token gets a credential helper; the first gitlab host also gets GITLAB_HOST and GITLAB_TOKEN.",
-          "type": "object",
-          "additionalProperties": {
-            "type": "object", "additionalProperties": false, "required": ["token"],
-            "properties": {
-              "kind": {"description": "github (default) or gitlab; gitlab also sets GITLAB_HOST and GITLAB_TOKEN for glab.", "enum": ["github", "gitlab"]},
-              "token": {"description": "The variable in .env holding this host's token, as ${NAME}.", "type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"}
-            }
-          }
-        },
-        "user_name": {"description": "Commit author name. Empty uses the host's git config.", "type": "string"},
-        "user_email": {"description": "Commit author email. Empty uses the host's git config.", "type": "string"}
+        "host": {"description": "Git host for GH_HOST. Git credentials go in .env as GIT_CONFIG_* (see .env.example).", "type": "string"},
+        "user_name": {"description": "Commit author name, unless GIT_AUTHOR_NAME is set (.env). Empty uses the host's git config.", "type": "string"},
+        "user_email": {"description": "Commit author email, unless GIT_AUTHOR_EMAIL is set (.env). Empty uses the host's git config.", "type": "string"}
       }
     },
     "tools": {
