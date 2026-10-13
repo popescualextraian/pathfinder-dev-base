@@ -181,6 +181,17 @@ symlinks, so the terminal never shows a host file and never blocks on a FIFO; wh
 control characters removed, also git's messages from the throwaway containers. Rollback and
 `clean` remove only paths inside the workspace with no symlink below its root.
 
+Every bind source in a task's mounts must be its own canonical path (no symlink in any component),
+because Docker follows symlinks in bind sources; rollback and `clean` take only canonical clone and
+worktree paths under `repos/`. Host task files are used only when they are regular files, and
+agent-written files are opened without following a symlink and without blocking. Task containers
+(and `takeover`) run with `--cap-drop ALL` and `no-new-privileges`.
+
+Known dev-mode exposure: `agentic dev` mounts the project's workspace read-write into the dev
+container, so an agent there can plant symlinks or files in `repos/`, `tasks/` and `events/`
+that the host later meets. The checks above refuse what they recognise (symlinked bind sources,
+paths and task files), but the dev mount is wider than a task's and is not part of this model.
+
 Outside the model: an image built with the Docker socket label (`agentic.docker_socket`) mounts
 the Docker socket into every task, which is host root access for the agent.
 
