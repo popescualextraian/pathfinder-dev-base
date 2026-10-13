@@ -130,7 +130,8 @@ out="$(docker run --rm -v "$tmp/repo.git:/repo.git:ro" -e AGENTIC_REPO_URL=file:
 [ "$out" = smoke-project ] || fail "no-mount start: got '$out'"
 
 step "detached tasks through bin/agentic, with the fake agent"
-export AGENTIC_TASK_DOCKER_ARGS="-v $root/bridge/test:/fake:ro -e AGENTIC_ACP_CMD=[\"node\",\"/fake/fake-agent.mjs\"] -e FAKE_AGENT_STATE=/task/home/fake -e FAKE_ASK=cli"
+# the project is the clones' origin: mounted so a granted push lands there
+export AGENTIC_TASK_DOCKER_ARGS="-v $proj:$proj -v $root/bridge/test:/fake:ro -e AGENTIC_ACP_CMD=[\"node\",\"/fake/fake-agent.mjs\"] -e FAKE_AGENT_STATE=/task/home/fake -e FAKE_ASK=cli"
 ag() { (cd "$proj" && "$A" "$@"); }
 tasks="$AGENTIC_WORKSPACES/smoke-project/tasks"
 mine=(--filter label=agentic.kind=task --filter label=agentic.project=smoke-project)
@@ -170,7 +171,15 @@ ag send "$id" "ASK:May I push?" >/dev/null
 wait_state "$id" waiting || fail "task: the question did not make the task wait"
 ag answer "$id" Q1 "yes" --allow push >/dev/null
 wait_state "$id" idle || fail "task: answer"
-grep -q 'ran: git push origin HEAD' "$tasks/$id/transcript.md" || fail "task: the push was not retried through the gate after the grant"
+grep -q 'ran: git push origin HEAD (exit 0)' "$tasks/$id/transcript.md" || fail "task: the push was not retried through the gate after the grant"
+c1="agentic-smoke-project-task-$id"
+git -C "$proj" rev-parse -q --verify "refs/heads/$(docker inspect -f '{{index .Config.Labels "agentic.branch"}}' "$c1")" >/dev/null \
+  || fail "task: the granted push did not reach origin"
+# the clone's config, info and hooks are read-only in the task; commit, fetch and push still work
+docker exec "$c1" bash -lc 'cd /work && c="$(git rev-parse --git-common-dir)" && ! git config core.sshCommand x 2>/dev/null \
+  && ! touch "$c/info/attributes" 2>/dev/null && ! touch "$c/hooks/post-checkout" 2>/dev/null \
+  && git -c user.name=smoke -c user.email=smoke@example.com commit -q --allow-empty -m smoke && git fetch -q origin \
+  && git push -q origin HEAD' || fail "task: git in the task with the clone's config read-only"
 
 ag send "$id" "ASK:Which DB?" >/dev/null
 wait_state "$id" waiting || fail "task: the second question did not make the task wait"
@@ -201,7 +210,9 @@ wait_state "$id2" idle || fail "task 2: resume"
 grep -q 'echo: You were interrupted' "$tasks/$id2/transcript.md" || fail "task 2: resume prompt"
 
 ag clean "$id" --force >/dev/null
-ag clean "$id2" --force >/dev/null
+# id2's worktree came from a throwaway container (the clone existed); clean checks it in one too
+ag stop "$id2" >/dev/null
+ag clean "$id2" >/dev/null || fail "task 2: clean of an unchanged task"
 [ -z "$(docker ps -aq "${mine[@]}")" ] || fail "task: clean left a container"
 unset AGENTIC_TASK_DOCKER_ARGS
 

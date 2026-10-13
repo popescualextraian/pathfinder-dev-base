@@ -21,9 +21,45 @@ task_slug() {
   slug="$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//' | cut -c1-40 | sed -E 's/-+$//')"
   printf '%s\n' "${slug:-task}"
 }
-# hgit ARG...: git for the task clones and worktrees. Their .git is writable from the task container,
-# so host git runs none of their hooks and no fsmonitor command.
-hgit() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }
+# Task clones: the task container writes into their .git, so host git never runs a command the
+# clone configures. Their config, info/ and hooks/ are mounted read-only (task_mounts); the commands
+# that read what the agent can still change (checkout filters, status) run in a throwaway container.
+# hgit CLONE ARG...: host git on the clone's own git directory, pinned so a planted commondir file
+# is ignored, without hooks and fsmonitor. For commands that run nothing the clone configures.
+hgit() {
+  local g="$1/.git"; shift
+  GIT_DIR="$g" GIT_COMMON_DIR="$g" git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+}
+# user_cfg KEY: KEY from the user's global, else the system git config; never from a clone.
+user_cfg() { git config --includes --global --get "$1" 2>/dev/null || git config --includes --system --get "$1" 2>/dev/null || true; }
+# hfetch CLONE ARG...: hgit for fetch, which runs on the host with the user's credentials. The ssh
+# command and askpass come from the user's config, the credential helpers are reset and replayed
+# from the system and global config, ext:: is off and a git:// proxy only comes from the user.
+hfetch() {
+  local clone="$1" ssh scope e args=(); shift
+  ssh="$(user_cfg core.sshCommand)"
+  args=(-c "core.sshCommand=${ssh:-ssh}" -c "core.askPass=$(user_cfg core.askPass)" -c core.attributesFile=/dev/null
+    -c protocol.ext.allow=never -c credential.helper=)
+  for scope in system global; do
+    if [ "$scope" = system ] && [ -n "${GIT_CONFIG_NOSYSTEM:-}" ]; then continue; fi
+    while IFS= read -r -d '' e; do
+      if [[ "$e" == *$'\n'* ]]; then args+=(-c "${e%%$'\n'*}=${e#*$'\n'}"); else args+=(-c "$e="); fi
+    done < <(git config --includes "--$scope" -z --get-regexp '^credential\..*helper$' 2>/dev/null || true)
+  done
+  (
+    # the first core.gitProxy read wins, so a clone's would beat -c; the variable beats both
+    if [ -z "${GIT_PROXY_COMMAND+x}" ] && [ -z "$(user_cfg core.gitProxy)" ]; then export GIT_PROXY_COMMAND=; fi
+    hgit "$clone" "${args[@]}" "$@"
+  )
+}
+# cgit IMAGE CLONE ARG...: git in a throwaway container of IMAGE: no network, the invoking user and
+# only the clone, at its own path. --entrypoint git stays right before the image (the test stub
+# relies on it).
+cgit() {
+  local img="$1" clone="$2"; shift 2
+  docker run --rm --network none --user "$(id -u):$(id -g)" -v "$clone:$clone" --entrypoint git "$img" \
+    -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+}
 valid_task_id() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]; }
 need_task() {
   valid_task_id "${1:-}" || die "usage: a task id ([A-Za-z0-9._-]+)"
@@ -102,9 +138,9 @@ rollback_task() {
   if [ -f "$(task_file "$id" repos)" ]; then
     while IFS=$'\t' read -r clone wt branch; do
       [[ "$clone" == "$ws/repos/"?* && "$wt" == "$ws/repos/"?* ]] || continue
-      hgit -C "$clone" worktree remove --force "$wt" >/dev/null 2>&1 || safe_rm "$ws/repos" "$wt"
-      hgit -C "$clone" worktree prune >/dev/null 2>&1 || true
-      hgit -C "$clone" branch -D "$branch" >/dev/null 2>&1 || true
+      hgit "$clone" -C "$clone" worktree remove --force "$wt" >/dev/null 2>&1 || safe_rm "$ws/repos" "$wt"
+      hgit "$clone" -C "$clone" worktree prune >/dev/null 2>&1 || true
+      hgit "$clone" -C "$clone" branch -D "$branch" >/dev/null 2>&1 || true
     done < "$(task_file "$id" repos)"
   fi
   safe_rm "$ws/tasks" "$(task_dir "$id")"
@@ -112,37 +148,46 @@ rollback_task() {
 }
 
 # project_clone: the project's own repository under repos/, cloned from origin (credentials
-# stripped) or from the checkout itself; prints its name.
+# stripped) or from the checkout itself. Sets CLONE_NAME, and CLONE_NEW=1 when cloned just now.
+# shellcheck disable=SC2034  # both are read by bin/agentic
 project_clone() {
-  local root name clone url
-  root="$(project_root)"; name="$(basename "$root")"; clone="$(task_ws)/repos/$name"
+  local root clone url
+  root="$(project_root)"; CLONE_NAME="$(basename "$root")"; CLONE_NEW=0; clone="$(task_ws)/repos/$CLONE_NAME"
   if [ ! -d "$clone/.git" ]; then
     url="$(git -C "$root" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#' || true)"
     mkdir -p "$(task_ws)/repos"
-    hgit clone -q "${url:-$root}" "$clone" >&2 || return 1
+    git -c core.hooksPath=/dev/null -c core.fsmonitor=false clone -q "${url:-$root}" "$clone" >&2 || return 1
     printf '.worktrees/\n' >> "$clone/.git/info/exclude"
+    CLONE_NEW=1
   fi
-  printf '%s\n' "$name"
 }
 
-# add_worktree NAME ID BRANCH BASE: a worktree of repos/NAME on BRANCH from BASE (default origin/HEAD).
+# add_worktree NAME ID BRANCH BASE [IMAGE]: a worktree of repos/NAME on BRANCH from BASE (default
+# origin/HEAD). With IMAGE the checkout runs in a throwaway container of it (a clone a task may
+# have touched); without, on the host (a clone made just now).
 add_worktree() {
-  local clone base="$4"; clone="$(task_ws)/repos/$1"
+  local clone base="$4" img="${5:-}" add; clone="$(task_ws)/repos/$1"
   [ -d "$clone/.git" ] || { say "no clone $clone; clone the repository there first"; return 1; }
-  hgit -C "$clone" fetch -q origin >/dev/null 2>&1 || true
-  [ -n "$base" ] || base="$(hgit -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)"
-  hgit -C "$clone" worktree add -q -b "$3" "$clone/.worktrees/$2" "$base" >&2 || return 1
+  hfetch "$clone" -C "$clone" fetch -q --no-recurse-submodules --upload-pack=git-upload-pack origin >/dev/null 2>&1 || true
+  [ -n "$base" ] || base="$(hgit "$clone" -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo HEAD)"
+  add=(worktree add -q -b "$3" "$clone/.worktrees/$2" "$base")
+  if [ -n "$img" ]; then cgit "$img" "$clone" -C "$clone" "${add[@]}" >&2 || return 1
+  else hgit "$clone" -C "$clone" "${add[@]}" >&2 || return 1; fi
   printf '%s\t%s\t%s\n' "$clone" "$clone/.worktrees/$2" "$3" >> "$(task_file "$2" repos)"
 }
 
-# task_mounts ID REPO...: the -v arguments of a task, one per line, into the mounts file.
+# task_mounts ID REPO...: the -v arguments of a task, one per line, into the mounts file. A changed
+# clone's .git is writable (commits, refs, objects), but not its config, info/ (attributes) and
+# hooks/, which host git would read.
 task_mounts() {
-  local id="$1" ws first="$2" r name clone; shift; ws="$(task_ws)"
+  local id="$1" ws first="$2" r name clone g; shift; ws="$(task_ws)"
   {
     printf -- '-v\n%s\n' "$ws/repos/$first/.worktrees/$id:/work"
     for r in "$@"; do
       [ "$r" = "$first" ] || printf -- '-v\n%s\n' "$ws/repos/$r/.worktrees/$id:/workspaces/$r"
-      printf -- '-v\n%s\n' "$ws/repos/$r/.git:$ws/repos/$r/.git"
+      g="$ws/repos/$r/.git"
+      mkdir -p "$g/info" "$g/hooks"
+      printf -- '-v\n%s\n' "$g:$g" "$g/config:$g/config:ro" "$g/info:$g/info:ro" "$g/hooks:$g/hooks:ro"
     done
     for clone in "$ws"/repos/*/; do
       name="$(basename "$clone")"
@@ -159,12 +204,14 @@ age() {
 }
 
 # open_questions ID: the open questions in questions.jsonl (the last line per id wins) as a JSON
-# array, in the shape of the bridge's status; [] when there is no file or it cannot be read.
+# array, in the shape of the bridge's status; [] when there is no file or it cannot be read. The
+# agent can write the file: lines that are not objects are skipped, options that are not a list are [].
 open_questions() {
   local f out; f="$(task_dir "$1")/questions.jsonl"
   [ -f "$f" ] || { echo '[]'; return; }
-  out="$(jq -cs 'group_by(.id) | map(last) | map(select(.status == "open")) | sort_by(.id | ltrimstr("Q") | tonumber? // 0)
-    | map({id, source, text, options: (.options // []), recommendation, asked})' "$f" 2>/dev/null)" || out='[]'
+  out="$(jq -cs 'map(select(type == "object")) | group_by(.id | tostring) | map(last) | map(select(.status == "open"))
+    | sort_by(.id | tostring | ltrimstr("Q") | tonumber? // 0)
+    | map({id, source, text, options: (.options | if type == "array" then . else [] end), recommendation, asked})' "$f" 2>/dev/null)" || out='[]'
   printf '%s\n' "${out:-[]}"
 }
 
@@ -178,16 +225,21 @@ note_interrupted() {
   : > "$m"
 }
 
-# task_status_json ID: the live status when the bridge answers, else the same shape from the task
-# files: the record with the derived state, the inbox as a count and the open questions.
+# task_status_json ID: the live status when the bridge answers with an object, else the same shape
+# from the task files: the record with the derived state, the inbox as a count and the open
+# questions. A record that is not a JSON object (the agent can write it) gives the id and unknown.
 task_status_json() {
   local st
-  if [ "$(container_status "$1")" = running ] && bridge_req "$1" GET /status && [ "$BRIDGE_CODE" = 200 ]; then
-    printf '%s\n' "$BRIDGE_BODY"; return
+  if [ "$(container_status "$1")" = running ] && bridge_req "$1" GET /status && [ "$BRIDGE_CODE" = 200 ] \
+    && jq -cse 'select(length == 1 and (.[0] | type) == "object") | .[0]' <<<"$BRIDGE_BODY" 2>/dev/null; then
+    return
   fi
   st="$(task_state "$1")"
   [ "$st" != interrupted ] || note_interrupted "$1"
-  jq -c --arg s "$st" --argjson q "$(open_questions "$1")" '.inbox = (.inbox // [] | length) | .state = $s | .questions = $q' "$(task_dir "$1")/state.json"
+  jq -cs --arg s "$st" --argjson q "$(open_questions "$1")" 'select(length == 1 and (.[0] | type) == "object") | .[0]
+    | .inbox = (.inbox | if type == "array" then length else 0 end) | .state = $s | .questions = $q' \
+    "$(task_dir "$1")/state.json" 2>/dev/null | grep . \
+    || jq -cn --arg id "$1" '{task: $id, state: "unknown", inbox: 0, questions: []}'
 }
 
 # plain: stdin without control characters (terminal escapes) other than newline and tab.

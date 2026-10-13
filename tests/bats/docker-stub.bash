@@ -3,6 +3,8 @@
 # DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output),
 # DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PS (docker ps ids, space-separated),
 # `docker start` makes later status inspects say running. DOCKER_DOWN (inspect .State.Status fails like an unreachable daemon).
+# A throwaway git container (`run ... --entrypoint git IMAGE ARG...`, the image right after the entrypoint)
+# runs git here on ARG... with DOCKER_STUB_CONTAINER=1, so a planted command can tell where it ran.
 install_docker_stub() {
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat > "$BATS_TEST_TMPDIR/bin/docker" <<'EOF'
@@ -23,7 +25,13 @@ case "$1" in
   start) echo running > "$BATS_TEST_TMPDIR/docker.status" ;;
   port) [ -n "${DOCKER_PORT:-}" ] && echo "127.0.0.1:$DOCKER_PORT" ;;
   ps) [ -z "${DOCKER_PS:-}" ] || printf '%s\n' $DOCKER_PS ;;
-  run) if [ -n "${DOCKER_RUN_OUT:-}" ]; then printf '%s\n' "$DOCKER_RUN_OUT"; fi; exit "${DOCKER_RUN_RC:-0}" ;;
+  run)
+    if [[ " $* " == *" --entrypoint git "* ]]; then
+      while [ "$1" != --entrypoint ]; do shift; done
+      shift 3
+      DOCKER_STUB_CONTAINER=1 exec git "$@"
+    fi
+    if [ -n "${DOCKER_RUN_OUT:-}" ]; then printf '%s\n' "$DOCKER_RUN_OUT"; fi; exit "${DOCKER_RUN_RC:-0}" ;;
 esac
 exit 0
 EOF
@@ -34,4 +42,12 @@ EOF
 # docker_sub SUB [N]: the arguments (subcommand first) of the Nth docker call with subcommand SUB.
 docker_sub() {
   awk -v s="$1" -v n="${2:-1}" '/^--- /{ if ($2 == s) k++; on = ($2 == s && k == n); next } on' "$DOCKER_LOG"
+}
+
+# docker_run_with LINE: the arguments (run first) of the first docker run call with the argument LINE.
+docker_run_with() {
+  awk -v l="$1" 'function out() { if (on && hit && !done) { printf "%s", buf; done = 1 } }
+    /^--- /{ out(); on = ($2 == "run"); hit = 0; buf = ""; next }
+    on { buf = buf $0 "\n"; if ($0 == l) hit = 1 }
+    END { out() }' "$DOCKER_LOG"
 }

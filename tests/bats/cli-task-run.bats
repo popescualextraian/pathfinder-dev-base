@@ -38,7 +38,7 @@ record() {
   [ "$(stat -c %a "$T/T-1.env")" = 600 ]
   grep -Eq '^AGENTIC_TASK_TOKEN=[0-9a-f]{64}$' "$T/T-1.env"
   grep -Eq '^AGENTIC_AGENT_TOKEN=[0-9a-f]{64}$' "$T/T-1.env"
-  call="$(docker_sub run)"
+  call="$(docker_run_with agentic-bridge)"
   grep -qx -- '-d' <<<"$call"
   grep -qx 'agentic-demo-task-T-1' <<<"$call"
   for l in agentic.kind=task agentic.task=T-1 agentic.project=demo agentic.agent=claude agentic.branch=agentic/T-1-fix-the-login-bug; do grep -qx "$l" <<<"$call"; done
@@ -59,7 +59,7 @@ record() {
   git clone -q "$PROJ" "$AGENTIC_WORKSPACES/demo/repos/docs"
   ag run --id T-R --repo lib --repo proj "x" 2>/dev/null
   ws="$AGENTIC_WORKSPACES/demo"
-  call="$(docker_sub run)"
+  call="$(docker_run_with agentic-bridge)"
   grep -qx "$ws/repos/lib/.worktrees/T-R:/work" <<<"$call"
   grep -qx "$ws/repos/proj/.worktrees/T-R:/workspaces/proj" <<<"$call"
   grep -qx "$ws/repos/docs:/workspaces/docs:ro" <<<"$call"
@@ -327,4 +327,134 @@ EOF2
   run grep -qP '[\x00-\x08\x0b-\x1f\x7f]' <<<"$output"
   [ "$status" -ne 0 ]
   [ ! -e "$T/T-30" ]
+}
+
+# plant NAME [cat]: a command $BATS_TEST_TMPDIR/NAME that appends "NAME host" (or "NAME container" inside
+# the docker stub's git container) to $BATS_TEST_TMPDIR/ran, then copies stdin (a filter) or fails.
+plant() {
+  local rest='exit 1'; [ "${2:-}" != cat ] || rest='exec cat'
+  printf '#!/bin/sh\nw=host; [ -z "$DOCKER_STUB_CONTAINER" ] || w=container\necho "%s $w" >> "%s/ran"\n%s\n' \
+    "$1" "$BATS_TEST_TMPDIR" "$rest" > "$BATS_TEST_TMPDIR/$1"
+  chmod +x "$BATS_TEST_TMPDIR/$1"
+}
+lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_ROOT/lib/host/task.sh" && "$@"); }
+
+@test "run mounts each changed clone's git config, info and hooks read-only over its writable .git" {
+  ws="$AGENTIC_WORKSPACES/demo"
+  git clone -q "$PROJ" "$ws/repos/lib"; rm -rf "$ws/repos/lib/.git/hooks" "$ws/repos/lib/.git/info"
+  ag run --id T-40 --repo lib --repo proj "x" 2>/dev/null
+  [ -d "$ws/repos/lib/.git/hooks" ] && [ -d "$ws/repos/lib/.git/info" ]
+  call="$(docker_run_with agentic-bridge)"
+  for r in lib proj; do
+    g="$ws/repos/$r/.git"
+    rw="$(grep -nx "$g:$g" <<<"$call" | cut -d: -f1)"
+    for f in config info hooks; do
+      n="$(grep -nx "$g/$f:$g/$f:ro" <<<"$call" | cut -d: -f1)"
+      [ -n "$n" ] && [ "$n" -gt "$rw" ]
+    done
+  done
+}
+
+@test "a second task on a clone checks out in a throwaway container: no network, the user, only the clone" {
+  ag run --id T-41 "x" 2>/dev/null
+  run docker_run_with --entrypoint
+  [ -z "$output" ]   # a clone made by this run has nothing a task wrote: host git
+  : > "$DOCKER_LOG"
+  ag run --id T-42 "y" 2>/dev/null
+  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
+  [ "$(git -C "$clone/.worktrees/T-42" rev-parse --abbrev-ref HEAD)" = agentic/T-42-y ]
+  call="$(docker_run_with --entrypoint)"
+  [ "$(sed -n '2,11p' <<<"$call" | tr '\n' ' ')" = "--rm --network none --user $(id -u):$(id -g) -v $clone:$clone --entrypoint git agentic-demo:local " ]
+  grep -qx 'worktree' <<<"$call"
+  [ "$(grep -c -- '^-v$' <<<"$call")" -eq 1 ]
+}
+
+@test "commands planted in a clone never run on the host: checkout, fetch and clean" {
+  ag run --id T-43 "x" 2>/dev/null
+  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
+  plant upload; plant smudge cat; plant clean cat; plant askpass
+  git -C "$clone" config remote.origin.uploadpack "$BATS_TEST_TMPDIR/upload"
+  git -C "$clone" config filter.x.smudge "$BATS_TEST_TMPDIR/smudge"
+  git -C "$clone" config filter.x.clean "$BATS_TEST_TMPDIR/clean"
+  git -C "$clone" config core.askPass "$BATS_TEST_TMPDIR/askpass"
+  echo '* filter=x' > "$clone/.git/info/attributes"
+  run ag run --id T-44 "y"
+  [ "$status" -eq 0 ]
+  grep -qx 'smudge container' "$BATS_TEST_TMPDIR/ran"   # the planted filter is live, and ran in the container
+  record T-44 idle
+  # a new mtime, same content: status runs the clean filter to compare
+  touch -d "@$(( $(date +%s) + 7 ))" "$clone/.worktrees/T-44/.agentic/agentic.yaml"
+  DOCKER_STATUS=exited run ag clean T-44
+  [ "$status" -eq 0 ]
+  grep -qx 'clean container' "$BATS_TEST_TMPDIR/ran"
+  run grep host "$BATS_TEST_TMPDIR/ran"
+  [ "$status" -ne 0 ]
+}
+
+@test "clean checks the worktrees in a throwaway container of the task's image" {
+  ag run --id T-45 "x" 2>/dev/null
+  record T-45 idle
+  : > "$DOCKER_LOG"
+  DOCKER_STATUS=exited DOCKER_RUNNING=agentic-other:local run ag clean T-45
+  [ "$status" -eq 0 ]
+  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
+  call="$(docker_run_with status)"
+  [ "$(sed -n '2,11p' <<<"$call" | tr '\n' ' ')" = "--rm --network none --user $(id -u):$(id -g) -v $clone:$clone --entrypoint git agentic-other:local " ]
+  grep -qx "$clone/.worktrees/T-45" <<<"$call"
+  docker_run_with log | grep -qx -- '--not'
+}
+
+@test "host fetch keeps the user's credential helpers and ignores the clone's command settings" {
+  unset GIT_ASKPASS SSH_ASKPASS GIT_PROXY_COMMAND GIT_SSH_COMMAND GIT_SSH
+  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
+  mkdir -p "$AGENTIC_WORKSPACES/demo/repos"; git clone -q "$PROJ" "$clone"
+  plant local-helper; plant global-helper; plant url-helper; plant askpass; plant ssh; plant proxy
+  git -C "$clone" config credential.helper "!$BATS_TEST_TMPDIR/local-helper"
+  git -C "$clone" config core.askPass "$BATS_TEST_TMPDIR/askpass"
+  git -C "$clone" config core.sshCommand "$BATS_TEST_TMPDIR/ssh"
+  git -C "$clone" config core.gitProxy "$BATS_TEST_TMPDIR/proxy"
+  git config --global credential.helper "!$BATS_TEST_TMPDIR/global-helper"
+  git config --global credential.https://example.com.helper "!$BATS_TEST_TMPDIR/url-helper"
+  printf 'protocol=https\nhost=example.com\n\n' | GIT_TERMINAL_PROMPT=0 lib hfetch "$clone" credential fill >/dev/null 2>&1 || true
+  grep -qx 'global-helper host' "$BATS_TEST_TMPDIR/ran"
+  grep -qx 'url-helper host' "$BATS_TEST_TMPDIR/ran"
+  GIT_TERMINAL_PROMPT=0 timeout 60 bash -c "$(declare -f lib); lib hfetch '$clone' ls-remote ssh://git@example.invalid/x" >/dev/null 2>&1 || true
+  GIT_TERMINAL_PROMPT=0 timeout 60 bash -c "$(declare -f lib); lib hfetch '$clone' ls-remote git://example.invalid/x" >/dev/null 2>&1 || true
+  run grep -E '^(local-helper|askpass|ssh|proxy) ' "$BATS_TEST_TMPDIR/ran"
+  [ "$status" -ne 0 ]
+}
+
+@test "host git reads the clone's own git directory, not one a planted commondir file names" {
+  clone="$AGENTIC_WORKSPACES/demo/repos/proj"
+  mkdir -p "$AGENTIC_WORKSPACES/demo/repos"; git clone -q "$PROJ" "$clone"
+  cp -r "$clone/.git" "$BATS_TEST_TMPDIR/decoy"
+  git config -f "$BATS_TEST_TMPDIR/decoy/config" remote.origin.url https://example.com/decoy.git
+  echo "$BATS_TEST_TMPDIR/decoy" > "$clone/.git/commondir"
+  [ "$(git -C "$clone" config remote.origin.url)" = https://example.com/decoy.git ]   # the vector is live
+  [ "$(lib hgit "$clone" config remote.origin.url)" = "$PROJ" ]
+  [ "$(lib hfetch "$clone" config remote.origin.url)" = "$PROJ" ]
+}
+
+@test "a malformed state.json or questions file never breaks status" {
+  record T-46 idle; echo 'not json' > "$T/T-46/state.json"
+  record T-47 idle; printf '[1]\n{"state":"idle"}\n' > "$T/T-47/state.json"
+  record T-48 suspended
+  printf '%s\n' '{"id":"Q1","source":"ask","text":"Which?","options":"pg","status":"open"}' 5 '"x"' > "$T/T-48/questions.jsonl"
+  export DOCKER_STATUS=exited
+  run ag status
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ T-46\ +unknown ]] && [[ "$output" =~ T-47\ +unknown ]] && [[ "$output" =~ T-48\ +suspended\ +claude\ +1\  ]]
+  run ag status --all --json
+  [ "$status" -eq 0 ]; [ "$(jq length <<<"$output")" -eq 3 ]
+  run ag status T-48
+  [ "$status" -eq 0 ]; [[ "$output" == *"Q1 (ask): Which?"* ]]
+  run ag status T-46
+  [ "$status" -eq 0 ]; [[ "$output" == "T-46  unknown"* ]]
+  # a live answer that is not a status object falls back to the task files
+  DOCKER_STATUS=running CURL_BODY='{"state":"idle"} {"state":"idle"}' run ag status T-48 --json
+  [ "$status" -eq 0 ]; [ "$(jq -r .state <<<"$output")" = suspended ]
+  DOCKER_STATUS=running CURL_BODY='{"state":"waiting","questions":"x"}' run ag status
+  [ "$status" -eq 0 ]
+  DOCKER_STATUS=running CURL_BODY='{"task":"T-48","state":"waiting","questions":[{"id":"Q1","options":"pg"},7]}' run ag status T-48
+  [ "$status" -eq 0 ]; [[ "$output" == *"Q1 ("* ]]
 }
