@@ -66,16 +66,13 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ "$status" -ne 0 ]
 }
 
-@test "05 and 15 clone with prompts off and ssh in batch mode" {
+@test "05 clones with prompts off and ssh in batch mode" {
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   printf '#!/bin/sh\necho "$GIT_TERMINAL_PROMPT|$GIT_SSH_COMMAND" >> "%s"\nexit 1\n' "$BATS_TEST_TMPDIR/seen" > "$BATS_TEST_TMPDIR/bin/git"
   chmod +x "$BATS_TEST_TMPDIR/bin/git"
-  config $'version: 1\nproject: demo\nrepos:\n  - {name: main}\n  - {name: lib, url: "git@git.example.com:team/lib.git"}'
-  bash "$S/10-validate.sh"
   PATH="$BATS_TEST_TMPDIR/bin:$PATH" AGENTIC_REPO_URL="git@git.example.com:team/x.git" run bash "$S/05-workspace.sh"
-  PATH="$BATS_TEST_TMPDIR/bin:$PATH" run bash "$S/15-repos.sh"
   [ "$(sort -u "$BATS_TEST_TMPDIR/seen")" = "0|ssh -o BatchMode=yes" ]
-  [ "$(wc -l < "$BATS_TEST_TMPDIR/seen")" -eq 2 ]
+  [ "$(wc -l < "$BATS_TEST_TMPDIR/seen")" -eq 1 ]
 }
 
 @test "redact_url hides userinfo in every URL" {
@@ -137,55 +134,16 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ "$(jq -r .project "$AGENTIC_STATE/config.json")" = cloned ]
 }
 
-# --- 15-repos
-@test "15 clones other repos into /workspaces and skips existing ones" {
-  config "$(printf 'version: 1\nproject: demo\nrepos:\n  - {name: main}\n  - {name: lib, url: "file://%s"}' "$O")"
-  bash "$S/10-validate.sh"
-  run bash "$S/15-repos.sh"
-  [ "$status" -eq 0 ]
-  [ -d "$AGENTIC_WORKSPACES_DIR/lib/.git" ]
-  [ ! -d "$AGENTIC_WORKSPACES_DIR/main" ]
-  run bash "$S/15-repos.sh"
-  [ "$status" -eq 0 ]
-}
-
-@test "15 warns, and continues, when a clone fails" {
-  config $'version: 1\nproject: demo\nrepos:\n  - {name: main}\n  - {name: gone, url: "file:///nonexistent/repo"}'
-  bash "$S/10-validate.sh"
-  run bash "$S/15-repos.sh"
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"could not clone gone"* ]]
-}
-
-@test "15 never prints the userinfo of a failing repo URL" {
-  export GIT_ALLOW_PROTOCOL=file   # offline: https and ssh fail at once
-  config $'version: 1\nproject: demo\nrepos:\n  - {name: main}\n  - {name: priv, url: "https://user:tok@127.0.0.1:1/x"}'
-  bash "$S/10-validate.sh"
-  run bash "$S/15-repos.sh"
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"could not clone priv from https://***@127.0.0.1:1/x"* ]]
-  [[ "$output" != *tok* ]]
-}
-
-@test "15 clones a git@ URL over https, without prompting" {
-  export GIT_ALLOW_PROTOCOL=file   # offline: https and ssh fail at once
-  config $'version: 1\nproject: demo\nrepos:\n  - {name: main}\n  - {name: ssh, url: "git@127.0.0.1:team/x.git"}'
-  bash "$S/10-validate.sh"
-  run bash "$S/15-repos.sh"
-  [ "$status" -eq 2 ]
-  [[ "$output" == *"transport 'https' not allowed"* ]]
-  [[ "$output" != *"transport 'ssh'"* ]]
-}
-
 # --- 20-onboarding
 @test "20 seeds Claude onboarding and trusts /work, /workspaces and each clone" {
-  mkdir -p "$AGENTIC_WORKSPACES_DIR/lib/.git"
+  mkdir -p "$AGENTIC_WORKSPACES_DIR/lib/.git" "$AGENTIC_WORKSPACES_DIR/repos/app/.git"
   config $'version: 1\nproject: demo'; bash "$S/10-validate.sh"
   run bash "$S/20-onboarding.sh"
   [ "$status" -eq 0 ]
   f="$HOME/.claude.json"
   [ "$(jq -r .hasCompletedOnboarding "$f")" = true ]
-  for d in "$AGENTIC_WORK" "$AGENTIC_WORKSPACES_DIR" "$AGENTIC_WORKSPACES_DIR/lib"; do
+  # a task mounts clones as /workspaces/<name>, a dev container as /workspaces/repos/<name>
+  for d in "$AGENTIC_WORK" "$AGENTIC_WORKSPACES_DIR" "$AGENTIC_WORKSPACES_DIR/lib" "$AGENTIC_WORKSPACES_DIR/repos/app"; do
     [ "$(jq -r --arg d "$d" '.projects[$d].hasTrustDialogAccepted' "$f")" = true ]
   done
   [ "$(stat -c %a "$f")" = 600 ]

@@ -8,7 +8,6 @@ Generated from `schema/agentic.schema.json` and `config/defaults.yaml` by
 | `version` | 1 | `1` | Schema version. Always 1. |
 | `project` | string |  | Project name. Names the image agentic-<project>:local and the workspace directory. |
 | `base_image` | string | `"agentic-dev-base:local"` | Image the derived image is built FROM: the base or an overlay built FROM the base. |
-| `repos` | array | `[]` | Repositories. The first is the primary one, at /work; the others are cloned to /workspaces/<name>. |
 | `git` | object | `{"host":"github.com","user_name":"","user_email":""}` | Git settings. |
 | `git.host` | string | `"github.com"` | Git host for the credential helper and GH_HOST. |
 | `git.user_name` | string | `""` | Commit author name. Empty uses the host's git config. |

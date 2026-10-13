@@ -39,3 +39,12 @@ D="$REPO_ROOT/image/Dockerfile"
 @test "ccusage's native binary is made executable at build (it cannot chmod itself as dev)" {
   grep -Eq 'node_modules/ccusage.*-exec chmod (755|a\+x)' "$D"
 }
+
+@test "the image builds the bridge, disables Copilot's self-update and owns /task" {
+  f="$REPO_ROOT/image/Dockerfile"
+  grep -q 'COPILOT_AUTO_UPDATE=false' "$f"
+  grep -q 'npm ci' "$f"
+  grep -q '/usr/local/bin/agentic-bridge' "$f"
+  grep -q 'chown -R dev:dev /work /workspaces /task' "$f"
+  grep -qx 'bridge/node_modules' "$REPO_ROOT/.dockerignore"
+}

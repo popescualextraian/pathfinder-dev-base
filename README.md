@@ -70,6 +70,22 @@ several agents side by side, one per tmux window, and leave them working while y
 fresh container from it. Parallel agents that change code each need their own git worktree. Full
 guide: [`docs/dev-mode.md`](docs/dev-mode.md).
 
+## Detached tasks
+
+`agentic run` starts an unattended task in its own container; the agent is driven through ACP
+and the task is followed, answered, cancelled and stopped through the CLI or a small local API.
+
+```bash
+agentic run --allow open-pr "Fix the failing login test and open a pull request"
+agentic follow T-20261012-a3f1
+agentic answer T-20261012-a3f1 Q1 "Yes, use the staging config" --allow push
+agentic status
+agentic stop T-20261012-a3f1
+agentic clean T-20261012-a3f1
+```
+
+States, API, events, files and environment: `docs/tasks.md`.
+
 ## Project wiki
 
 `/wiki seed` writes what agents cannot read from the code into `docs/wiki/`: components and their
@@ -89,7 +105,7 @@ and measurement. See [`docs/philosophy.md`](docs/philosophy.md).
 
 ## Private repositories
 
-Repositories (`AGENTIC_REPO_URL`, `repos:`) clone over https with `GIT_TOKEN` or `GH_TOKEN` from
+The repository (`AGENTIC_REPO_URL`) clones over https with `GIT_TOKEN` or `GH_TOKEN` from
 `.agentic/.env`. Never put a token in the URL itself (`https://user:token@...`): URLs end up in
 configs and logs. `git@host:` and `ssh://git@host/` URLs are rewritten to https, because no SSH
 keys are mounted.

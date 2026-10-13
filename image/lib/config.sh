@@ -32,7 +32,7 @@ config_resolve() {
 # config_image_errs FILE: what only this image can decide, checked as the build checks it: every
 # tool has a preset here, and build-time paths stay inside .agentic/ (the build context).
 config_image_errs() {
-  local f="$1" k key p top=" version project base_image repos git certs plugins mcp skills hooks harness docker "
+  local f="$1" k key p top=" version project base_image git certs plugins mcp skills hooks harness docker "
   while IFS= read -r k; do
     [ -f "$AGENTIC_DIR/tools/$k.sh" ] && continue
     if [[ "$top" == *" $k "* ]]; then echo ".tools.$k: no preset $k in this image; $k is a top-level key, not a tool"
@@ -55,5 +55,8 @@ config_validate() {
     errs($s[0]; "") as $e
     | (if ($e | length) > 0 then $e else semantic_errs end) + secret_errs | .[]' "$1")" || return 1
   if [ -z "$errs" ]; then errs="$(config_image_errs "$1")"; fi
+  # repos: was removed in sub-project 2; say what to do instead of "unknown key".
+  # shellcheck disable=SC2001  # anchored match, not expressible as ${var//}
+  errs="$(sed 's#^\.repos: unknown key$#.repos: no longer supported; delete it (tasks use the clones in the project'"'"'s workspace, see docs/tasks.md)#' <<<"$errs")"
   if [ -n "$errs" ]; then printf '%s\n' "$errs"; return 1; fi
 }

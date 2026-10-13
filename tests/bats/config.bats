@@ -173,3 +173,11 @@ write() { printf '%s\n' "$2" > "$1"; }
   run "$AC" validate "$P"
   [ "$status" -eq 0 ]
 }
+
+@test "an old config with repos gets a message that says what to do" {
+  write "$P/agentic.yaml" $'version: 1\nproject: demo\nrepos:\n  - {name: demo}'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".repos: no longer supported; delete it"* ]]
+  [[ "$output" != *"unknown key"* ]]
+}

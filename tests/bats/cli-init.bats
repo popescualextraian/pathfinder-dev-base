@@ -13,12 +13,12 @@ setup() {
   A="$REPO_ROOT/bin/agentic"
 }
 
-@test "init writes a valid agentic.yaml with the detected tools and the repo" {
+@test "init writes a valid agentic.yaml with the detected tools and the git host" {
   run bash -c "cd '$PROJ' && bash '$A' init"
   [ "$status" -eq 0 ]
   y="$PROJ/.agentic/agentic.yaml"
   [ "$(yq .project "$y")" = orders-service ]
-  [ "$(yq '.repos[0].url' "$y")" = git@git.example.com:team/orders-service.git ]
+  [ "$(yq 'has("repos")' "$y")" = false ]
   [ "$(yq .git.host "$y")" = git.example.com ]
   [ "$(yq -o=json -I=0 .tools.java "$y")" = '{"versions":[17],"default":17}' ]
   make_agentic_dir
@@ -75,7 +75,7 @@ setup() {
   git -C "$PROJ" remote remove origin
   run bash -c "cd '$PROJ' && bash '$A' init"
   [ "$(yq .git.host "$PROJ/.agentic/agentic.yaml")" = github.com ]
-  [ "$(yq '.repos[0].name' "$PROJ/.agentic/agentic.yaml")" = orders-service ]
+  [ "$(yq .project "$PROJ/.agentic/agentic.yaml")" = orders-service ]
 }
 
 @test "init survives a repository with hundreds of build files and lists at most 50" {
@@ -91,12 +91,11 @@ setup() {
   grep -q '^Notes:' "$PROJ/.agentic/detect-report.md"
 }
 
-@test "init strips credentials from an https remote and keeps & literal" {
+@test "init takes the git host from an https remote with credentials and writes no credentials" {
   git -C "$PROJ" remote set-url origin 'https://user:tok123@git.example.com/team/x.git?a=1&b=2'
   run bash -c "cd '$PROJ' && bash '$A' init"
   [ "$status" -eq 0 ]
   y="$PROJ/.agentic/agentic.yaml"
-  [ "$(yq '.repos[0].url' "$y")" = 'https://git.example.com/team/x.git?a=1&b=2' ]
   [ "$(yq .git.host "$y")" = git.example.com ]
   ! grep -rq tok123 "$PROJ/.agentic"
 }
@@ -107,7 +106,7 @@ setup() {
   for g in false 8.10; do
     d=$'java=21,17,8\nmaven=3.9.9\ngradle='"$g"$'\nnode=22\npython=3.12\nterraform=1.9.8\ngo=1.22.0\ndotnet=8.0\nhelm=3.16.1'
     mkdir -p "$PROJ/.agentic"
-    { printf 'version: 1\nproject: shapes\nrepos:\n  - name: shapes\n    url: "git@git.example.com:t/s.git"\ngit:\n  host: git.example.com\n'
+    { printf 'version: 1\nproject: shapes\ngit:\n  host: git.example.com\n'
       render_tools "$d"; } > "$PROJ/.agentic/agentic.yaml"
     run "$REPO_ROOT/image/bin/agentic-config" validate "$PROJ/.agentic"
     [ "$status" -eq 0 ]

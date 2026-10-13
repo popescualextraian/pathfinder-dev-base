@@ -2,7 +2,6 @@
 # .agentic/agentic.yaml are merged over this file, in that order; lists are replaced, not merged.
 version: 1
 base_image: agentic-dev-base:local
-repos: []
 git:
   host: github.com
   user_name: ""

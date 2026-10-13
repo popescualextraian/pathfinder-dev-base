@@ -100,3 +100,24 @@ setup() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"doc.md"* ]]
 }
+
+@test "a lockfile integrity hash that happens to contain a term is ignored, other lockfile text is not" {
+  mkdir "$R/bridge"
+  printf 'acmecorp\n' >> "$AGENTIC_LEAK_DENYLIST"
+  printf '      "integrity": "sha512-xxAcMeCoRpxx==",\n' > "$R/bridge/package-lock.json"
+  run bash "$LC" "$R"
+  [ "$status" -eq 0 ]
+  printf '      "resolved": "https://acmecorp.example/x.tgz",\n' >> "$R/bridge/package-lock.json"
+  run bash "$LC" "$R"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"resolved"* ]]
+  [[ "$output" != *"integrity"* ]]
+}
+
+@test "an integrity-shaped line outside a lockfile is still flagged" {
+  printf '      "integrity": "sha512-xxAcMeCoRpxx==",\n' > "$R/notes.json"
+  printf 'acmecorp\n' >> "$AGENTIC_LEAK_DENYLIST"
+  run bash "$LC" "$R"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"notes.json"* ]]
+}

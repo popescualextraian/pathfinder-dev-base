@@ -184,3 +184,20 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   [[ "$output" == *"agentic login copilot"* ]]
   [[ "$output" != *"No such file"* ]]
 }
+
+@test "the login check reads no symlinked login and never blocks on a FIFO" {
+  hd="$AGENTIC_DATA/projects/demo/harness"; mkdir -p "$hd/claude" "$hd/copilot"
+  echo '{"x":1}' > "$BATS_TEST_TMPDIR/creds"; ln -s "$BATS_TEST_TMPDIR/creds" "$hd/claude/.credentials.json"
+  run ag setup
+  [ "$status" -eq 1 ]; [[ "$output" == *"agentic login claude"* ]]
+  echo '{"logged_in_users":[{"login":"a"}]}' > "$BATS_TEST_TMPDIR/cp"; ln -s "$BATS_TEST_TMPDIR/cp" "$hd/copilot/config.json"
+  DOCKER_LABEL=copilot run ag setup
+  [ "$status" -eq 1 ]; [[ "$output" == *"agentic login copilot"* ]]
+  rm "$hd/copilot/config.json"; mkfifo "$hd/copilot/config.json"
+  DOCKER_LABEL=copilot run timeout 20 bash -c "cd '$PROJ' && bash '$A' setup </dev/null"
+  [ "$status" -eq 1 ]; [[ "$output" == *"agentic login copilot"* ]]
+  # a regular login file still counts
+  rm "$hd/copilot/config.json"; cp "$BATS_TEST_TMPDIR/cp" "$hd/copilot/config.json"
+  DOCKER_LABEL=copilot run ag setup
+  [ "$status" -eq 0 ]
+}

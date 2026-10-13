@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# agentic-ask "question" [--option X]... [--recommend X]: asks the human through the task bridge.
+# The agent token may only ask; the answer arrives later as a message "Answer to Q<n>: ...".
+set -euo pipefail
+die() { echo "agentic-ask: $*" >&2; exit 1; }
+usage='usage: agentic-ask "question" [--option X]... [--recommend X]'
+if [ -z "${AGENTIC_BRIDGE_URL:-}" ] || [ -z "${AGENTIC_AGENT_TOKEN:-}" ]; then die "agentic-ask works only inside a task"; fi
+
+text=""; rec=""; opts=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --option) [ $# -ge 2 ] || die "--option needs a value"; opts+=("$2"); shift 2 ;;
+    --recommend) [ $# -ge 2 ] || die "--recommend needs a value"; rec="$2"; shift 2 ;;
+    -h|--help) echo "$usage"; exit 0 ;;
+    *) [ -z "$text" ] || die "one question at a time; quote it"; text="$1"; shift ;;
+  esac
+done
+[ -n "$text" ] || die "$usage"
+
+# Options go in as a JSON array built from NUL-separated text, so a value may start with "-"
+optjson="$(if [ "${#opts[@]}" -gt 0 ]; then printf '%s\0' "${opts[@]}"; fi | jq -Rs 'split("\u0000")[:-1]')"
+body="$(jq -cn --arg t "$text" --arg r "$rec" --argjson o "$optjson" \
+  '{text: $t, options: $o, recommend: (if $r == "" then null else $r end)}')"
+hdr="$(mktemp)"; trap 'rm -f "$hdr"' EXIT
+printf 'Authorization: Bearer %s\n' "$AGENTIC_AGENT_TOKEN" > "$hdr"
+resp="$(printf '%s' "$body" | curl -sS -m 10 --noproxy '*' -X POST -H "@$hdr" -H 'Content-Type: application/json' \
+  --data-binary @- -w '\n%{http_code}' "$AGENTIC_BRIDGE_URL/ask")" || die "the task bridge is not reachable"
+code="${resp##*$'\n'}"; json="${resp%$'\n'*}"
+if [ "$code" != 201 ]; then
+  reason="$(jq -r '.error.message // empty' <<<"$json" 2>/dev/null || true)"
+  die "${reason:-the bridge refused the question (HTTP $code)}"
+fi
+id="$(jq -r '.id // empty' <<<"$json" 2>/dev/null || true)"
+[ -n "$id" ] || die "the bridge answered without a question id"
+echo "Recorded $id. Continue with work that does not depend on it; when nothing else can move, end your turn."

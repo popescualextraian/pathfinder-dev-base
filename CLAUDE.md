@@ -14,13 +14,16 @@ A generic container toolbox for agentic development: base image, per-project der
 - No secret in an image layer, `~/.claude.json`, `~/.agentic/env` or a log.
 - bash style: `set -euo pipefail`, short comments, shellcheck-clean, a bats test for every
   behaviour, written first.
+- TypeScript (`bridge/`): strict tsc, eslint clean, a vitest test for every behaviour, written
+  first; dependencies pinned exactly with the lockfile committed; nothing fetched with `npx` or at
+  run time.
 - No `Co-Authored-By` or other attribution lines in commits. Remote `origin` is public GitHub;
   push only `main`, only when asked.
 
 ## Commands
 
-    make test     # bats (needs bats, jq, yq v4)
-    make lint     # shellcheck, schema, generated docs, leak check
+    make test     # bats and the bridge's vitest (needs bats, jq, yq v4, Node 22)
+    make lint     # shellcheck, schema, generated docs, leak check, tsc and eslint
     make build    # base image agentic-dev-base:local
     make smoke    # build, then tests/image/smoke.sh (Docker, openssl, script)
 

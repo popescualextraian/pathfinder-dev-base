@@ -3,3 +3,5 @@
 .agentic/.env
 .agentic/.build/
 /.worktrees/
+bridge/node_modules/
+bridge/dist/

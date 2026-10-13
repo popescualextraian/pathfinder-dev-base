@@ -24,6 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     AWS_PAGER="" \
     DISABLE_AUTOUPDATER=1 \
+    COPILOT_AUTO_UPDATE=false \
     JAVA_HOME=/opt/java/${JAVA_BASE} \
     MAVEN_HOME=/opt/maven/${MAVEN_BASE} \
     PATH=/usr/local/sbin:/usr/local/bin:/opt/java/${JAVA_BASE}/bin:/opt/maven/${MAVEN_BASE}/bin:/opt/node/${NODE_HARNESS}/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -88,18 +89,31 @@ RUN mkdir -p /ms-playwright \
  && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH node /opt/agentic/npm/lib/node_modules/@playwright/mcp/node_modules/playwright/cli.js install --with-deps chromium \
  && rm -rf /var/lib/apt/lists/*
 
+# The task bridge: installed, built and pruned in one layer, so no development dependency is kept.
+# The adapter's bundled Claude binary is an optional dependency and not needed (the bridge points it
+# at the image's claude).
+COPY bridge/package.json bridge/package-lock.json bridge/tsconfig.json bridge/tsconfig.build.json /opt/agentic/bridge/
+COPY bridge/src /opt/agentic/bridge/src
+RUN cd /opt/agentic/bridge && export PATH=/opt/node/${NODE_HARNESS}/bin:$PATH \
+ && npm ci --no-audit --no-fund && npm run build \
+ && npm prune --omit=dev --omit=optional && npm cache clean --force \
+ && printf '#!/bin/sh\nPATH=/opt/node/%s/bin:$PATH exec node /opt/agentic/bridge/dist/main.js "$@"\n' "${NODE_HARNESS}" > /usr/local/bin/agentic-bridge \
+ && chmod 755 /usr/local/bin/agentic-bridge
+
 # User dev, mount points and the container marker
 RUN (userdel -r ubuntu 2>/dev/null || true) \
  && groupadd -g 1000 dev && useradd -m -u 1000 -g 1000 -s /bin/bash dev \
- && mkdir -p /etc/agentic /work /workspaces /agentic-config /opt/agentic/claude-plugins /opt/agentic/defaults \
+ && mkdir -p /etc/agentic /work /workspaces /task /agentic-config /opt/agentic/claude-plugins /opt/agentic/defaults \
  && printf 'agentic\n' > /etc/agentic/container \
- && chown -R dev:dev /work /workspaces /opt/agentic/claude-plugins /ms-playwright
+ && chown -R dev:dev /work /workspaces /task /opt/agentic/claude-plugins /ms-playwright
 
 # The agentic layer (changes most often, so it comes last)
 COPY image/lib /opt/agentic/lib
 COPY image/start.d /opt/agentic/start.d
 COPY image/worker.d /opt/agentic/worker.d
 COPY image/bin /opt/agentic/bin
+COPY image/task /opt/agentic/task
+COPY image/hooks.d /opt/agentic/hooks.d
 COPY derive /opt/agentic/derive
 COPY config /opt/agentic/config
 COPY schema /opt/agentic/schema

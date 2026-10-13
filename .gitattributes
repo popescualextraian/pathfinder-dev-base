@@ -1,0 +1,2 @@
+# LF everywhere: bash, bats and the image break on CRLF, and editors on Windows may write it
+* text=auto eol=lf

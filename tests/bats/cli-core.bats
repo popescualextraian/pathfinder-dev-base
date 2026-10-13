@@ -58,10 +58,20 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
   [ "$status" -eq 0 ]
   grep -qx "$PROJ:/work" <<<"$output"
   grep -qx "$PROJ/.agentic:/agentic-config:ro" <<<"$output"
-  grep -qx "$AGENTIC_WORKSPACES/demo:/workspaces" <<<"$output"
+  grep -qx "$AGENTIC_WORKSPACES/demo/repos:/workspaces/repos" <<<"$output"
+  [ -d "$AGENTIC_WORKSPACES/demo/repos" ]
+  # only the clones: never the workspace root, its tasks/ or events/
+  [ "$(grep -Ec "^$AGENTIC_WORKSPACES/demo(/tasks|/events)?:" <<<"$output")" -eq 0 ]
   grep -qx "$AGENTIC_DATA/projects/demo/harness/claude:/home/dev/.claude" <<<"$output"
   grep -qx "$AGENTIC_DATA/projects/demo/harness/copilot:/home/dev/.copilot" <<<"$output"
   [ -d "$AGENTIC_DATA/projects/demo/harness/claude" ]
+}
+
+@test "the dev mount of the clones is canonical when the workspace root is a symlink" {
+  mkdir -p "$BATS_TEST_TMPDIR/real-ws"; ln -s "$BATS_TEST_TMPDIR/real-ws" "$BATS_TEST_TMPDIR/ws-link"
+  export AGENTIC_WORKSPACES="$BATS_TEST_TMPDIR/ws-link"
+  run in_project 'build_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
+  grep -qx "$BATS_TEST_TMPDIR/real-ws/demo/repos:/workspaces/repos" <<<"$output"
 }
 
 @test "the env file, git identity and proxy variables are passed" {
