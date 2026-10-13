@@ -138,30 +138,36 @@ the bridge's environment or edit `state.json`. The tokens keep other host proces
 agent. Anyone with access to the Docker socket can read the tokens (`docker inspect`) and is root
 on the host anyway.
 
-Host git on task clones: each changed clone's `.git` is mounted read-write (commits, refs,
-objects), but its `config`, `info/` (attributes, exclude) and `hooks/` are mounted read-only over
-it, so the agent cannot add a remote, a credential helper, an ssh command, a filter driver or a
-hook to the clone. Inside the task, commit, branch, fetch and `git push origin HEAD` work; `git push
--u` pushes but cannot record the upstream, and `git config` needs `--global`. What
-the agent can still change (the worktree's `.git` file, files under
-`.git/worktrees/<ID>/`, a `commondir` file, the worktree's own `.gitattributes`) never reaches a
-command on the host:
+Host git on task clones: no host git process opens a `.git` directory a task can write.
 
-- `run` on a clone that already existed and `clean`'s checks (`git worktree add`, `git status`,
-  `git log`) run in a throwaway container of the task's image: `--network none`, the invoking
-  user, only the clone mounted at its own path, no hooks, no fsmonitor. A filter or command the
-  agent planted runs there, with nothing to reach.
-- The other host git calls (`symbolic-ref`, and `worktree remove`, `worktree prune`, `branch -D`
-  on rollback and clean) run no configured command; they pin `GIT_DIR` and `GIT_COMMON_DIR` to
-  the clone's `.git` (a planted `commondir` file is ignored) and turn hooks and fsmonitor off.
-- What remains: `git fetch origin` runs on the host with the user's credentials, because a private
-  remote needs them. It reads the clone's config, which the agent cannot write, through the
-  pinned git directory, and also overrides what could run a command: the ssh command and askpass
-  come from the user's global or system config only, the credential helpers are reset and replayed
-  from the user's global and system config, a `git://` proxy comes only from the user
-  (`GIT_PROXY_COMMAND` or the global config), `--upload-pack=git-upload-pack`,
-  `--no-recurse-submodules`, `protocol.ext.allow=never`, `core.attributesFile=/dev/null`, no hooks,
-  no fsmonitor. The fetch still parses refs and objects the agent wrote.
+- Each changed clone's `.git` is mounted read-write into its task (commits, refs, objects), with
+  its `config`, `info/` (attributes, exclude) and `hooks/` read-only over it, so the agent cannot
+  add a remote, a credential helper, an ssh command, a proxy, a filter driver or a hook. Inside the
+  task, commit, branch, fetch and `git push origin HEAD` work; worktree branches have no upstream,
+  `git push -u` pushes but cannot record one, and `git config` needs `--global`.
+- The host fetches with the user's credentials only into a private bare mirror per clone,
+  `$AGENTIC_DATA/projects/<project>/mirrors/<name>.git`, which is never mounted into a container
+  (not even the dev container, which mounts the workspace). The mirror fetches from the project's
+  remote (the checkout's `origin`, credentials stripped, else the checkout itself); for a `--repo`
+  clone, from the origin its mirror recorded on first use, read from the clone before any task had
+  write access to it. Host git on a mirror keeps the user's own settings for what could run a
+  command (the ssh command and askpass from the user's config, credential helpers reset and
+  replayed from the system and global config, a `git://` proxy only from the user, `ext::` off), no
+  hooks, no fsmonitor, `gc.auto=0`, `maintenance.auto=false`.
+- Every operation on a clone (fetch from the mirror into `refs/remotes/origin/`, `worktree add`,
+  `clean`'s `status` and `log`, rollback's `worktree remove`, `worktree prune`, `branch -D`) runs in a
+  throwaway container of the task's image: `--network none`, the invoking user, `--cap-drop ALL`,
+  `no-new-privileges`, a read-only root with a `/tmp` tmpfs as `HOME`, `GIT_DIR` and
+  `GIT_COMMON_DIR` pinned, the clone's `.git` with `config`, `info/` and `hooks/` read-only, the
+  mirror read-only when fetching from it, and only the one worktree a call needs (`prune` sees
+  `.worktrees/` read-only). No hooks, no fsmonitor, no automatic gc, no `FETCH_HEAD`. A filter,
+  command or symlink the agent planted acts inside that container and points at nothing on the host.
+- The only host git on a clone is its creation: a brand-new clone is made by the host from the
+  mirror, in a fresh directory no task has seen, before any agent exists.
+- What remains: clones from before this design may carry config an agent planted then (delete
+  them to start fresh); a checkout in the container sees neither the network
+  nor the user's global config, so Git LFS files of a worktree are pointer files; `clean` trusts what
+  the agent left in its worktree.
 
 ### Routes
 
