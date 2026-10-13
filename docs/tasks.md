@@ -6,6 +6,7 @@ Protocol and serves a light HTTP + WebSocket API. Start a task locally with `age
 follow it, answer its questions, cancel, stop, resume and clean it with the other verbs. A task
 hub uses the same image, the same action gate and the same API; it brings its own driver and no
 hub is named in this repository. Design: `docs/specs/2026-10-12-sub-project-2-acp-bridge-design.md`.
+This file is the contract; the how-to guide is [`detached-mode.md`](detached-mode.md).
 
 ## Quick start
 

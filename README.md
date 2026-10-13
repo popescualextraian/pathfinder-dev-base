@@ -72,8 +72,10 @@ guide: [`docs/dev-mode.md`](docs/dev-mode.md).
 
 ## Detached tasks
 
-`agentic run` starts an unattended task in its own container; the agent is driven through ACP
-and the task is followed, answered, cancelled and stopped through the CLI or a small local API.
+`agentic run` starts an unattended task in its own container and git worktree; Claude Code or
+Copilot works on it through a small bridge, asks you with `agentic-ask` when it needs a decision,
+and suspends when idle. Push, pull requests and deploys are refused unless you allow them.
+Follow, answer, cancel and stop it from the CLI or a small local API.
 
 ```bash
 agentic run --allow open-pr "Fix the failing login test and open a pull request"
@@ -84,7 +86,8 @@ agentic stop T-20261012-a3f1
 agentic clean T-20261012-a3f1
 ```
 
-States, API, events, files and environment: `docs/tasks.md`.
+Full guide: [`docs/detached-mode.md`](docs/detached-mode.md). States, API, events, files and
+environment: [`docs/tasks.md`](docs/tasks.md).
 
 ## Project wiki
 
