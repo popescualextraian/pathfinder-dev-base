@@ -147,7 +147,7 @@ Host git on task clones: no host git process opens a `.git` directory a task can
   `git push -u` pushes but cannot record one, and `git config` needs `--global`.
 - The host fetches with the user's credentials only into a private bare mirror per clone,
   `$AGENTIC_DATA/projects/<project>/mirrors/<name>.git`, which is never mounted into a container
-  (not even the dev container, which mounts the workspace). The mirror fetches from the project's
+  (not even a dev container, which sees only `repos/`). The mirror fetches from the project's
   remote (the checkout's `origin`, credentials stripped, else the checkout itself); for a `--repo`
   clone, from the origin its mirror recorded on first use, read from the clone before any task had
   write access to it. Host git on a mirror keeps the user's own settings for what could run a
@@ -187,10 +187,13 @@ worktree paths under `repos/`. Host task files are used only when they are regul
 agent-written files are opened without following a symlink and without blocking. Task containers
 (and `takeover`) run with `--cap-drop ALL` and `no-new-privileges`.
 
-Known dev-mode exposure: `agentic dev` mounts the project's workspace read-write into the dev
-container, so an agent there can plant symlinks or files in `repos/`, `tasks/` and `events/`
-that the host later meets. The checks above refuse what they recognise (symlinked bind sources,
-paths and task files), but the dev mount is wider than a task's and is not part of this model.
+Dev mode: `agentic dev`, `shell`, `login`, `setup` and `doctor` mount only the workspace's
+`repos/` (canonical path) at `/workspaces/repos`, never the workspace root, so `tasks/` (records,
+transcripts, sessions) and `events/` are out of reach of an interactive container, and so is
+everything under `$AGENTIC_DATA` other than the harness homes. A dev agent can still change the
+clones in `repos/`, as a task's agent can: the host meets them only through the private mirrors,
+the throwaway containers and the canonical-path checks above. One exception: the first use of a
+`--repo` clone reads its origin URL from the clone's config, which a dev agent could have changed.
 
 Outside the model: an image built with the Docker socket label (`agentic.docker_socket`) mounts
 the Docker socket into every task, which is host root access for the agent.
@@ -250,7 +253,7 @@ history replayed by `session/load`. `seq` increases by one per event and is the 
 
 ```
 $AGENTIC_WORKSPACES/<project>/
-├─ repos/<name>/                    clones; worktrees in .worktrees/<ID>
+├─ repos/<name>/                    clones; worktrees in .worktrees/<ID>   ─▶ /workspaces/repos (dev)
 ├─ events/events.jsonl              project-wide notify log            ─▶ /events
 └─ tasks/
    ├─ <ID>/                                                            ─▶ /task
