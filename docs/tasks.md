@@ -124,7 +124,7 @@ Every request, WebSocket upgrade included, needs `Authorization: Bearer <token>`
   task token from that environment.
 
 Each token is at least 16 characters (`run` generates 32 random bytes) and the two must differ,
-or the bridge refuses to start. `run` keeps them in `tasks/<ID>.env` (mode 600) and passes the
+or the bridge refuses to start. `run` keeps them in the host-only `env` file (mode 600, see Files) and passes the
 file with `--env-file`; they are never put on a command line. Token comparison is constant-time.
 
 A `Host` header that is not a loopback name (`127.0.0.1`, `localhost`, `[::1]`) on any port, and
@@ -168,6 +168,21 @@ Host git on task clones: no host git process opens a `.git` directory a task can
   them to start fresh); a checkout in the container sees neither the network
   nor the user's global config, so Git LFS files of a worktree are pointer files; `clean` trusts what
   the agent left in its worktree.
+- Tasks that share a clone share its refs and objects: one agent can forge `refs/remotes/origin/*`
+  or objects that a later task checks out from, and that `clean`'s unpushed check of another task
+  compares against. The mirror fetch refreshes `refs/remotes/origin/*` before each new worktree,
+  but not in between.
+
+Other host reads and writes: the host's own task files (tokens, mounts, repos) live under
+`$AGENTIC_DATA` (see Files), which no container mounts; the mounts file is checked on every read
+(only the `-v` forms `run` writes). Files the agent writes in the task directory (`state.json`,
+`questions.jsonl`, `transcript.md`, `bridge.log`) are read only when they are regular files and no
+symlinks, so the terminal never shows a host file and never blocks on a FIFO; what is printed has
+control characters removed, also git's messages from the throwaway containers. Rollback and
+`clean` remove only paths inside the workspace with no symlink below its root.
+
+Outside the model: an image built with the Docker socket label (`agentic.docker_socket`) mounts
+the Docker socket into every task, which is host root access for the agent.
 
 ### Routes
 
@@ -235,8 +250,19 @@ $AGENTIC_WORKSPACES/<project>/
    │  ├─ prompt.md                  the first prompt
    │  ├─ bridge.log                 bridge diagnostics, redacted
    │  └─ home/claude/, home/copilot/   CLAUDE_CONFIG_DIR, COPILOT_HOME: sessions survive containers
-   └─ <ID>.env                      host only, mode 600: AGENTIC_TASK_TOKEN, AGENTIC_AGENT_TOKEN
+
+$AGENTIC_DATA/projects/<project>/      host only: never mounted into a task or the dev container
+├─ mirrors/<name>.git               private bare mirror of each clone; the only repositories host git opens
+├─ events.jsonl                     the host's own log: interrupted lines
+└─ tasks/<ID>/
+   ├─ env                           mode 600: AGENTIC_TASK_TOKEN, AGENTIC_AGENT_TOKEN
+   ├─ mounts                        the task's -v arguments (checked on every read)
+   ├─ repos                         clone, worktree and branch per line, for clean and rollback
+   └─ interrupted                   marker: the interruption was logged
 ```
+
+Tasks created before these files left the workspace (`tasks/<ID>.env`, `.mounts`, `.repos`,
+`.interrupted`) have them moved here the first time a command touches the task.
 
 `bin/agentic` creates every directory as the invoking user, so no volume comes up owned by root.
 In the cloud, `/task` is one volume and start step `06-task-home` creates the homes. At creation
@@ -306,7 +332,8 @@ On `waiting`, `idle`, `failed` and `stopped`, when `AGENTIC_NOTIFY_WEBHOOK` is s
 POSTs `{"task","project","state","question":{id,text,options,recommendation}|null,"summary",
 "reply":"agentic answer <ID> Q<n> \"…\"" (or `agentic send <ID> \"…\"` when no question is open),"ts"}` (5 s timeout, one retry). A failure goes to
 `bridge.log` and an `error` event; it never blocks. The host appends `interrupted` when `status`
-first derives it.
+first derives it, to its own log `$AGENTIC_DATA/projects/<project>/events.jsonl`, not to the
+shared log: tasks write `/events`, so the host never writes there.
 
 ## Environment
 
