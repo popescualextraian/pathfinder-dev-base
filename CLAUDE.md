@@ -22,7 +22,7 @@ A generic container toolbox for agentic development: base image, per-project der
 
 ## Commands
 
-    make test     # bats and the bridge's vitest (needs bats, jq, yq v4, Node 22)
+    make test     # bats and the bridge's vitest (needs bats, jq, yq v4, python3, Node 22)
     make lint     # shellcheck, schema, generated docs, leak check, tsc and eslint
     make build    # base image agentic-dev-base:local
     make smoke    # build, then tests/image/smoke.sh (Docker, openssl, script)
