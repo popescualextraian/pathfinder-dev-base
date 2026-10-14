@@ -1,9 +1,20 @@
 #!/usr/bin/env bash
 # The command of a task container, after the start: records its pid (the bridge ends the container
-# with it after an auto-clean), tells the host the start is done, then sleeps.
+# with it after an auto-clean), tells the host the start is done, then sleeps. A docker stop reaches
+# this script (not the bridge, which is a docker-exec child): it passes SIGTERM on, so the bridge
+# ends its agent, waits a few seconds for the bridge, then exits.
 set -euo pipefail
 state="${AGENTIC_STATE:-$HOME/.agentic}"
 mkdir -p "$state"
 echo "$$" > "$state/hold.pid"
 if [ -n "${AGENTIC_TASK_DIR:-}" ]; then mkdir -p "$AGENTIC_TASK_DIR"; : > "$AGENTIC_TASK_DIR/.ready"; fi
-exec sleep infinity
+sleep infinity & sleeper=$!
+stop() {
+  trap - TERM INT
+  pkill -TERM -f 'bridge/dist/main\.js$' || true
+  for _ in $(seq 50); do pgrep -f 'bridge/dist/main\.js$' >/dev/null || break; sleep 0.1; done
+  kill "$sleeper" 2>/dev/null || true
+  exit 0
+}
+trap stop TERM INT
+wait "$sleeper"
