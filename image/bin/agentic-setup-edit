@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Reads and edits the setup: list of agentic.yaml. The host CLI runs it in a throwaway container
+# (the host has no yq); /agentic-setup runs it directly. Usage:
+#   agentic-setup-edit [--dir D] add LINE | remove KIND KEY [--target T] | list | run-args
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+# shellcheck source=../lib/common.sh
+source "$AGENTIC_DIR/lib/common.sh"
+# shellcheck source=../lib/config.sh
+source "$AGENTIC_DIR/lib/config.sh"
+dir="${AGENTIC_CONFIG_MOUNT:-/agentic-config}"
+if [ "${1:-}" = --dir ]; then dir="$2"; shift 2; fi
+f="$dir/agentic.yaml"
+[ -f "$f" ] || { say "no agentic.yaml in $dir"; exit 1; }
+
+lines() { yq -o=json '.setup // []' "$f" | jq -r '.[]'; }
+dt="$(config_resolve "$dir" | jq -r '(.targets // ["claude","copilot"]) | join(",")')"
+
+cmd_add() {
+  local line="$1" new_id l i=0
+  parse_line "$line" || { say "invalid line: $L_ERR"; exit 1; }
+  [ -z "$L_WARN" ] || say "warning: $L_WARN"
+  case "$L_KIND" in
+    copy) [ -e "$dir/$L_SRC" ] || { say "$L_SRC is not in .agentic/"; exit 1; } ;;
+    skill|agent|command)
+      [ -e "$dir/$L_KEY" ] || { say "$L_KEY is not in .agentic/"; exit 1; }
+      if [ -z "$L_TARGETS" ] || [ "$(norm_targets "$L_TARGETS")" = "$(norm_targets "$dt")" ]; then
+        echo "$L_KEY installs to every target; no line needed"; exit 0
+      fi ;;
+  esac
+  new_id="$(line_ident "$dt")"
+  while IFS= read -r l; do
+    if parse_line "$l" && [ "$(line_ident "$dt")" = "$new_id" ]; then
+      if [ "$l" = "$line" ]; then echo "already there: $line"; exit 0; fi
+      L="$line" yq -i ".setup[$i] = strenv(L)" "$f"
+      echo "replaced: $l"; exit 0
+    fi
+    i=$((i + 1))
+  done < <(lines)
+  L="$line" yq -i '.setup = ((.setup // []) + [strenv(L)])' "$f"
+  echo "added: $line"
+}
+
+cmd_remove() {
+  local kind="${1:?usage: remove KIND KEY [--target T]}" key="${2:?usage: remove KIND KEY [--target T]}" want="" l i=0 hit=()
+  if [ "${3:-}" = --target ]; then want="$(norm_targets "${4:-}")" || { say "--target takes claude, copilot or claude,copilot"; exit 1; }; fi
+  key="${key%/}"
+  local all=(); mapfile -t all < <(lines)
+  for l in "${all[@]}"; do
+    if parse_line "$l" && [ "$L_KIND" = "$kind" ] && [ "$L_KEY" = "$key" ]; then
+      if [ -z "$want" ] || [ "$(line_ident "$dt" | cut -f3)" = "$want" ]; then hit+=("$i"); fi
+    fi
+    i=$((i + 1))
+  done
+  [ "${#hit[@]}" -gt 0 ] || { say "no $kind $key in setup:"; exit 3; }
+  for ((i = ${#hit[@]} - 1; i >= 0; i--)); do
+    echo "removed: ${all[${hit[i]}]}"
+    yq -i "del(.setup[${hit[i]}])" "$f"
+  done
+}
+
+cmd_list() {
+  local l
+  while IFS= read -r l; do
+    if parse_line "$l"; then printf '%s\t%s\n' "$L_PHASE" "$l"; else printf 'invalid\t%s\n' "$l"; fi
+  done < <(lines)
+}
+
+cmd_run_args() {
+  local l
+  while IFS= read -r l; do
+    parse_line "$l" || continue
+    case "$L_KIND" in
+      mount) printf 'mount\t%s\t%s\t%s\t%s\n' "$L_SRC" "$L_DEST" "$L_OPT" "$l" ;;
+      volume) printf 'volume\t%s\t%s\t\t%s\n' "$L_KEY" "$L_DEST" "$l" ;;
+      workspace) [ "$L_OPT" = path ] && printf 'bind\t%s\t%s\t\t%s\n' "$L_SRC" "$L_DEST" "$l" ;;
+    esac
+  done < <(lines)
+  return 0
+}
+
+case "${1:-}" in
+  add) cmd_add "${2:?usage: add LINE}" ;;
+  remove) shift; cmd_remove "$@" ;;
+  list) cmd_list ;;
+  run-args) cmd_run_args ;;
+  *) say "usage: agentic-setup-edit [--dir D] add LINE | remove KIND KEY [--target T] | list | run-args"; exit 2 ;;
+esac
