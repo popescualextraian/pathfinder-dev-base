@@ -623,3 +623,12 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   [ -d "$T/T-1" ]
   [ -z "$(docker_sub rm)" ]
 }
+
+@test "status sweeping a cleaned task that reused another task's container never kills the bridge there" {
+  record T-1 stopped; jq '.cleaned = true' "$T/T-1/state.json" > "$T/x" && mv "$T/x" "$T/T-1/state.json"
+  printf 'agentic-demo-task-T-0\n0\nT-0\n' > "$H/T-1/container"
+  DOCKER_BRIDGE_RC=0 run ag status
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/T-1" ]
+  run grep -q pkill "$DOCKER_LOG"; [ "$status" -ne 0 ]
+}

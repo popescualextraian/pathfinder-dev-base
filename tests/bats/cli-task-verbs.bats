@@ -190,6 +190,7 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   grep -qx agentic-demo-task-T-1 <<<"$(docker_sub stop)"
   : > "$DOCKER_LOG"
   CURL_RC=7 AGENTIC_STOP_TIMEOUT=1 run ag stop T-1
+  [ "$status" -eq 0 ]
   [[ "$output" == *"did not answer"* ]]
   grep -qx agentic-demo-task-T-1 <<<"$(docker_sub stop)"
 }
@@ -274,4 +275,31 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   run ag clean T-2
   [ "$status" -eq 1 ]; [[ "$output" == *"another task runs in the container of T-2; stop it first"* ]]
   [ -d "$T/T-2" ]
+}
+
+@test "clean of a task that reused another task's container never kills the bridge running there" {
+  record T-1 stopped
+  printf 'agentic-demo-task-T-0\n0\nT-0\n' > "$H/T-1/container"
+  DOCKER_BRIDGE_RC=0 run ag clean T-1
+  [ "$status" -eq 0 ]
+  run grep -q pkill "$DOCKER_LOG"; [ "$status" -ne 0 ]
+  [ ! -e "$T/T-1" ]
+}
+
+@test "takeover and clean --force refuse a container whose bridge is another task's" {
+  record T-1 idle
+  CURL_GET_CODE=401 CURL_CODE=401 DOCKER_BRIDGE_RC=0 run ag takeover T-1
+  [ "$status" -eq 1 ]; [[ "$output" == *"another task runs in the container of T-1; stop it first"* ]]
+  CURL_GET_CODE=401 CURL_CODE=401 DOCKER_BRIDGE_RC=0 run ag clean T-1 --force
+  [ "$status" -eq 1 ]; [[ "$output" == *"another task runs in the container of T-1; stop it first"* ]]
+  run grep -q pkill "$DOCKER_LOG"; [ "$status" -ne 0 ]
+  [ -z "$(docker_sub stop)" ]
+  [ -d "$T/T-1" ]
+}
+
+@test "stop does not stop a container whose bridge is another task's" {
+  record T-1 running
+  CURL_GET_CODE=401 CURL_CODE=401 run ag stop T-1
+  [ "$status" -eq 1 ]
+  [ -z "$(docker_sub stop)" ]
 }

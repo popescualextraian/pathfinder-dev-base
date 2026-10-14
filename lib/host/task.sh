@@ -144,14 +144,19 @@ safe_rm() {
   rm -rf -- "$path"
 }
 
-# rollback_task ID: removes what the task created: its container (only when it created it; a bridge
-# left in a reused container is ended) and its files.
+# foreign_bridge ID: a bridge runs in the task's container and it answers the task's token with
+# something other than 200: another task's bridge, which this task must never stop or kill.
+foreign_bridge() { bridge_running "$(task_container "$1")" && bridge_req "$1" GET /status && [ "$BRIDGE_CODE" != 200 ]; }
+
+# rollback_task ID [kill]: removes what the task created: its container (only when it created it)
+# and its files. With kill (run's own failure path only) the bridge this run just started in a
+# reused container is ended; clean and the sweep never kill a bridge there.
 rollback_task() {
-  local id="$1" ws c
+  local id="$1" kill="${2:-}" ws c
   valid_task_id "$id" || return 0
   ws="$(task_ws)"; c="$(task_container "$id")"
   if task_created "$id"; then docker rm -f "$c" >/dev/null 2>&1 || true
-  elif host_file "$id" container >/dev/null; then docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
+  elif [ "$kill" = kill ] && host_file "$id" container >/dev/null; then docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
   fi
   safe_rm "$ws/tasks" "$(task_dir "$id")"
   safe_rm "$AGENTIC_DATA/projects/$(task_project)/tasks" "$(task_hdir "$id")"

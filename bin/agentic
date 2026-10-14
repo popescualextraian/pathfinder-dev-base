@@ -353,7 +353,7 @@ optval() { [ -n "${2:-}" ] || die "$1 needs a value"; }
 
 # run_cleanup: the EXIT trap of cmd_run; rolls the task back until the run has succeeded.
 run_cleanup() {
-  if [ -n "${RUN_ROLLBACK_ID:-}" ] && [ "${RUN_KEEP:-0}" != 1 ]; then rollback_task "$RUN_ROLLBACK_ID" || true; fi
+  if [ -n "${RUN_ROLLBACK_ID:-}" ] && [ "${RUN_KEEP:-0}" != 1 ]; then rollback_task "$RUN_ROLLBACK_ID" kill || true; fi
 }
 
 cmd_run() {
@@ -582,6 +582,7 @@ cmd_stop() {
   else
     say "the bridge of $id did not answer; stopping its container (the task will show interrupted)"
   fi
+  ! foreign_bridge "$id" || die "another task runs in the container of $id; stop it first"
   docker stop "$c" >/dev/null || die "could not stop the container of $id"
   echo "$id: $(task_state "$id" | plain)"
 }
@@ -649,6 +650,7 @@ cmd_takeover() {
   case "$(container_status "$id")" in
     running)
       if bridge_running "$c"; then
+        ! foreign_bridge "$id" || die "another task runs in the container of $id; stop it first"
         bridge_req "$id" POST /stop >/dev/null 2>&1 || true
         wait_bridge_gone "$c" "${AGENTIC_STOP_TIMEOUT:-30}" || docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
       fi ;;
@@ -670,8 +672,13 @@ cmd_clean() {
   c="$(task_container "$id")"
   if [[ " $TASK_ACTIVE " == *" $(task_state "$id") "* ]]; then
     [ "$force" = 1 ] || die "task $id is running; run agentic stop $id first, or --force"
-    bridge_req "$id" POST /stop >/dev/null 2>&1 || true
-    wait_bridge_gone "$c" "${AGENTIC_STOP_TIMEOUT:-30}" || docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
+    if bridge_running "$c" && ! foreign_bridge "$id"; then
+      bridge_req "$id" POST /stop >/dev/null 2>&1 || true
+      if ! wait_bridge_gone "$c" "${AGENTIC_STOP_TIMEOUT:-30}"; then
+        docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
+        wait_bridge_gone "$c" 5 || true
+      fi
+    fi
   fi
   if task_created "$id" && [ "$(container_status "$id")" = running ] && bridge_running "$c"; then
     die "another task runs in the container of $id; stop it first"
