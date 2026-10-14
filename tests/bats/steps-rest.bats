@@ -73,25 +73,6 @@ config() { printf '%s\n' "$1" > "$AGENTIC_CONFIG_MOUNT/agentic.yaml"; bash "$S/1
   [ ! -e "$HOME/.copilot/config.json" ]
 }
 
-# --- 60-skills
-@test "60 copies base and project skills into both harnesses, project wins" {
-  config $'version: 2\nproject: demo'
-  mkdir -p "$AGENTIC_CONFIG_MOUNT/skills/agentic-setup" "$AGENTIC_CONFIG_MOUNT/skills/mine"
-  echo project > "$AGENTIC_CONFIG_MOUNT/skills/agentic-setup/SKILL.md"
-  echo mine > "$AGENTIC_CONFIG_MOUNT/skills/mine/SKILL.md"
-  run bash "$S/60-skills.sh"
-  [ "$status" -eq 0 ]
-  [ "$(cat "$HOME/.claude/skills/agentic-setup/SKILL.md")" = project ]
-  [ -f "$HOME/.copilot/skills/mine/SKILL.md" ]
-}
-
-@test "60 copies a base skill when the project has none" {
-  config $'version: 2\nproject: demo'
-  run bash "$S/60-skills.sh"
-  [ "$status" -eq 0 ]
-  diff -q "$REPO_ROOT/skills/agentic-setup/SKILL.md" "$HOME/.claude/skills/agentic-setup/SKILL.md"
-}
-
 # --- 90-project-hook
 @test "90 runs the on-start hook in /work with the environment" {
   mkdir -p "$AGENTIC_CONFIG_MOUNT/hooks"

@@ -68,3 +68,12 @@ read_json() {
   jq -e . <<<"$body" >/dev/null 2>&1 || return 1
   printf '%s\n' "$body"
 }
+
+# marked_block FILE MARK TEXT: FILE keeps its own text; TEXT sits between two MARK lines at the end.
+# An empty TEXT removes the block.
+marked_block() {
+  local f="$1" mark="$2" text="$3" own
+  own="$(if [ -f "$f" ]; then sed "/^$mark\$/,/^$mark\$/d" "$f"; fi)"
+  if [ -n "$text" ]; then write_if_changed "$f" "$(printf '%s\n%s\n%s\n%s\n' "$own" "$mark" "$text" "$mark" | sed '/./,$!d')"
+  elif [ -f "$f" ]; then write_if_changed "$f" "$own"; fi
+}

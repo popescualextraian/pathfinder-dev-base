@@ -37,9 +37,6 @@ copilot_new="$(harness_hook_events copilot | jq -Rn --arg h "$hook" '{version: 1
   | {key: .[0], value: [{type: "command", bash: "bash \($h) copilot \(.[1])", timeoutSec: 30}]}] | from_entries)}')"
 cf="$(copilot_hooks_file)"
 inf="$(copilot_instructions_file)"
-# The instructions keep the user's text; the task paragraph sits between two markers.
-own="$(if [ -f "$inf" ]; then sed "/^$mark\$/,/^$mark\$/d" "$inf"; fi)"
-inf_new="$(printf '%s\n%s\n%s\n%s\n' "$own" "$mark" "$(cat "$AGENTIC_DIR/task/task-prompt.md")" "$mark" | sed '/./,$!d')"
 
 if [ "$check" = 1 ]; then
   [ "$(jq -S . <<<"$new")" = "$(jq -S . <<<"$cur")" ] || { say "task hooks are not installed for claude"; rc=2; }
@@ -48,5 +45,6 @@ if [ "$check" = 1 ]; then
 fi
 write_if_changed "$f" "$new"
 write_if_changed "$cf" "$copilot_new"
-write_if_changed "$inf" "$inf_new"
+# the instructions keep the user's text; the task paragraph sits between two markers
+marked_block "$inf" "$mark" "$(cat "$AGENTIC_DIR/task/task-prompt.md")"
 exit 0
