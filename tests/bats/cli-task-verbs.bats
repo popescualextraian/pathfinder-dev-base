@@ -100,6 +100,27 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   [ "$(ag logs T-10 --bridge)" = listening ]
 }
 
+@test "logs --bridge also prints the bridge's own output (bridge.out)" {
+  record T-10 idle
+  printf 'listening\n' > "$T/T-10/bridge.log"
+  printf 'boot failure\e[31m\n' > "$T/T-10/bridge.out"
+  run ag logs T-10 --bridge
+  [ "$status" -eq 0 ]
+  [[ "$output" == *listening* ]]; [[ "$output" == *"bridge.out"* ]]; [[ "$output" == *"boot failure"* ]]
+  run grep -qP '[\x00-\x08\x0b-\x1f\x7f]' <<<"$output"
+  [ "$status" -ne 0 ]
+}
+
+@test "a bridge that does not come up shows the tails of its log and output" {
+  record T-10 idle
+  printf 'in the log\n' > "$T/T-10/bridge.log"
+  printf 'in the output\n' > "$T/T-10/bridge.out"
+  CURL_RC=7 DOCKER_BRIDGE_RC=1 AGENTIC_START_TIMEOUT=1 run ag send T-10 "go"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in the log"* ]]; [[ "$output" == *"in the output"* ]]
+  [[ "$output" == *"did not come up"* ]]
+}
+
 @test "follow runs the follow client in the container; a task that is not running points to logs" {
   record T-11 idle
   ag follow T-11 --since 3

@@ -162,6 +162,18 @@ HOOK
   grep -qx agentic-demo-task-T-7 <<<"$(docker_sub rm)"
 }
 
+@test "a bridge that fails at boot fails the run at once, not after AGENTIC_START_TIMEOUT" {
+  start=$SECONDS
+  CURL_RC=7 DOCKER_BRIDGE_RC=1 AGENTIC_START_TIMEOUT=60 run ag run --id T-B1 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"the bridge of T-B1 did not come up"* ]]
+  [ $((SECONDS - start)) -lt 15 ]
+}
+
+@test "the readiness waits make one attempt even with a zero timeout" {
+  AGENTIC_START_TIMEOUT=0 run ag run --id T-B2 "x"
+  [ "$status" -eq 0 ]
+}
+
 @test "a failed bridge in a reused container rolls the task back and keeps the container" {
   record T-1 idle
   CURL_RC=7 DOCKER_BRIDGE_RC=1 AGENTIC_START_TIMEOUT=1 run ag run --id T-2 --in T-1 "x"
@@ -284,7 +296,6 @@ HOOK
 @test "rollback_task never removes a path outside the workspace" {
   mkdir -p "$BATS_TEST_TMPDIR/keep"; touch "$BATS_TEST_TMPDIR/keep/f"
   record T-17 idle
-  printf 'x\t%s\tb\n' "$BATS_TEST_TMPDIR/keep" > "$H/T-17/repos"
   ln -s "$BATS_TEST_TMPDIR/keep" "$T/T-17/link"
   run bash -c "cd '$PROJ' && source '$REPO_ROOT/lib/host/common.sh' && source '$REPO_ROOT/lib/host/task.sh' && rollback_task T-17"
   [ -f "$BATS_TEST_TMPDIR/keep/f" ]
@@ -597,6 +608,18 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   [ "$(cat "$BATS_TEST_TMPDIR/victim")" = keep ]
 }
 
+@test "a prompt.md planted as a symlink fails the run and the target stays untouched" {
+  echo keep > "$BATS_TEST_TMPDIR/victim"
+  # a sibling agent plants the link as soon as the host has made the task directory (here: at the mkdir of home)
+  printf '#!/bin/sh\ncase "$*" in *"%s/T-X3/home"*) ln -sf "%s" "%s/T-X3/prompt.md" ;; esac\nexec /bin/mkdir "$@"\n' \
+    "$T" "$BATS_TEST_TMPDIR/victim" "$T" > "$BATS_TEST_TMPDIR/bin/mkdir"
+  chmod +x "$BATS_TEST_TMPDIR/bin/mkdir"
+  run ag run --id T-X3 "x"
+  [ "$status" -ne 0 ]
+  [ "$(cat "$BATS_TEST_TMPDIR/victim")" = keep ]
+  run ! grep -q -- '--- run' "$DOCKER_LOG"
+}
+
 @test "a container that already has the task's name is refused and never removed" {
   echo agentic-demo-task-T-Y1 >> "$BATS_TEST_TMPDIR/docker.known"
   run ag run --id T-Y1 "x"
@@ -629,6 +652,7 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
 
 @test "status removes auto-cleaned tasks whose container has exited, and keeps the others" {
   record T-1 stopped; jq '.cleaned = true' "$T/T-1/state.json" > "$T/x" && mv "$T/x" "$T/T-1/state.json"
+  echo AGENTIC_AUTO_CLEAN=1 >> "$H/T-1/env"
   record T-2 stopped
   DOCKER_STATUS=exited run ag status
   [ "$status" -eq 0 ]
@@ -637,8 +661,17 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   grep -qx agentic-demo-task-T-1 <<<"$(docker_sub rm)"
 }
 
+@test "a record marked cleaned in a task that did not ask for auto-clean is kept" {
+  record T-1 stopped; jq '.cleaned = true' "$T/T-1/state.json" > "$T/x" && mv "$T/x" "$T/T-1/state.json"
+  DOCKER_STATUS=exited run ag status
+  [ "$status" -eq 0 ]
+  [ -d "$T/T-1" ] && [ -d "$H/T-1" ]
+  [ -z "$(docker_sub rm)" ]
+}
+
 @test "a forged cleaned flag never removes a task whose created container still runs" {
   record T-1 idle; jq '.cleaned = true' "$T/T-1/state.json" > "$T/x" && mv "$T/x" "$T/T-1/state.json"
+  echo AGENTIC_AUTO_CLEAN=1 >> "$H/T-1/env"
   run ag status
   [ "$status" -eq 0 ]
   [ -d "$T/T-1" ]
@@ -647,6 +680,7 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
 
 @test "status sweeping a cleaned task that reused another task's container never kills the bridge there" {
   record T-1 stopped; jq '.cleaned = true' "$T/T-1/state.json" > "$T/x" && mv "$T/x" "$T/T-1/state.json"
+  echo AGENTIC_AUTO_CLEAN=1 >> "$H/T-1/env"
   printf 'agentic-demo-task-T-0\n0\nT-0\n' > "$H/T-1/container"
   DOCKER_BRIDGE_RC=0 run ag status
   [ "$status" -eq 0 ]

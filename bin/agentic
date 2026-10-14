@@ -471,9 +471,7 @@ cmd_run() {
   # with --auto-clean a quick task can end, and its container exit, before the host looks
   if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}" && ! { [ "$autoclean" = 1 ] && [ "$(record_get "$id" .cleaned)" = true ]; }; then
     # the bridge's own reason, before the rollback removes the task directory
-    for v in bridge.log bridge.out; do
-      if task_readable "$id" "$v" && [ -s "$dir/$v" ]; then { echo "$v:"; task_read "$id" "$v" | tail -n 20 | plain; } >&2; fi
-    done
+    bridge_tails "$id"
     die "the bridge of $id did not come up"
   fi
   RUN_ROLLBACK_ID=""; trap - EXIT INT TERM
@@ -613,7 +611,8 @@ cmd_logs() {
   need_task "$id"
   case "$what" in
     transcript) if task_readable "$id" transcript.md; then task_read "$id" transcript.md | plain; else echo "(no transcript yet)"; fi ;;
-    bridge) if task_readable "$id" bridge.log; then task_read "$id" bridge.log | plain; else echo "(no bridge log yet)"; fi ;;
+    bridge) if task_readable "$id" bridge.log; then task_read "$id" bridge.log | plain; else echo "(no bridge log yet)"; fi
+      if task_readable "$id" bridge.out; then echo "--- bridge.out (the bridge's own stdout and stderr)"; task_read "$id" bridge.out | plain; fi ;;
     start) docker logs "$(task_container "$id")" 2>&1 | plain ;;
   esac
 }

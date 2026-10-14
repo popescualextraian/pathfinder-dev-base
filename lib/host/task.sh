@@ -111,15 +111,27 @@ bridge_call() { bridge_req "$@" || die "task $1 is not reachable (state: $(task_
 # bridge_post ID PATH [BODY]: a POST the task must answer; prints its new state, or dies.
 bridge_post() { bridge_call "$1" POST "$2" "${3:-}"; bridge_result "$1"; }
 
-# wait_bridge ID SECONDS: until the bridge answers with a state other than starting.
+# wait_bridge ID SECONDS: until the bridge answers with a state other than starting. Gives up early
+# when the container stops, or when no bridge process runs once a short grace has passed (a bridge
+# that fails at boot leaves the container running). One attempt is always made.
 wait_bridge() {
-  local id="$1" end=$((SECONDS + $2))
-  while [ "$SECONDS" -lt "$end" ]; do
+  local id="$1" start=$SECONDS end=$((SECONDS + $2))
+  while :; do
     [ "$(container_status "$id")" = running ] || return 1
     if bridge_req "$id" GET /status && [ "$BRIDGE_CODE" = 200 ] && [ "$(jq -r .state <<<"$BRIDGE_BODY")" != starting ]; then return 0; fi
+    if [ "$((SECONDS - start))" -ge 2 ] && ! bridge_running "$(task_container "$id")"; then return 1; fi
+    [ "$SECONDS" -lt "$end" ] || return 1
     sleep 0.5
   done
-  return 1
+}
+
+# bridge_tails ID: the tails of the bridge's log and its own output, to stderr (before a rollback
+# removes the task directory).
+bridge_tails() {
+  local v dir; dir="$(task_dir "$1")"
+  for v in bridge.log bridge.out; do
+    if task_readable "$1" "$v" && [ -s "$dir/$v" ]; then { echo "$v:"; task_read "$1" "$v" | tail -n 20 | plain; } >&2; fi
+  done
 }
 
 check_cap() {
@@ -166,12 +178,15 @@ rollback_task() {
 # The record is agent-writable: a task whose created container still runs (or whose state docker
 # cannot tell) is kept, and rollback_task takes the container from the host file only.
 sweep_cleaned() {
-  local f id
+  local f id envf
   for f in "$(task_ws)"/tasks/*/state.json; do
     { [ -f "$f" ] && [ ! -L "$f" ]; } || continue
     id="$(basename "$(dirname "$f")")"
     valid_task_id "$id" || continue
     [ "$(record_get "$id" .cleaned)" = true ] || continue
+    # only a task that asked for auto-clean (the host's own env file, not the agent's record)
+    envf="$(host_file "$id" env)" || continue
+    [ "$(dotenv_value "$envf" AGENTIC_AUTO_CLEAN)" = 1 ] || continue
     if task_created "$id"; then
       case "$(container_status "$id")" in running|unknown) continue ;; esac
     fi
@@ -234,12 +249,12 @@ wait_ready() {
   local id="$1" end=$((SECONDS + $2)) creator f
   creator="$(task_creator "$id")" || return 1
   f="$(task_dir "$creator")/.ready"
-  while [ "$SECONDS" -lt "$end" ]; do
+  while :; do
     [ "$(container_status "$id")" = running ] || return 1
     if [ -f "$f" ] && [ ! -L "$f" ]; then return 0; fi
+    [ "$SECONDS" -lt "$end" ] || return 1
     sleep 0.5
   done
-  return 1
 }
 
 # start_container ID: starts the task's stopped container and waits for its start.
@@ -282,7 +297,7 @@ ensure_running() {
   if [ "$cs" != running ]; then start_container "$id"; fi
   ! bridge_running "$c" || die "another task runs in the container of $id"
   start_bridge "$id"
-  wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}" || die "the bridge of $id did not come up; see agentic logs $id --bridge"
+  wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}" || { bridge_tails "$id"; die "the bridge of $id did not come up; see agentic logs $id --bridge"; }
   # revived: a later interruption is logged to the project events log again
   rm -f "$(task_file "$id" interrupted)"
 }
