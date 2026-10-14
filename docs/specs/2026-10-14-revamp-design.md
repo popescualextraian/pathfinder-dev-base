@@ -50,6 +50,7 @@ Success criteria:
 | R10 | Kept unchanged: `tools:` presets, `docker.socket`, `hooks.on_start`, `harness.default`, the overlay contract, dev mode, tasks, the bridge and the gate. | Not part of this problem. |
 | R11 | Remote in scope: a VM with Docker running the CLI is tested; a managed container service is documented as a contract and tested with scheduling. | A VM needs almost no change; a managed service needs a cloud account but no change to the design. |
 | R12 | Editing `agentic.yaml` runs in a throwaway container from the base image (`agentic-setup-edit`); the same script runs inside the container for the setup skill. | The host needs only bash, git and Docker (no yq). One implementation for shell, skill and CLI. |
+| R13 | One container belongs to one user. | Logins, tokens, sessions and harness memory are personal; sharing a container would act as one person and leak history between people. A team shares through git (repo, `.agentic/`, wiki) and task records. |
 
 ## 3. `agentic.yaml` version 2
 
@@ -98,11 +99,16 @@ setup:
 
 Rules:
 
-- `version: 1` files are refused with a pointer to `agentic init --migrate` (section 10).
+- `version: 1` files are refused with "re-run `agentic init`". There are no external users yet, so
+  there is no converter.
 - `targets` lists `claude`, `copilot` or both; the default is both.
-- The overlay's `/opt/agentic/defaults/agentic.yaml` is merged under the project's as today (lists
-  are replaced). It must not contain `setup:`; an overlay contributes lines through its
-  `recommended` file instead, so every line is visible in, and removable from, the project's file.
+- An overlay is a company or team image built `FROM agentic-dev-base` in its own private repository
+  (`docs/overlay.md`); projects use it with `base_image:`. It holds what this public repository must
+  not: internal certificates, a company marketplace, company defaults. Its
+  `/opt/agentic/defaults/agentic.yaml` is merged under the project's as today (lists are replaced).
+  It must not contain `setup:`: an overlay contributes lines through its own `recommended` file,
+  which `agentic init` copies into the project. Every line is then visible in, and removable from,
+  the project's file; nothing is added behind the user's back.
 - `.agentic/` layout after `agentic init`:
 
 ```
@@ -151,9 +157,10 @@ Behaviour of the commands:
 - **Idempotent.** A line that is already in the file is not added twice. Applying a line twice
   leaves the same result.
 - **Validated before writing.** An unknown command, a missing `SRC`, a non-absolute `DEST`, an
-  unknown target or a `copy` of a file that looks like a secret (`.env`, `id_*`, `*.pem`, `*.key`,
-  `credentials`) is refused, and the file is not changed. `--force` allows the secret-looking
-  `copy` after the user confirms the file holds no secret.
+  unknown target is refused, and the file is not changed.
+- **Secret warning.** A `copy` of a file that looks like a secret (`.env`, `id_*`, `*.pem`, `*.key`,
+  `credentials`) is done, with a warning: the file ends up in the image, readable by anyone who has
+  the image, and stays in pushed layers after the line is removed; use `.env` or `mount` instead.
 - **`copy` makes the source local.** `agentic copy ~/x/settings.xml /home/dev/.m2/settings.xml`
   copies the file (or folder) to `.agentic/files/settings.xml` and records
   `copy files/settings.xml /home/dev/.m2/settings.xml`. A name clash in `files/` is refused.
@@ -199,7 +206,7 @@ Start steps after the revamp (`--check` supported, exit codes as today):
 |---|---|
 | `05-workspace` | Clones `AGENTIC_REPO_URL` into an empty `/work` (unchanged), then every `add workspace URL` line that has no clone yet. Never pulls, resets or deletes. A failed clone warns. |
 | `06-task-home` | Unchanged. |
-| `10-validate` | Validates version 2; refuses version 1 with the migrate hint. |
+| `10-validate` | Validates version 2; refuses version 1 ("re-run `agentic init`"). |
 | `20-onboarding` | Unchanged. |
 | `25-harness` | Only the Claude token fix (an `sk-ant-oat` value under `ANTHROPIC_API_KEY`). Models move to `.env` (`ANTHROPIC_MODEL`, Copilot's `COPILOT_MODEL`). |
 | `40-seed` | Merges `/opt/agentic/seed/<harness>` into the harness home (below). |
@@ -280,6 +287,9 @@ paths:
 - **Remote dev box:** one volume on those paths (subpaths of one volume are enough).
 - **Remote task or scheduled job:** no volume needed; results leave through git and the task record.
 
+A container and its state belong to one user (R13). Two developers on one project get two
+containers, two harness homes and two `.env` files; they share through git.
+
 ### 7.2 Remote
 
 - **VM with Docker (tested):** the same CLI on the VM, used over SSH, behaves as local. Running the
@@ -296,13 +306,13 @@ paths:
 
 New: `add`, `copy`, `mount`, `volume`, `remove`, `list` (section 4). Changed:
 
-- `init` writes version 2 with the recommended lines; `--bare` writes none; `--migrate` converts a
-  version 1 file (section 10).
+- `init` writes version 2 with the recommended lines; `--bare` writes none.
 - `build` renders the setup lines; `--refresh-plugins` becomes `--refresh`.
 - `dev`, `shell`, `login`, `setup`, `doctor` and `run` add the `mount` and `volume` lines to their
-  `docker run` arguments, and `add workspace PATH` lines as bind mounts. Task containers get
-  `volume` lines but not `mount` lines (the task threat model in `docs/tasks.md` does not let a
-  task reach host paths beyond its clones).
+  `docker run` arguments, and `add workspace PATH` lines as bind mounts. Task containers get them
+  too: an autonomous task then holds whatever a `mount` brings in (for example cloud credentials).
+  `docs/tasks.md` states this in its threat model, and the setup skill steers users to `copy` for
+  plain files and `.env` for secrets rather than `mount`.
 - `doctor` adds: seed merged, assets current, workspaces cloned, `${VAR}` references set, skipped
   `mount` lines (remote), plugins installed by hand.
 - Removed: the AWS profile extraction (`AWS_PROFILE` in `.env` plus `mount ~/.aws` replaces it). The
@@ -329,23 +339,7 @@ New: `add`, `copy`, `mount`, `volume`, `remove`, `list` (section 4). Changed:
 The base image keeps the harnesses, Playwright with Chromium, the cloud and git CLIs, Docker CLI,
 and the tool presets. It drops `mcp-atlassian` and Graphify.
 
-## 10. Migration
-
-`agentic init --migrate` rewrites a version 1 file in place, keeping comments where yq can, and
-prints what it could not convert:
-
-- `git.user_*` → `.env` lines through `agentic-env add` (never a value it does not have);
-  `git.host` → `GH_HOST`.
-- `certs` → each `*.crt` moved to `files/` with a `copy` line.
-- `plugins.*`, `mcp.playwright`, `mcp.custom` → `setup` lines.
-- `mcp.atlassian`, `mcp.graphify` → printed as manual steps (they need `Dockerfile.extra`).
-- `.agentic/skills/` stays where it is.
-- `hooks.on_build` → printed: move it into `Dockerfile.extra`.
-- `harness.*.model` → `.env` lines.
-
-The converter ships with this revamp and is removed one release later.
-
-## 11. Setup skill
+## 10. Setup skill
 
 `/agentic-setup` keeps its role (refine `.agentic/` from the workspace, judgement on top of
 `agentic init`) and changes its means:
@@ -354,12 +348,14 @@ The converter ships with this revamp and is removed one release later.
   the container; it tells the user to run `agentic build` on the host).
 - It looks at the workspace for assets to adopt: existing `.claude/skills`, `.claude/agents`,
   `.github/agents`, MCP configs (`.mcp.json`), and offers `add` lines for them.
+- It prefers `copy` for plain files and `.env` for secrets, and proposes `mount` only for what
+  must stay in sync with the host, saying that tasks receive mounts too.
 - It guides `.env` with `agentic-env` (unchanged), including the git and cloud settings that used to
   be schema fields.
 - Its reference moves from the schema fields to the grammar in section 4, shipped as
   `skills/agentic-setup/reference/setup-lines.md`.
 
-## 12. Error handling
+## 11. Error handling
 
 | Situation | Behaviour |
 |---|---|
@@ -372,13 +368,13 @@ The converter ships with this revamp and is removed one release later.
 | `mount` source missing on the host | the CLI refuses to start the container, naming the line |
 | Remote start with `mount` lines | skipped, listed by `doctor` |
 
-## 13. Testing
+## 12. Testing
 
 - **bats, written first,** for every behaviour: the line parser and validator, add/remove/list and
   idempotency, `copy` localising and the secret refusal, the Dockerfile rendering per command,
   `agentic-apply` per target (harness CLIs stubbed), the 3-way merge (table-driven, every case of
   6.1), assets per target and their removal, the workspace step, run arguments for `mount` and
-  `volume`, the migration of each version 1 field.
+  `volume`.
 - **Smoke** builds a project with: a local fixture marketplace (`tests/fixtures/marketplace`, so no
   network), a plugin from it for both targets, an MCP server with an env reference, a `copy`, a
   certificate, an agent narrowed to Claude, a volume. It checks the result in both harness homes,
@@ -387,7 +383,7 @@ The converter ships with this revamp and is removed one release later.
 - **Manual, recorded in the PR:** a remote VM run (`agentic dev` over SSH; recreate keeps the
   clone, the login and a session).
 
-## 14. Delivery
+## 13. Delivery
 
 One spec, implemented in stages that each leave `main` green:
 
@@ -396,10 +392,10 @@ One spec, implemented in stages that each leave `main` green:
    plugins.
 3. Start phase: `40-seed`, `60-assets`, `05-workspace`; old steps removed.
 4. Run phase: `mount`, `volume`, workspace paths; AWS extraction and git config removed.
-5. Migration, `init --bare/--migrate`, setup skill, docs (`configuration.md` generated from the
+5. `init --bare`, setup skill, docs (`configuration.md` generated from the
    grammar, `architecture.md`, `overlay.md`, a remote page), leak check, smoke.
 
-## 15. Out of scope and backlog
+## 14. Out of scope and backlog
 
 - Scheduling (`schedules:`), tested together with a managed container service.
 - `agentic secret set NAME` (prompts without echo, writes `.env`) and Docker file secrets
@@ -408,3 +404,5 @@ One spec, implemented in stages that each leave `main` green:
 - `agentic build --push`.
 - Making `tools:` and `docker.socket` setup commands.
 - Other harnesses behind `--target`.
+- Several users on one remote host: per-user containers and volumes, naming, who may attach to
+  whose container (R13 fixes only the principle).
