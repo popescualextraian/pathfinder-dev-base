@@ -103,13 +103,14 @@ Parallel agents that change code each need their own git worktree. Full guide:
 
 > **Work in progress:** detached tasks are not finished yet; commands and behaviour may change.
 
-`agentic run` starts an unattended task in its own container and git worktree; Claude Code or
+`agentic run` starts an unattended task in a container set up like the dev
+container, with your checkout at `/work` (`--worktree` adds a worktree of its own); Claude Code or
 Copilot works on it through a small bridge, asks you with `agentic-ask` when it needs a decision,
 and suspends when idle. Push, pull requests and deploys are refused unless you allow them.
 Follow, answer, cancel and stop it from the CLI or a small local API.
 
 ```bash
-agentic run --allow open-pr "Fix the failing login test and open a pull request"
+agentic run --worktree --allow open-pr "Fix the failing login test and open a pull request"
 agentic follow T-20261012-a3f1
 agentic answer T-20261012-a3f1 Q1 "Yes, use the staging config" --allow push
 agentic status

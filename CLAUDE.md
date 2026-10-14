@@ -6,6 +6,9 @@ A generic container toolbox for agentic development: base image, per-project der
 
 ## Rules
 
+- The host CLI is a thin relay: it builds images, starts and stops containers, passes mounts and
+  env, and relays requests to the bridge. It never works on the project (no git, clone, branch,
+  worktree or build on the host); workflow rules live in the container.
 - No company resources in this repository: no certificates, company names, hosts, URLs or
   product-specific integrations. Examples use `example.com`. `make lint` runs
   `tools/leak-check.sh` against your private denylist (`~/.config/agentic/leak-denylist.txt`).

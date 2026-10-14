@@ -23,6 +23,9 @@ This document is the umbrella design. Each sub-project has its own spec in `docs
 
 ## Principles
 
+- **Thin host.** The host CLI is a thin relay: it builds images, starts and stops containers, passes mounts and
+  env, and relays requests to the bridge. It never works on the project (no git, clone, branch,
+  worktree or build on the host); workflow rules live in the container.
 - **Two human gates.** The human approves the spec (Gate 1) and reviews the final report
   (Gate 2). In between, the run goes on alone; the only stops are blocking requests.
 - **The agent has everything it needs to prove its work.** If a task needs a tool to build,
@@ -93,14 +96,14 @@ never a second copy of a base file to keep in sync.
   (3-way: what a removed line added goes, what the user changed stays). Run-phase lines (`mount`,
   `volume`) travel as an image label that the CLI turns into `docker run -v` arguments.
 - **State (1).** The container is disposable; state lives only in `/work`, `/workspaces`, the
-  harness homes and `/task`, which the launcher mounts (`docs/remote.md`). One container belongs
+  harness homes and `/tasks`, which the launcher mounts (`docs/remote.md`). One container belongs
   to one user.
 - **CLI (1, 2).** `bin/agentic` on the host is the only thing a developer installs for hub-less
-  use.
+  use. It never runs git on the project; a task's worktree is made in its container.
 - **Entry modes (1).** By default the entrypoint applies config and runs the given command (CLI
   mode). With `AGENTIC_WORKER_MODE=<name>` it applies the same config and then hands over to
   `/opt/agentic/worker.d/<name>.sh`, which an overlay provides. The base ships no worker adapter.
-- **Task files (2).** `state.json`, `events.jsonl` and `transcript.md` under the workspace are the source of truth for hub-less runs; only the bridge writes `state.json`.
+- **Task files (2).** `state.json`, `events.jsonl` and `transcript.md` under the workspace (`/tasks/<id>` in the task containers) are the source of truth for hub-less runs; only the bridge writes `state.json`.
 - **Gate (2).** The PreToolUse hook is installed at user scope for both harnesses, so it applies
   whether the CLI or a hub launches the harness.
 

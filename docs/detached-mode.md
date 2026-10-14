@@ -1,7 +1,7 @@
 # Detached mode
 
-`agentic run "prompt"` starts an unattended task: its own container, its own git worktree, and
-one agent session (Claude Code or Copilot CLI) driven by a small bridge in the image. You leave it
+`agentic run "prompt"` starts an unattended task: a container set up like your dev container with
+your checkout at `/work`, and one agent session (Claude Code or Copilot CLI) driven by a small bridge in the image. You leave it
 working and come back when it asks something or is done. Several tasks run side by side. Use
 [dev mode](dev-mode.md) when you want to sit with an agent; use detached mode when you want to
 hand a task off.
@@ -13,9 +13,9 @@ This guide is how to use it. The full contract (states, API, events, files, ever
 
 1. The project is set up as for dev mode: `agentic init`, `agentic build`, `agentic login`
    (or tokens in `.agentic/.env`). `agentic doctor` should pass.
-2. The repository's `origin` is a real remote: `https://`, `ssh://`, `git://` or `host:path`. A
-   repository without `origin` also works (the task clones your checkout). Local paths and
-   `file://` remotes are refused.
+2. `agentic.yaml` says what the project is: `layout: single` (the project root is a git
+   repository) or `layout: multi` (git repositories in its subfolders, with a default `target:`).
+   `agentic init` writes both; `agentic target NAME` sets the target.
 3. If the task should push or open a pull request, the container needs the git credentials your
    project already uses in dev mode (for example a token in `.agentic/.env`).
 
@@ -23,22 +23,24 @@ This guide is how to use it. The full contract (states, API, events, files, ever
 
 | Command | What it does |
 |---|---|
-| `agentic run "prompt" [options]` | Starts a task and prints its id, for example `T-20261013-a6ec`. |
+| `agentic run "prompt" [options]` | Starts a task in a new container and prints its id, for example `T-20261013-a6ec`. |
 | `agentic status [ID] [--all] [--json]` | Lists this project's tasks; with an id, the task, its open questions and how to reply. |
 | `agentic follow ID [--raw] [--forever]` | Streams what the agent does until the task waits, idles or ends. `Ctrl-c` only stops watching. |
 | `agentic answer ID [QID] "text" [--allow A]` | Answers the oldest (or the named) open question; `--allow` grants an action at the same time. |
 | `agentic send ID "text"` | A new prompt: more work, a correction. It wakes a suspended task. |
 | `agentic cancel ID` | Ends the current turn; the task stays and takes the next prompt. |
-| `agentic stop ID` | Ends the task for good. The worktree and files stay. |
+| `agentic stop ID` | Ends the task and stops its container. The worktree and files stay. |
 | `agentic resume ID` | Continues an interrupted or failed task. |
 | `agentic logs ID [--transcript\|--bridge\|--start]` | The readable transcript, the bridge's log, or the container start log. |
 | `agentic shell ID` | A shell in the running task container, to look around. |
 | `agentic takeover ID` | Stops the task and opens its session interactively, with the same history. |
-| `agentic clean ID [--force]` | Removes the container, the worktree, the local branch and the task files. |
+| `agentic clean ID [--force]` | Removes the worktree and branch, the container the task created, and the task files. |
 
 `run` options: `--prompt-file F` (a long prompt from a file), `--agent claude|copilot`,
-`--model M`, `--allow push|open-pr|deploy:<target>` (repeatable), `--repo R` (repeatable, see
-below), `--base REF`, `--branch B`, `--id ID`, `--keep-on-failure`, `--json`.
+`--model M`, `--allow push|open-pr|deploy:<target>` (repeatable), `--target T` (multi layout: the
+repository to work in), `--in ID` (run in that task's container, one task at a time),
+`--worktree` (own worktree and branch), `--auto-clean` (clean up after a normal end), `--id ID`,
+`--keep-on-failure`, `--json`.
 
 ## A typical task
 
@@ -87,22 +89,23 @@ outside world:
 - Interactive choosers are blocked; the agent asks through `agentic-ask` instead, so every question
   reaches you as a question you answer with `agentic answer`.
 
-## Git: worktrees, branches, getting the work out
+## The checkout, worktrees, getting the work out
 
-- Each task works in its own worktree on a new branch, `agentic/<ID>-<words from the prompt>`
-  (`--branch` to choose; `--base` for the starting point, default the remote's default branch).
-  The worktree belongs to a clone of the repository under `~/agentic-workspaces/<project>/repos/`,
-  not to your checkout, so your own work is never touched.
+- The task works on your checkout, mounted at `/work`, as the dev container does. In a multi
+  layout the agent starts in the target repository (`--target`, else `target:`). Without
+  `--worktree` its changes land in your checkout, so run one such task at a time.
+- With `--worktree` the task works in `.worktrees/<ID>` of the target on a new branch,
+  `agentic/<ID>-<words from the prompt>`, made inside the container from the target's current
+  `HEAD`. Your own files are not touched.
 - The work leaves the task through a push or a pull request, so allow one of them when you want
-  the result back. Inside the task, a plain `git push` has no upstream: the agent uses
-  `git push origin HEAD`.
-- Without `--repo` the task works on the project's own repository. `--repo R` (repeatable) names
-  the repositories instead: clone each one into
-  `~/agentic-workspaces/<project>/repos/R` once, then name it. The first `--repo` is the working
-  tree at `/work`; the others appear at `/workspaces/R`, and clones not named are mounted
-  read-only.
+  the result back. Your machine never runs git on the project; the credentials the container
+  uses are the ones your project already passes in dev mode.
+- `--in ID` runs a new task in the container of task `ID`, one task at a time.
+- A container is kept after its task ends, so you can look at it. `clean` removes it; with
+  `--auto-clean` a task that ends normally cleans up by itself.
 - `clean` refuses while the worktree has uncommitted changes or commits on no remote branch;
-  `--force` cleans anyway. Remote branches stay.
+  `--force` cleans anyway. Remote branches stay. Without `--worktree`, `clean` leaves `/work` as
+  it is.
 - Files stored with Git LFS arrive as pointer files in a task's worktree.
 
 ## Several tasks
@@ -120,12 +123,12 @@ ready `agentic answer ...` reply line. Every state change is also appended to
 
 ## Safety in brief
 
-A task can change its own worktree, commit, and use the network for its work. It cannot run
-anything on your machine outside its container: its git repository is only ever touched by git
-inside short-lived containers with no network, your machine only fetches into private copies the
-task cannot reach, and the task's tokens and settings live in a host-only directory. Dev-mode
-containers see only `repos/`, never other tasks' files. What remains, and the reasoning, is in the
-threat model of [`tasks.md`](tasks.md).
+A task can change your checkout (a worktree limits that to its own branch), commit, and use the
+network for its work. It cannot run anything on your machine outside its container: your machine
+runs no git on the project, and the task's tokens and settings live in a host-only directory. The
+checkout, `.git` included, is writable by the task, as in dev mode, and the project's task
+containers share `/tasks`. What remains, and the reasoning, is in the threat model of
+[`tasks.md`](tasks.md).
 
 ## When something is off
 
@@ -136,6 +139,8 @@ threat model of [`tasks.md`](tasks.md).
   container has exited.
 - `has no container`: the container was removed (for example by `docker container prune`); the
   task cannot be resumed. `clean` still works.
+- `no layout in .agentic/agentic.yaml`: run `agentic init` again. For several repositories and
+  no target, `agentic target NAME`.
 - The agent says it is not logged in: `agentic doctor`, then `agentic login`, then `resume`.
 - You want to finish a task yourself: `agentic takeover ID` continues the same session in your
   terminal.

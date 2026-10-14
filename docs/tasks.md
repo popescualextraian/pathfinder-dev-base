@@ -11,12 +11,12 @@ This file is the contract; the how-to guide is [`detached-mode.md`](detached-mod
 ## Quick start
 
 ```bash
-agentic run --allow open-pr "Fix the failing login test and open a pull request"   # prints the task id
+agentic run --worktree --allow open-pr "Fix the failing login test and open a pull request"   # prints the task id
 agentic follow T-20261012-a3f1                      # readable events until the task waits, idles or ends
 agentic status                                      # all tasks of this project; `status ID` shows open questions
 agentic answer T-20261012-a3f1 Q1 "Yes, use the staging config" --allow push
 agentic stop T-20261012-a3f1
-agentic clean T-20261012-a3f1                       # container, worktrees, local branch, record
+agentic clean T-20261012-a3f1                       # worktree and branch, container, record
 ```
 
 `answer` takes the question id optionally: `agentic answer ID "text"` answers the oldest open
@@ -30,10 +30,17 @@ over the WebSocket; `--raw` prints the JSON objects, `--forever` keeps streaming
 exiting once the task waits, idles, stops or fails. `status [ID] [--all] [--json]` lists the tasks
 of this project (`--all`: every project; `--json`: one JSON object, or an array for a list).
 
-`run` options: `--prompt-file F`, `--agent claude|copilot`, `--model M`, `--repo R` (repeatable),
-`--base REF`, `--branch B`, `--allow push|open-pr|deploy:<target>` (repeatable), `--id ID`,
-`--keep-on-failure`, `--json`. `run` validates before it creates anything and rolls back on any
-failure.
+`run [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--model M] [--allow GRANT]...
+[--id ID] [--prompt-file F] [--keep-on-failure] [--json] "prompt"`. `run` validates before it
+creates anything and rolls back what it created on any failure.
+
+- `--target T`: in a multi-repository project, the repository the agent works in (a direct
+  subfolder of the project root); the default is `target:` in `agentic.yaml`. A single-repository
+  project refuses it.
+- `--in ID`: run the new task in the container of task `ID`, one task at a time.
+- `--worktree`: the task gets its own worktree and branch, made in the container.
+- `--auto-clean`: when the task ends normally, the bridge removes its worktree, stops, and ends
+  the container the task created; the next `run` or `status` removes the leftovers.
 
 `status` shows the task's state; a task recorded as active whose container is gone shows
 `interrupted`, and one whose container state cannot be read (Docker failed) shows `unknown`, as
@@ -42,9 +49,28 @@ does one whose `state.json` is not a single JSON object; questions that are not 
 then reads them from the task files (`state.json`, `questions.jsonl`). `status ID --json` prints
 one shape whether or not the bridge is live: the status object (see The status object).
 
-`clean` refuses a running task, and a task whose worktree has uncommitted changes or commits on no
-remote branch, unless `--force` (which stops a running task first). It also refuses when it cannot
-check. Remote branches stay.
+`clean ID [--force]` removes what the task created: its worktree and branch in the container (it
+refuses uncommitted changes and commits on no remote branch unless `--force`, and also when it
+cannot check), the container when the task created it (it refuses while another task runs in it),
+and the task's files. Without `--worktree` it does not touch `/work`. Remote branches stay.
+
+## Tasks and containers
+
+- A task is identified by its id; it runs in a container.
+- `run` creates `agentic-<project>-task-<id>`, set up like the dev container: the checkout at
+  `/work` (in a multi-repository project, the agent starts in `/work/<target>`), the setup lines
+  and the full start. The container's command is `agentic-task-hold`, which sleeps. It keeps
+  `--cap-drop ALL` and `no-new-privileges`; the dev container does not.
+- The bridge is started with `docker exec` and writes to `/tasks/<id>`. `docker exec --env-file`
+  needs Docker CLI 20.10 or later.
+- `--in ID` runs a new task in that task's container, one task at a time. It is refused while
+  that task's bridge runs.
+- The container is kept until `clean`. `stop` stops it, and `resume` starts it again, followed by
+  the bridge.
+- The host-private files of a task, under `$AGENTIC_DATA/projects/<project>/tasks/<id>/`, are
+  `env`, holding the tokens and the bridge's settings, and `container`: the container's name,
+  whether the task created it, and the task that did. The host reads the container from there and
+  never from the record, which the agent can write.
 
 ## States
 
@@ -139,92 +165,29 @@ the bridge's environment or edit `state.json`. The tokens keep other host proces
 agent. Anyone with access to the Docker socket can read the tokens (`docker inspect`) and is root
 on the host anyway.
 
-Host git on task clones: no host git process opens a `.git` directory a task can write.
+The checkout and its `.git` are writable by the task, as in dev mode. An agent can change
+`.git/config`, a hook, `.agentic/.env` (tokens and `AGENTIC_GATE`, which reach every task) and
+`.agentic/agentic.yaml` (the next `agentic build`). Review a checkout an agent worked in before
+the next `run` or `build`.
 
-- Each changed clone's `.git` is mounted read-write into its task (commits, refs, objects), with
-  its `config`, `info/` (attributes, exclude) and `hooks/` read-only over it, so the agent cannot
-  add a remote, a credential helper, an ssh command, a proxy, a filter driver or a hook. Inside the
-  task, commit, branch, fetch and `git push origin HEAD` work; worktree branches have no upstream,
-  `git push -u` pushes but cannot record one, and `git config` needs `--global`.
-- The host fetches with the user's credentials only into a private bare mirror per clone,
-  `$AGENTIC_DATA/projects/<project>/mirrors/<name>.git`, which is never mounted into a container
-  (not even a dev container, which sees only `repos/`). Each mirror fetches from the URL it
-  recorded when it was made (pinned): for the project's own clone, the checkout's `origin`
-  (credentials stripped; without an origin, the checkout itself) at the first `run`; for a `--repo`
-  clone, its origin, read before any task has had access to the clone, though a dev agent may have
-  written it. A recorded origin must name a remote: `https://`, `ssh://`, `git://` or scp-style
-  `[user@]host:path`. A local path, `file://` or a `<name>::` transport helper is refused, so no
-  origin can make a mirror copy another repository of the host. Later changes to either origin are
-  not read. To change the URL on purpose, delete the mirror (the next `run` records the current
-  origin) or set it there: `git --git-dir=<mirror> remote set-url origin <url>`. A URL that starts
-  with `-` is refused, and every URL or path operand of host git follows `--`, so no URL is taken
-  for an option such as `--upload-pack`. Host git that talks to a remote allows only the `https`,
-  `ssh` and `git` transports (`protocol.allow=never`); `file` only for the checkout fallback and
-  from the mirror itself (the host's new clone, and the fetch into a clone in a throwaway
-  container). Host git on a mirror keeps the user's own settings for what could run a command (the
-  ssh command and askpass from the user's config, credential helpers reset and replayed from the
-  system and global config, a `git://` proxy only from the user, `ext::` off), no hooks, no
-  fsmonitor, `gc.auto=0`, `maintenance.auto=false`.
-- Every operation on a clone (fetch from the mirror into `refs/remotes/origin/`, `worktree add`,
-  `clean`'s `status` and `log`, rollback's `worktree remove`, `worktree prune`, `branch -D`) runs in a
-  throwaway container of the task's image: `--network none`, the invoking user, `--cap-drop ALL`,
-  `no-new-privileges`, a read-only root with a `/tmp` tmpfs as `HOME`, `GIT_DIR` and
-  `GIT_COMMON_DIR` pinned, the clone's `.git` with `config`, `info/` and `hooks/` read-only, the
-  mirror read-only when fetching from it, and only the one worktree a call needs (`prune` sees
-  `.worktrees/` read-only). No hooks, no fsmonitor, no automatic gc, no `FETCH_HEAD`. A filter,
-  command or symlink the agent planted acts inside that container and points at nothing on the host.
-- The only host git on a clone is its creation: a brand-new clone is made by the host from the
-  mirror, in a fresh directory no task has seen, before any agent exists.
-- What remains: clones from before this design may carry config an agent planted then (delete
-  them to start fresh); a checkout in the container sees neither the network
-  nor the user's global config, so Git LFS files of a worktree are pointer files; `clean` trusts what
-  the agent left in its worktree.
-- Tasks that share a clone share its refs and objects: one agent can forge `refs/remotes/origin/*`
-  or objects that a later task checks out from, and that `clean`'s unpushed check of another task
-  compares against. The mirror fetch refreshes `refs/remotes/origin/*` before each new worktree,
-  but not in between.
+The project's task containers share `/tasks`, so one task's agent can write another task's
+record. The host takes the container and the work directory only from its own files (`container`
+and `env` above), never from a record. Every bind source (the workspace, `tasks/`, `events/`) must
+be its own canonical path, because Docker follows symlinks in bind sources; `run` refuses a
+symlinked one, makes the task directory exclusively, and never reuses a container it did not
+create. The project name must match `^[a-z0-9][a-z0-9-]{0,62}$`.
 
-Other host reads and writes: the host's own task files (tokens, mounts, repos) live under
-`$AGENTIC_DATA` (see Files), which no container mounts; the mounts file is checked on every read
-(only the `-v` forms `run` writes). Files the agent writes in the task directory (`state.json`,
-`questions.jsonl`, `transcript.md`, `bridge.log`) are read only when they are regular files and no
-symlinks, so the terminal never shows a host file and never blocks on a FIFO; what is printed has
-control characters removed, also git's messages from the throwaway containers. Rollback and
-`clean` remove only paths inside the workspace with no symlink below its root.
+The host runs no git in the checkout except reading the user's identity (`user.name` and
+`user.email`) for the container. A worktree is made, checked and removed by the container's
+`agentic-worktree`, with no network and no host credentials. Files the agent writes in the task
+directory (`state.json`, `questions.jsonl`, `transcript.md`, `bridge.log`) are read only when they
+are regular files and no symlinks, so the terminal never shows a host file and never blocks on a
+FIFO; what is printed has control characters removed. `clean` removes only paths inside the
+workspace with no symlink below its root. Files stored with Git LFS arrive as pointer files in a
+task's worktree.
 
-Every bind source in a task's mounts must be its own canonical path (no symlink in any component),
-because Docker follows symlinks in bind sources; rollback and `clean` take only canonical clone and
-worktree paths under `repos/`. Host task files are used only when they are regular files, and
-agent-written files are opened without following a symlink and without blocking: also a worktree's
-`.git` file, and the harness logins (`.credentials.json`, `config.json`) that the login check reads
-and `run` copies into a task's home, which must be regular files and no symlinks. Task containers
-(and `takeover`) run with `--cap-drop ALL` and `no-new-privileges`.
-
-Dev mode: `agentic dev`, `shell`, `login`, `setup` and `doctor` mount only the workspace's
-`repos/` (canonical path) at `/workspaces/repos`, never the workspace root, so `tasks/` (records,
-transcripts, sessions) and `events/` are out of reach of an interactive container, and so is
-everything under `$AGENTIC_DATA` other than the harness homes. A dev agent can still change the
-clones in `repos/`, as a task's agent can: the host meets them only through the private mirrors,
-the throwaway containers and the canonical-path checks above.
-
-The dev container also mounts the user's checkout read-write at `/work`, so a dev agent can change
-everything in it that the host reads: the `origin` URL in `.git/config`, `.agentic/.env` (tokens,
-`AGENTIC_GATE`, which reach every task) and `.agentic/agentic.yaml` (the next `agentic build`). Host
-git also runs in the checkout itself (`rev-parse`, `remote get-url`, `config user.name` and
-`user.email`), with no fsmonitor and no hooks, but it reads the checkout's `.git/config`. What is
-pinned: once a mirror exists, `run` no longer reads the checkout's or a clone's origin; an origin
-is recorded only when it names a remote, and a URL is never taken for a git option. What remains:
-before a mirror exists, the first `run` (or the first use of a `--repo` clone) records whatever
-remote origin a dev agent left there; `.git/config`, `.env` and `agentic.yaml` are trusted as
-written, so review a checkout a dev agent worked in before the next `run` or `build`; and the
-harness homes are shared, so a dev agent can replace a login a task copies.
-
-Known limit, check then use: the host checks a path (a clone's `.git`, its `.worktrees/`, a
-worktree's `.git` file) and later uses it (a bind source of `docker run`, a throwaway container).
-An agent that can write `repos/` (a dev agent, or a running task) and swaps `repos/<name>/.git` or
-`.worktrees` for a symlink between the check and the `docker run` is not stopped: Docker resolves
-the bind source when the container starts. Avoid running a dev agent while a task starts or is
-cleaned.
+Dev mode (`agentic dev`, `shell`, `login`, `setup`, `doctor`) mounts only what it needs and never
+`tasks/` or `events/`, so an interactive container cannot reach a task's records or transcripts.
 
 Outside the model: an image built with the Docker socket label (`agentic.docker_socket`) mounts
 the Docker socket into every task, which is host root access for the agent. The project's `mount`
@@ -290,10 +253,9 @@ history replayed by `session/load`. `seq` increases by one per event and is the 
 
 ```
 $AGENTIC_WORKSPACES/<project>/
-├─ repos/<name>/                    clones; worktrees in .worktrees/<ID>   ─▶ /workspaces/repos (dev)
 ├─ events/events.jsonl              project-wide notify log            ─▶ /events
-└─ tasks/
-   ├─ <ID>/                                                            ─▶ /task
+└─ tasks/                                                              ─▶ /tasks
+   ├─ <ID>/                                                            ─▶ /tasks/<ID>
    │  ├─ state.json                 the task record, written only by the bridge
    │  ├─ events.jsonl               every event
    │  ├─ questions.jsonl            asked and answered records; the last line per id wins
@@ -303,17 +265,12 @@ $AGENTIC_WORKSPACES/<project>/
    │  └─ home/claude/, home/copilot/   CLAUDE_CONFIG_DIR, COPILOT_HOME: sessions survive containers
 
 $AGENTIC_DATA/projects/<project>/      host only: never mounted into a task or the dev container
-├─ mirrors/<name>.git               private bare mirror of each clone; the only repositories host git opens
 ├─ events.jsonl                     the host's own log: interrupted lines
 └─ tasks/<ID>/
-   ├─ env                           mode 600: AGENTIC_TASK_TOKEN, AGENTIC_AGENT_TOKEN
-   ├─ mounts                        the task's -v arguments (checked on every read)
-   ├─ repos                         clone, worktree and branch per line, for clean and rollback
+   ├─ env                           mode 600: tokens and the bridge's settings (--env-file)
+   ├─ container                     the container's name, created 1/0, the creating task
    └─ interrupted                   marker: the interruption was logged
 ```
-
-Tasks created before these files left the workspace (`tasks/<ID>.env`, `.mounts`, `.repos`,
-`.interrupted`) have them moved here the first time a command touches the task.
 
 `bin/agentic` creates every directory as the invoking user, so no volume comes up owned by root.
 In the cloud, `/task` is one volume and start step `06-task-home` creates the homes. At creation
@@ -398,10 +355,13 @@ Read by the bridge (`bridge/src/config.ts`):
 | `AGENTIC_MODEL` | none | model name passed to the agent |
 | `AGENTIC_TASK_ID` | `task` | task id |
 | `AGENTIC_PROJECT` | `project` | project name |
-| `AGENTIC_BRANCH` | none | the task's branch |
+| `AGENTIC_BRANCH` | none | the worktree's branch name (only with `AGENTIC_WORKTREE`) |
 | `AGENTIC_PROMPT` | none | first prompt when `prompt.md` is absent (cloud) |
 | `AGENTIC_TASK_DIR` | `/task` | the task's state directory |
-| `AGENTIC_WORK` | `/work` | the working tree |
+| `AGENTIC_WORK` | `/work` | the repository the agent works in (`/work/<target>` in a multi-repository project) |
+| `AGENTIC_TARGET` | none | the target's name, recorded |
+| `AGENTIC_WORKTREE` | none | `1`: the bridge makes a worktree and branch before the session |
+| `AGENTIC_AUTO_CLEAN` | none | `1`: the bridge cleans up after a normal turn |
 | `AGENTIC_EVENTS_DIR` | `/events` | project notify log directory |
 | `AGENTIC_IDLE_TIMEOUT` | `900` | seconds in `waiting` or `idle` before suspension |
 | `AGENTIC_BRIDGE_PORT` | `8765` | listen port, 1 to 65535 |
