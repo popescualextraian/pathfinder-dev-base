@@ -256,3 +256,20 @@ ws_repo() { mkdir -p "$WS/$1"; git init -q "$WS/$1"; }
   [[ "$output" == *"agentic login git https://"*"clone"* ]]
   grep -q '^Shape: empty workspace folder' "$WS/.agentic/detect-report.md"
 }
+
+@test "init in a workspace folder records each repository with a remote origin as an add workspace line" {
+  WS="$BATS_TEST_TMPDIR/ws"; ws_repo api; ws_repo ui; ws_repo scratch
+  git -C "$WS/api" remote add origin 'https://user:tok123@git.example.com/team/api.git'
+  git -C "$WS/ui" remote add origin git@git.example.com:team/web-ui.git
+  run bash -c "cd '$WS' && bash '$A' init --bare"
+  [ "$status" -eq 0 ]
+  y="$WS/.agentic/agentic.yaml"
+  [ "$(yq -r '.setup[0]' "$y")" = "add workspace https://git.example.com/team/api.git" ]
+  [ "$(yq -r '.setup[1]' "$y")" = "add workspace git@git.example.com:team/web-ui.git --name ui" ]
+  [ "$(yq '.setup | length' "$y")" = 2 ]
+  ! grep -rq tok123 "$WS/.agentic"
+  grep -B2 'add workspace https' "$y" | grep -q '/work/<name>'
+  make_agentic_dir
+  run "$REPO_ROOT/image/bin/agentic-config" validate "$WS/.agentic"
+  [ "$status" -eq 0 ]
+}

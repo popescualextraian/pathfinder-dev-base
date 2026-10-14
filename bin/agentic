@@ -102,6 +102,18 @@ yaml_str() {
   else printf "'%s'\n" "${1//\'/\'\'}"; fi
 }
 
+# folder_lines ROOT: an `add workspace` line per repository of workspace folder ROOT whose origin
+# is a remote URL (credentials stripped), so a missing one is cloned into /work at start.
+folder_lines() {
+  local r url n
+  while IFS= read -r r; do
+    url="$(pgit -C "$1/$r" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#')" || continue
+    case "$url" in https://*|ssh://*|git@*:*) ;; *) continue ;; esac
+    n="${url%/}"; n="${n##*[/:]}"; n="${n%.git}"
+    if [ "$n" = "$r" ]; then printf 'add workspace %s\n' "$url"; else printf 'add workspace %s --name %s\n' "$url" "$r"; fi
+  done < <(sub_repos "$1")
+}
+
 # recommended_lines [IMAGE]: the recommended setup lines, from IMAGE (an overlay's, else the base's
 # file in it) or from this checkout; comments and blank lines dropped.
 recommended_lines() {
@@ -155,7 +167,7 @@ init_shape_notes() {
 }
 
 cmd_init() {
-  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r shape shape_line repos
+  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r shape shape_line repos wsl
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1 ;;
@@ -193,15 +205,23 @@ cmd_init() {
     *) shape_line="empty workspace folder (no git repository)" ;;
   esac
   if [ "$bare" = 0 ]; then rec="$(recommended_lines "$base")"; else rec=""; fi
+  wsl=""; if [ "$shape" = workspace ]; then wsl="$(folder_lines "$root")"; fi
   while IFS= read -r line; do
     case "$line" in
       @TOOLS@) render_tools "$det" ;;
       @BASE@) if [ -n "$base" ]; then printf 'base_image: %s\n' "$base"; fi ;;
       @SETUP@)
-        if [ -z "$rec" ]; then echo 'setup: []'
+        if [ -z "$rec$wsl" ]; then echo 'setup: []'
         else
-          echo 'setup:'; echo '  # recommended (delete a line to drop it)'
-          while IFS= read -r r; do printf '  - %s\n' "$(yaml_str "$r")"; done <<<"$rec"
+          echo 'setup:'
+          if [ -n "$wsl" ]; then
+            echo '  # the repositories of this folder: a missing one is cloned into /work/<name> at start'
+            while IFS= read -r r; do printf '  - %s\n' "$(yaml_str "$r")"; done <<<"$wsl"
+          fi
+          if [ -n "$rec" ]; then
+            echo '  # recommended (delete a line to drop it)'
+            while IFS= read -r r; do printf '  - %s\n' "$(yaml_str "$r")"; done <<<"$rec"
+          fi
         fi ;;
       *) printf '%s\n' "${line//@PROJECT@/$name}" ;;
     esac

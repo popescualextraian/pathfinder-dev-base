@@ -86,9 +86,11 @@ once the split is done.
   4. Detection: `init` and the setup skill also read build files in each repository one level down.
   5. Discoverability: `docs/setup.md` gets a "several repositories" section (including that a
      folder on the Linux filesystem is faster than `/mnt/c`); `doctor` lists the repositories.
-  6. `add workspace`: kept for repositories outside the folder; to be revisited once the
-     workspace folder works (a URL line could clone into `/work/<name>` so a teammate or a remote
-     host gets the same set).
+  6. `add workspace` (done): in a workspace folder a URL line clones into `/work/<name>` at start
+     when it is missing (`image/start.d/15-workspaces.sh`; a single repository keeps
+     `/workspaces/repos/<name>`), and `init` writes a line per repository with a remote origin,
+     so `.agentic/` records the set for a teammate or another host. A path line stays a bind mount
+     for a repository outside the folder.
 - **Generated `agentic.yaml` comments** (done: the template and `agentic list`): what `targets` (where setup lines install) and
   `harness.default` (which agent runs) each mean, and above `setup:` the built-in mounts (the
   repository at `/work`, a task's own worktree there instead; `.agentic/` read-only at

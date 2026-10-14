@@ -45,7 +45,7 @@ order on every build.
 | `add agent PATH` | build | yes | copies an agent file into `.agentic/agents/` |
 | `add command PATH` | build | yes | copies a slash command into `.agentic/commands/` (Claude only) |
 | `copy SRC DEST` | build | no | copies a file or folder into the image at `DEST`; an outside `SRC` is first copied into `.agentic/files/` |
-| `add workspace URL\|PATH [--name N] [--ref R]` | start | no | a URL is cloned once into `/workspaces/repos/<name>`; a path is bind-mounted there (local only) |
+| `add workspace URL\|PATH [--name N] [--ref R]` | start | no | a URL is cloned once into `/workspaces/repos/<name>` (in a workspace folder: `/work/<name>`); a path is bind-mounted there (local only) |
 | `mount SRC DEST [--readonly]` | run | no | bind-mounts a host path; `~` is your home, a relative path is relative to the project root |
 | `volume NAME DEST` | run | no | a Docker named volume, `agentic-<project>-NAME` |
 
@@ -208,7 +208,18 @@ described in [detached-mode.md](detached-mode.md).
 On Windows, keep the folder on the Linux filesystem of WSL (`~/work/shop`) rather than under
 `/mnt/c`: file access from the container is many times faster there.
 
-`add workspace` stays for a repository outside the folder.
+In a workspace folder, an `add workspace URL` line clones into the folder itself (`/work/<name>`,
+on the host `<folder>/<name>`) at the next start when that folder is missing, and never touches
+an existing one. `init` writes one such line for each repository whose origin is a remote URL, so
+`.agentic/` records the set: copy it to an empty folder on another machine (or give it to a
+teammate), run `agentic login git`, and the first `agentic dev` clones the rest. For a folder set up
+before, add them by hand:
+
+```
+agentic add workspace https://git.example.com/team/api.git
+```
+
+A path line still bind-mounts a folder from elsewhere at `/workspaces/repos/<name>`.
 
 ## Where things live
 

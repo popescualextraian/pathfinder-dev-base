@@ -134,8 +134,9 @@ Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_
    - the build would download through a TLS-intercepting proxy but no CA certificate is copied.
 4. **Ask for what you cannot see** (after checking the inventory): tools used day to day that are
    not in the repository or the image, deploy targets and their CLIs, issue tracker and wiki URLs,
-   extra MCP servers, plugins and marketplaces the team uses, other repositories to work on (in a
-   workspace folder, clone them into `/work`; otherwise `add workspace`), the preferred harness, corporate CA certificates (copy them with
+   extra MCP servers, plugins and marketplaces the team uses, other repositories to work on (`add workspace URL`: in a workspace
+   folder it clones into `/work/<name>` at the next start and records the repository for
+   teammates; otherwise into `/workspaces/repos/<name>`), the preferred harness, corporate CA certificates (copy them with
    `copy files/NAME.crt /usr/local/share/ca-certificates/NAME.crt`).
 5. **Handle specific needs with the lowest rung that works**:
 

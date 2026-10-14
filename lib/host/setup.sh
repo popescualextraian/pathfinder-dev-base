@@ -112,7 +112,7 @@ cmd_remove() {
   # KIND KEY, then nothing or --target T: any other word (--target=T) would widen the removal
   [ "${#WORDS[@]}" -eq 2 ] || { [ "${#WORDS[@]}" -eq 4 ] && [ "${WORDS[2]}" = --target ]; } \
     || die "usage: agentic remove KIND KEY [--target T]"
-  local kind="${WORDS[0]}" key="${WORDS[1]}" out rc=0 cfg
+  local kind="${WORDS[0]}" key="${WORDS[1]}" out rc=0 cfg d
   cfg="$(cfg_dir)"
   case "$kind" in
     skill|agent|command)
@@ -133,7 +133,10 @@ cmd_remove() {
     *) [ "$rc" = 0 ] || exit "$rc" ;;
   esac
   case "$kind" in
-    workspace) echo "the clone stays in $(realpath -m -- "$AGENTIC_WORKSPACES")/$(project_name)/repos/$key; delete it yourself when you are done" ;;
+    workspace)
+      if [ "$(project_shape "$(project_root)")" = repo ]; then d="$(realpath -m -- "$AGENTIC_WORKSPACES")/$(project_name)/repos/$key"
+      else d="$(project_root)/$key"; fi
+      echo "the clone stays in $d; delete it yourself when you are done" ;;
     volume) echo "the Docker volume agentic-$(project_name)-$key stays; docker volume rm agentic-$(project_name)-$key deletes it" ;;
     copy) echo "files under .agentic/files/ stay; delete the one you no longer need" ;;
   esac
