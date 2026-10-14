@@ -2,6 +2,7 @@
 # Controls: DOCKER_LABEL (image inspect -f output), DOCKER_IMAGE_EXISTS (1/0),
 # DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output),
 # DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PS (docker ps ids, space-separated),
+# DOCKER_MOUNTS (inspect .Mounts output, printed as is),
 # `docker start` makes later status inspects say running. DOCKER_DOWN (inspect .State.Status fails like an unreachable daemon).
 # A throwaway git container (`run ... --entrypoint git IMAGE ARG...`, the image right after the entrypoint)
 # runs git here on ARG... with its -e variables and DOCKER_STUB_CONTAINER=1, so a planted command can
@@ -15,6 +16,7 @@ case "$1" in
   image)
     if [ "$3" = -f ]; then echo "${DOCKER_LABEL:-}"; exit 0; else [ "${DOCKER_IMAGE_EXISTS:-1}" = 1 ]; exit $?; fi ;;
   inspect)
+    if [[ "$*" == *.Mounts* ]]; then printf '%s' "${DOCKER_MOUNTS:-}"; exit 0; fi
     if [[ "$*" == *State.Status* ]]; then
       if [ -f "$BATS_TEST_TMPDIR/docker.status" ]; then cat "$BATS_TEST_TMPDIR/docker.status"; exit 0; fi
       if [ -n "${DOCKER_DOWN:-}" ]; then echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock" >&2; exit 1; fi

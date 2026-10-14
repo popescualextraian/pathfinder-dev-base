@@ -49,6 +49,41 @@ setup() {
   [[ "$output" == *"next:"* ]]
 }
 
+# held_mkdir: a mkdir that fails like Windows does for a deleted folder a process still holds open.
+held_mkdir() {
+  printf '#!/usr/bin/env bash\nfor a; do case "$a" in */.agentic) echo "mkdir: cannot create directory %s: File exists" "$a" >&2; exit 1 ;; esac; done\nexec %q "$@"\n' \
+    "'\$a'" "$(command -v mkdir)" > "$BATS_TEST_TMPDIR/bin/mkdir"
+  chmod +x "$BATS_TEST_TMPDIR/bin/mkdir"
+}
+
+@test "init names the running container that still holds a deleted .agentic and how to free it" {
+  held_mkdir
+  export DOCKER_PS="c1 c2"
+  export DOCKER_MOUNTS="$(printf '/agentic-other-dev\t/elsewhere/.agentic\n/agentic-orders-service-dev\t%s/.agentic\n' "$PROJ")"
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not exist but its name is still held open"* ]]
+  [[ "$output" == *"docker rm -f agentic-orders-service-dev"* ]]
+  [[ "$output" != *"agentic-other-dev"* ]]
+}
+
+@test "init without a holding container still explains a held .agentic" {
+  held_mkdir
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not exist but its name is still held open"* ]]
+  [[ "$output" != *"docker rm"* ]]
+}
+
+@test "init --env-example explains a held .agentic too" {
+  held_mkdir
+  export DOCKER_PS="c1"
+  export DOCKER_MOUNTS="$(printf '/agentic-orders-service-dev\t%s/.agentic\n' "$PROJ")"
+  run bash -c "cd '$PROJ' && bash '$A' init --env-example"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"docker rm -f agentic-orders-service-dev"* ]]
+}
+
 @test "init refuses to overwrite agentic.yaml without --force, and keeps other files" {
   bash -c "cd '$PROJ' && bash '$A' init" >/dev/null
   echo 'GH_TOKEN=keep' > "$PROJ/.agentic/.env.example"

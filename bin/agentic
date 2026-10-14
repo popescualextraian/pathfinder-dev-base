@@ -109,6 +109,26 @@ recommended_lines() {
   else cat "$AGENTIC_ROOT/config/recommended"; fi | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d'
 }
 
+# make_cfg DIR: mkdir -p DIR. When that fails although DIR is not there, a deleted DIR is still held
+# open (Windows keeps the name until the last handle closes): name the running containers that mount it.
+make_cfg() {
+  local held
+  mkdir -p "$1" && return 0
+  [ ! -e "$1" ] && [ ! -L "$1" ] || exit 1
+  held="$(docker ps -q 2>/dev/null | xargs -r docker inspect -f '{{range .Mounts}}{{$.Name}}{{"\t"}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null |
+    awk -F '\t' -v d="$1" '$2 == d || index($2, d "/") == 1 { sub(/^\//, "", $1); print $1 }' | sort -u || true)"
+  {
+    echo "agentic: $1 does not exist but its name is still held open, so it cannot be created again"
+    if [ -n "$held" ]; then
+      echo "  a running container still mounts it; remove it, then run this again:"
+      while IFS= read -r c; do echo "    docker rm -f $c"; done <<<"$held"
+    else
+      echo "  close whatever still uses it (a container, an editor, a shell inside it), then run this again"
+    fi
+  } >&2
+  exit 1
+}
+
 cmd_init() {
   local force=0 bare=0 base="" envx=0 root cfg det name line files rec r
   while [ $# -gt 0 ]; do
@@ -124,14 +144,14 @@ cmd_init() {
   root="$(project_root)"; cfg="$root/.agentic"
   if [ "$envx" = 1 ]; then
     if [ -e "$cfg/.env.example" ]; then echo ".agentic/.env.example exists; left unchanged"; return 0; fi
-    mkdir -p "$cfg"
+    make_cfg "$cfg"
     cp "$AGENTIC_ROOT/templates/dot-agentic/.env.example" "$cfg/.env.example"
     echo "wrote $cfg/.env.example"; return 0
   fi
   if [ -f "$cfg/agentic.yaml" ] && [ "$force" = 0 ]; then
     die ".agentic/agentic.yaml already exists; use --force to overwrite it"
   fi
-  mkdir -p "$cfg"
+  make_cfg "$cfg"
   # the skeleton never overwrites a file that is already there
   (cd "$AGENTIC_ROOT/templates/dot-agentic" && find . -type f) | while IFS= read -r line; do
     if [ ! -e "$cfg/$line" ]; then
