@@ -31,7 +31,9 @@ setup() {
   grep -qx 'CLAUDE_CODE_OAUTH_TOKEN=' "$PROJ/.agentic/.env.example"
   grep -q 'claude setup-token' "$PROJ/.agentic/.env.example"
   grep -qx '.env' "$PROJ/.agentic/.gitignore"
-  [ -d "$PROJ/.agentic/certs" ]
+  [ -d "$PROJ/.agentic/files" ]
+  [ -d "$PROJ/.agentic/agents" ]
+  [ ! -e "$PROJ/.agentic/certs" ]
   grep -q 'pom.xml' "$PROJ/.agentic/detect-report.md"
   [[ "$output" == *"agentic build"* ]]
 }
@@ -108,4 +110,37 @@ setup() {
     run "$REPO_ROOT/image/bin/agentic-config" validate "$PROJ/.agentic"
     [ "$status" -eq 0 ]
   done
+}
+
+ini() { (cd "$PROJ" && bash "$A" init "$@"); }
+
+@test "init writes version 2 with the recommended lines" {
+  run ini
+  [ "$status" -eq 0 ]
+  grep -q '^version: 2$' "$PROJ/.agentic/agentic.yaml"
+  grep -qF -- '  - add plugin superpowers@claude-plugins-official --target claude' "$PROJ/.agentic/agentic.yaml"
+  grep -qF -- '  - add mcp playwright -- mcp-server-playwright --headless' "$PROJ/.agentic/agentic.yaml"
+  if grep -q '^git:' "$PROJ/.agentic/agentic.yaml"; then return 1; fi
+  make_agentic_dir
+  run "$REPO_ROOT/image/bin/agentic-config" validate "$PROJ/.agentic"
+  [ "$status" -eq 0 ]
+}
+
+@test "init --bare writes an empty setup list" {
+  ini --bare
+  grep -q '^setup: \[\]$' "$PROJ/.agentic/agentic.yaml"
+}
+
+@test "init --base takes the image's recommended lines and writes base_image" {
+  export DOCKER_RUN_OUT=$'# team defaults\nadd plugin team@corp-market'
+  ini --base team-x:1
+  grep -q '^base_image: team-x:1$' "$PROJ/.agentic/agentic.yaml"
+  grep -qF -- '  - add plugin team@corp-market' "$PROJ/.agentic/agentic.yaml"
+  if grep -q superpowers "$PROJ/.agentic/agentic.yaml"; then return 1; fi
+}
+
+@test "the .env example documents the variables that replaced config fields" {
+  ini
+  for v in GIT_COMMITTER_NAME GH_HOST ANTHROPIC_MODEL COPILOT_MODEL AWS_PROFILE; do grep -q "$v" "$PROJ/.agentic/.env.example"; done
+  if grep -q JIRA_PERSONAL_TOKEN "$PROJ/.agentic/.env.example"; then return 1; fi
 }

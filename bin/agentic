@@ -14,7 +14,9 @@ source "$AGENTIC_ROOT/lib/host/setup.sh"
 usage() {
   cat <<'EOF'
 agentic <command> [options]          run inside a project repository
-  init [--force | --env-example]     write .agentic/ for this repository, with detected tools;
+  init [--force] [--bare] [--base IMAGE] | init --env-example
+                                     write .agentic/ for this repository, with detected tools and the
+                                     recommended setup lines (--bare: none; --base: an overlay's);
                                      --env-example restores a missing .env.example template
   build [--refresh] [--no-cache]
                                      build the base if needed, then agentic-<project>:local
@@ -92,12 +94,29 @@ cmd_build() {
   echo "built $img"
 }
 
+# recommended_lines [IMAGE]: the recommended setup lines, from IMAGE (an overlay's, else the base's
+# file in it) or from this checkout; comments and blank lines dropped.
+recommended_lines() {
+  if [ -n "${1:-}" ]; then
+    docker run --rm --entrypoint sh "$1" -c 'cat /opt/agentic/defaults/recommended 2>/dev/null || cat /opt/agentic/config/recommended' \
+      || die "could not read the recommended setup lines from $1"
+  else cat "$AGENTIC_ROOT/config/recommended"; fi | sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d'
+}
+
 cmd_init() {
-  local force=0 root cfg det name url host line files
-  shopt -u patsub_replacement 2>/dev/null || true   # & in a URL stays literal
-  [ "${1:-}" = --force ] && force=1
+  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --force) force=1 ;;
+      --bare) bare=1 ;;
+      --base) optval "$@"; base="$2"; shift ;;
+      --env-example) envx=1 ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
   root="$(project_root)"; cfg="$root/.agentic"
-  if [ "${1:-}" = --env-example ]; then
+  if [ "$envx" = 1 ]; then
     if [ -e "$cfg/.env.example" ]; then echo ".agentic/.env.example exists; left unchanged"; return 0; fi
     mkdir -p "$cfg"
     cp "$AGENTIC_ROOT/templates/dot-agentic/.env.example" "$cfg/.env.example"
@@ -116,15 +135,18 @@ cmd_init() {
   done
   det="$(detect_tools "$root")"
   name="$(slugify "$(basename "$root")")"
-  url="$(pgit -C "$root" remote get-url origin 2>/dev/null || true)"
-  url="$(sed -E 's#^(https?://)[^/@]*@#\1#' <<<"$url")"   # no credentials in a committed file
-  host="github.com"
-  if [ -n "$url" ]; then host="$(sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*$##' <<<"$url")"; fi
+  if [ "$bare" = 0 ]; then rec="$(recommended_lines "$base")"; else rec=""; fi
   while IFS= read -r line; do
     case "$line" in
       @TOOLS@) render_tools "$det" ;;
-      *) line="${line//@PROJECT@/$name}"; line="${line//@GIT_HOST@/$host}"
-         printf '%s\n' "$line" ;;
+      @BASE@) if [ -n "$base" ]; then printf 'base_image: %s\n' "$base"; fi ;;
+      @SETUP@)
+        if [ -z "$rec" ]; then echo 'setup: []'
+        else
+          echo 'setup:'; echo '  # recommended (delete a line to drop it)'
+          while IFS= read -r r; do printf '  - %s\n' "$r"; done <<<"$rec"
+        fi ;;
+      *) printf '%s\n' "${line//@PROJECT@/$name}" ;;
     esac
   done < "$AGENTIC_ROOT/templates/agentic.yaml.tmpl" > "$cfg/agentic.yaml"
   {
@@ -139,7 +161,7 @@ cmd_init() {
     echo "Notes:"; grep '^note=' <<<"$det" | sed 's/^note=/- /' || true
   } > "$cfg/detect-report.md"
   echo "wrote $cfg/agentic.yaml"
-  echo "next: review it, then run: agentic build && agentic login && agentic setup (optional) && agentic dev"
+  echo "next: review it, then run: agentic build && agentic login && agentic dev"
 }
 
 # run_image: the project image, or the base with a notice before the first build.

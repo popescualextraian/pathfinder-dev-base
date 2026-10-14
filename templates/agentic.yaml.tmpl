@@ -1,7 +1,9 @@
-# agentic-dev-base project configuration (docs/configuration.md in agentic-dev-base).
-# Secrets never go here: put them in .agentic/.env (git-ignored) and reference them as ${VAR}.
+# agentic-dev-base project configuration. Reference: docs/setup.md and docs/configuration.md in
+# agentic-dev-base. Secrets never go here: put them in .agentic/.env (git-ignored).
 version: 2
 project: @PROJECT@
+@BASE@
+targets: [claude, copilot]
 
 @TOOLS@
 
@@ -9,4 +11,8 @@ harness:
   default: claude
 
 docker:
-  socket: false   # true mounts the host Docker socket (host root); needs agentic build
+  socket: false   # true mounts the host Docker socket (host root)
+
+# The container's setup: agentic commands without the agentic prefix. `agentic add ...` appends
+# here; `agentic remove ...` deletes; delete a line by hand to drop it, then run agentic build.
+@SETUP@
