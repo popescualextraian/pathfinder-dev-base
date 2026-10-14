@@ -41,8 +41,12 @@ yaml_top() {
 # yaml_set_top FILE KEY VALUE: sets a top-level scalar: replaces the KEY: line, else appends one.
 yaml_set_top() {
   local tmp; tmp="$(mktemp "$1.XXXXXX")"
-  awk -v key="$2" -v val="$3" 'index($0, key ":") == 1 { if (!done) print key ": " val; done = 1; next }
-    { print } END { if (!done) print key ": " val }' "$1" > "$tmp" && mv -- "$tmp" "$1"
+  # keep the file's mode; remove the temp file when anything fails
+  if awk -v key="$2" -v val="$3" 'index($0, key ":") == 1 { if (!done) print key ": " val; done = 1; next }
+    { print } END { if (!done) print key ": " val }' "$1" > "$tmp" && chmod --reference="$1" "$tmp" && mv -- "$tmp" "$1"; then
+    return 0
+  fi
+  rm -f -- "$tmp"; return 1
 }
 project_name() {
   local p; p="$(yaml_top "$(cfg_dir)/agentic.yaml" project)"

@@ -37,3 +37,35 @@ lib() { bash -c "source '$REPO_ROOT/lib/host/common.sh'; $1"; }
   [ "$(grep -c '^target:' "$f")" = 1 ]
   grep -qx 'target: web' "$f"
 }
+
+@test "yaml_set_top keeps the file mode and leaves no temp file" {
+  f="$BATS_TEST_TMPDIR/y.yaml"
+  printf 'version: 2\n' > "$f"; chmod 644 "$f"
+  lib "yaml_set_top '$f' target api"
+  [ "$(stat -c %a "$f")" = 644 ]
+  [ -z "$(ls "$BATS_TEST_TMPDIR" | grep '^y\.yaml\.' || true)" ]
+}
+
+# shellcheck source=../../lib/host/layout.sh
+lay() { bash -c "source '$REPO_ROOT/lib/host/common.sh'; source '$REPO_ROOT/lib/host/layout.sh'; $1"; }
+
+@test "repo_dirs lists the direct subfolders with .git, sorted, and skips symlinks and files" {
+  ln -s "$M/api" "$M/link"
+  mkdir -p "$M/docs"; : > "$M/README"
+  [ "$(lay "repo_dirs '$M'" | tr '\n' ' ')" = "api web " ]
+}
+
+@test "valid_target refuses a symlink, dot names, a slash and a folder without .git" {
+  ln -s "$M/api" "$M/link"; mkdir -p "$M/docs"
+  lay "valid_target '$M' api"
+  for t in link . .. 'api/x' docs nope ''; do
+    run lay "valid_target '$M' '$t'"; [ "$status" -ne 0 ]
+  done
+}
+
+@test "detect_layout says single, multi or nothing" {
+  [ "$(lay "detect_layout '$M'")" = multi ]
+  [ "$(lay "detect_layout '$M/api'")" = single ]
+  mkdir -p "$BATS_TEST_TMPDIR/none"
+  [ -z "$(lay "detect_layout '$BATS_TEST_TMPDIR/none'")" ]
+}

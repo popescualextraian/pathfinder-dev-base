@@ -6,6 +6,8 @@ AGENTIC_ROOT="${AGENTIC_ROOT:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}"
 source "$AGENTIC_ROOT/lib/host/common.sh"
 # shellcheck source=../lib/host/detect.sh
 source "$AGENTIC_ROOT/lib/host/detect.sh"
+# shellcheck source=../lib/host/layout.sh
+source "$AGENTIC_ROOT/lib/host/layout.sh"
 # shellcheck source=../lib/host/task.sh
 source "$AGENTIC_ROOT/lib/host/task.sh"
 # shellcheck source=../lib/host/setup.sh
@@ -130,7 +132,7 @@ make_cfg() {
 }
 
 cmd_init() {
-  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r
+  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r layout tgt
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1 ;;
@@ -151,6 +153,10 @@ cmd_init() {
   if [ -f "$cfg/agentic.yaml" ] && [ "$force" = 0 ]; then
     die ".agentic/agentic.yaml already exists; use --force to overwrite it"
   fi
+  layout="$(detect_layout "$root")"
+  [ -n "$layout" ] || die "no git repository in $root or its direct subfolders; run agentic init in a repository or a folder of repositories"
+  tgt=""
+  if [ "$layout" = multi ] && [ "$(repo_dirs "$root" | grep -c .)" = 1 ]; then tgt="$(repo_dirs "$root")"; fi
   make_cfg "$cfg"
   # the skeleton never overwrites a file that is already there
   (cd "$AGENTIC_ROOT/templates/dot-agentic" && find . -type f) | while IFS= read -r line; do
@@ -165,6 +171,7 @@ cmd_init() {
   while IFS= read -r line; do
     case "$line" in
       @TOOLS@) render_tools "$det" ;;
+      @LAYOUT@) printf 'layout: %s\n' "$layout"; if [ -n "$tgt" ]; then printf 'target: %s\n' "$tgt"; fi ;;
       @BASE@) if [ -n "$base" ]; then printf 'base_image: %s\n' "$base"; fi ;;
       @SETUP@)
         if [ -z "$rec" ]; then echo 'setup: []'
@@ -187,6 +194,7 @@ cmd_init() {
     echo "Notes:"; grep '^note=' <<<"$det" | sed 's/^note=/- /' || true
   } > "$cfg/detect-report.md"
   echo "wrote $cfg/agentic.yaml"
+  if [ "$layout" = multi ] && [ -z "$tgt" ]; then echo "note: $(target_hint "$root")"; fi
   echo "next: review it, then run: agentic build && agentic login && agentic dev"
 }
 

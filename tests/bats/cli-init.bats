@@ -187,3 +187,39 @@ ini() { (cd "$PROJ" && bash "$A" init "$@"); }
   [ "$(yq -r '.setup[1]' "$PROJ/.agentic/agentic.yaml")" = "add plugin team@corp-market" ]
   grep -qF -- '  - add plugin team@corp-market' "$PROJ/.agentic/agentic.yaml"
 }
+
+@test "init writes layout: single for a repository" {
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [ "$(yq .layout "$PROJ/.agentic/agentic.yaml")" = single ]
+  [ "$(yq 'has("target")' "$PROJ/.agentic/agentic.yaml")" = false ]
+}
+
+@test "init writes layout: multi, with the target when there is exactly one repository" {
+  F="$BATS_TEST_TMPDIR/folder"; mkdir -p "$F"; git init -q "$F/api"
+  run bash -c "cd '$F' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [ "$(yq .layout "$F/.agentic/agentic.yaml")" = multi ]
+  [ "$(yq .target "$F/.agentic/agentic.yaml")" = api ]
+}
+
+@test "init with several repositories leaves the target out and prints the hint" {
+  F="$BATS_TEST_TMPDIR/folder"; mkdir -p "$F"; git init -q "$F/web"; git init -q "$F/api"
+  run bash -c "cd '$F' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [ "$(yq .layout "$F/.agentic/agentic.yaml")" = multi ]
+  [ "$(yq 'has("target")' "$F/.agentic/agentic.yaml")" = false ]
+  [[ "$output" == *"the project holds several repositories (api, web) and no target is set."* ]]
+  [[ "$output" == *"Run with --target NAME, or set the default: agentic target api"* ]]
+  make_agentic_dir
+  run "$REPO_ROOT/image/bin/agentic-config" validate "$F/.agentic"
+  [ "$status" -eq 0 ]
+}
+
+@test "init refuses a folder with no repository, before writing anything" {
+  F="$BATS_TEST_TMPDIR/empty"; mkdir -p "$F/notes"
+  run bash -c "cd '$F' && bash '$A' init"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no git repository in $F or its direct subfolders"* ]]
+  [ ! -e "$F/.agentic" ]
+}

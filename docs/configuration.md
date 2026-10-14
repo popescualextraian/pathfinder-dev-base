@@ -7,6 +7,8 @@ Generated from `schema/agentic.schema.json` and `config/defaults.yaml` by
 |---|---|---|---|
 | `version` | 2 | `2` | Schema version. Always 2. |
 | `project` | string |  | Project name. Names the image agentic-<project>:local and the workspace directory. |
+| `layout` | "single" / "multi" |  | What /work is: single (the project root is one git repository) or multi (git repositories in its direct subfolders). Written by agentic init; agentic run needs it. |
+| `target` | string |  | multi only: the default repository agentic run starts the agent in, a direct subfolder of the project root. agentic target NAME sets it. |
 | `targets` | array | `["claude","copilot"]` | Default --target of every setup line: the harnesses that assets, plugins, marketplaces and MCP servers go to. |
 | `base_image` | string | `"agentic-dev-base:local"` | Image the derived image is built FROM: the base or an overlay built FROM the base. |
 | `tools` | object | `{"java":{"versions":[21],"default":21},"maven":"3.9.9","gradle":false,"node":{"versions":[22],"default":22},"python":["3.12"],"apt":[],"extra_dockerfile":".agentic/Dockerfile.extra"}` | Build-time tools. Changing them needs agentic build. |
