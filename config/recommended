@@ -1,0 +1,6 @@
+# Recommended setup lines, written into a project's setup: by agentic init (--bare skips them).
+# An overlay may replace this file with /opt/agentic/defaults/recommended.
+add plugin superpowers@claude-plugins-official --target claude
+add marketplace obra/superpowers-marketplace --target copilot
+add plugin superpowers@superpowers-marketplace --target copilot
+add mcp playwright -- mcp-server-playwright --headless

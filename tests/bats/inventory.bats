@@ -4,13 +4,12 @@ load helpers
 setup() {
   make_tmp_home
   make_agentic_dir
-  export AGENTIC_OPT="$BATS_TEST_TMPDIR/opt" AGENTIC_PLUGINS_DIR="$BATS_TEST_TMPDIR/plugins"
-  B="$BATS_TEST_TMPDIR/bin"; mkdir -p "$B" "$AGENTIC_OPT/java/17" "$AGENTIC_OPT/java/8" "$AGENTIC_OPT/terraform/1.9.8" "$AGENTIC_PLUGINS_DIR"
+  export AGENTIC_OPT="$BATS_TEST_TMPDIR/opt"
+  B="$BATS_TEST_TMPDIR/bin"; mkdir -p "$B" "$AGENTIC_OPT/java/17" "$AGENTIC_OPT/java/8" "$AGENTIC_OPT/terraform/1.9.8"
   printf '#!/bin/sh\necho "git version 2.43.0"\n' > "$B/git"
   printf '#!/bin/sh\necho "gh version 2.60.0 (2024-10-01)"\necho second line\n' > "$B/gh"
   printf '#!/bin/sh\necho "openjdk version \\"17.0.12\\"" >&2\n' > "$B/java"
   chmod +x "$B"/*
-  echo '{"plugins":{"superpowers@claude-plugins-official":[{}]}}' > "$AGENTIC_PLUGINS_DIR/installed_plugins.json"
   I="$REPO_ROOT/image/bin/agentic-inventory"
 }
 
@@ -31,9 +30,15 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-@test "lists baked plugins and skills" {
+@test "lists the plugins the setup lines installed, and the skills" {
+  export AGENTIC_SEED="$BATS_TEST_TMPDIR/seed"; mkdir -p "$AGENTIC_SEED/.built"
+  echo '["r@m"]' > "$AGENTIC_SEED/.built/claude-plugins.json"
+  printf 'hello  1.0
+' > "$AGENTIC_SEED/.built/copilot-plugins.txt"
   PATH="$B:$PATH" run "$I"
-  grep -qx -- '- superpowers@claude-plugins-official' <<<"$output"
+  [[ "$output" == *"## Plugins from setup lines"* ]]
+  grep -qx -- '- claude: r@m' <<<"$output"
+  grep -qx -- '- copilot: hello  1.0' <<<"$output"
   grep -qx -- '- agentic-setup' <<<"$output"
 }
 

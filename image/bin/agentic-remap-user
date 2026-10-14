@@ -6,7 +6,7 @@ if [ "$(id -u dev)" = "$uid" ] && [ "$(id -g dev)" = "$gid" ]; then exit 0; fi
 groupmod -o -g "$gid" dev
 usermod -o -u "$uid" -g "$gid" dev
 dirs=(/home/dev)
-for d in /opt/agentic/claude-plugins /work /workspaces; do
+for d in /opt/agentic/seed /work /workspaces; do
   if [ -d "$d" ]; then dirs+=("$d"); fi
 done
 chown -R "$uid:$gid" "${dirs[@]}"

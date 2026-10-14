@@ -79,10 +79,7 @@ RUN PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm install -g --prefix /opt/agenti
  && find /opt/agentic/npm/lib/node_modules/ccusage -path '*/bin/ccusage' -type f -exec chmod 755 {} + \
  && ln -s playwright-mcp /usr/local/bin/mcp-server-playwright
 
-# Python MCP servers and Graphify, as uv tools shared by every user
-RUN UV_TOOL_DIR=/opt/agentic/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --python ${PYTHON_BASE} mcp-atlassian \
- && UV_TOOL_DIR=/opt/agentic/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin uv tool install --python ${PYTHON_BASE} 'graphifyy[mcp]' \
- && chmod -R a+rX /opt/agentic/uv-tools /opt/python
+RUN chmod -R a+rX /opt/python
 
 # Chromium and its system libraries, for Playwright and the Playwright MCP
 RUN mkdir -p /ms-playwright \
@@ -103,9 +100,9 @@ RUN cd /opt/agentic/bridge && export PATH=/opt/node/${NODE_HARNESS}/bin:$PATH \
 # User dev, mount points and the container marker
 RUN (userdel -r ubuntu 2>/dev/null || true) \
  && groupadd -g 1000 dev && useradd -m -u 1000 -g 1000 -s /bin/bash dev \
- && mkdir -p /etc/agentic /work /workspaces /task /agentic-config /opt/agentic/claude-plugins /opt/agentic/defaults \
+ && mkdir -p /etc/agentic /work /workspaces /task /agentic-config /opt/agentic/seed /opt/agentic/defaults \
  && printf 'agentic\n' > /etc/agentic/container \
- && chown -R dev:dev /work /workspaces /task /opt/agentic/claude-plugins /ms-playwright
+ && chown -R dev:dev /work /workspaces /task /opt/agentic/seed /ms-playwright
 
 # The agentic layer (changes most often, so it comes last)
 COPY image/lib /opt/agentic/lib
@@ -127,15 +124,7 @@ RUN ln -sf /opt/agentic/bin/* /usr/local/bin/ \
       '[ -f "$HOME/.agentic/env" ] && . "$HOME/.agentic/env"' >> /etc/bash.bashrc \
  && chmod -R a+rX /opt/agentic
 
-# Base plugins, baked so a container needs no network to have them
-USER dev
-WORKDIR /home/dev
-RUN mkdir -p /home/dev/.claude \
- && ln -sfn /opt/agentic/claude-plugins /home/dev/.claude/plugins \
- && agentic-install-plugins "$(yq -o=json -I=0 '{"claude": .plugins.claude, "marketplaces": .plugins.marketplaces}' /opt/agentic/config/defaults.yaml)"
-
 # What this image has, for the setup skill; derived images rewrite it
-USER root
 RUN agentic-inventory > /opt/agentic/inventory.txt
 USER dev
 

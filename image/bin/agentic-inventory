@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Lists what this image already has: commands with their version, tool presets and the versions
-# installed side by side, baked plugins and skills. Written to /opt/agentic/inventory.txt at build
+# installed side by side, the plugins the setup lines installed, and skills. Written to /opt/agentic/inventory.txt at build
 # time (base and derived image); the /agentic-setup skill reads it instead of guessing.
 set -uo pipefail
 here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
 opt="${AGENTIC_OPT:-/opt}"
-plugins="${AGENTIC_PLUGINS_DIR:-$AGENTIC_DIR/claude-plugins}"
+seed="${AGENTIC_SEED:-$AGENTIC_DIR/seed}"
 
 # version CMD: the first line the command prints about its version, stdout or stderr.
 version() {
@@ -24,7 +24,7 @@ echo "# Generated at build time by agentic-inventory. Everything listed is alrea
 echo
 echo "## Commands"
 for c in git gh glab aws az docker node npm python3 uv pipx java mvn gradle terraform tflint checkov \
-         kubectl helm go dotnet psql jq yq rg tmux make claude copilot ccusage graphify mcp-atlassian \
+         kubectl helm go dotnet psql jq yq rg tmux make claude copilot ccusage \
          playwright-mcp mcp-server-playwright Xvfb certutil agentic-wiki; do
   command -v "$c" >/dev/null 2>&1 || continue
   case "$c" in
@@ -52,8 +52,9 @@ for f in "$AGENTIC_DIR"/tools/*.sh; do
   [ -n "$vs" ] && echo "- $n: $vs"
 done
 echo
-echo "## Claude plugins baked in"
-jq -r '.plugins // {} | keys[] | "- " + .' "$plugins/installed_plugins.json" 2>/dev/null
+echo "## Plugins from setup lines"
+jq -r '.[] | "- claude: " + .' "$seed/.built/claude-plugins.json" 2>/dev/null
+sed '/^[[:space:]]*$/d; s/^/- copilot: /' "$seed/.built/copilot-plugins.txt" 2>/dev/null
 echo
 echo "## Skills in the image"
 for d in "$AGENTIC_DIR"/skills/*/; do

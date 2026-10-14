@@ -49,7 +49,7 @@ check() {
 
 check "base tools" 'git --version && gh --version && jq --version && yq --version && tmux -V && rg --version \
   && aws --version && az version >/dev/null && docker --version && uv --version && claude --version \
-  && copilot --version && ccusage --version && mcp-atlassian --version && graphify --version \
+  && copilot --version && ccusage --version \
   && command -v mcp-server-playwright && test -f /etc/agentic/container && [ "$(id -un)" = dev ]'
 check "files keep the host owner" "[ \"\$(id -u)\" = $(id -u) ] && touch /work/.owner-check"
 [ "$(stat -c %u "$proj/.owner-check")" = "$(id -u)" ] || fail "a file written in /work has the wrong owner"
