@@ -74,13 +74,14 @@ export class Bridge implements ApiTarget {
       record = {
         version: 1, task: config.task, project: config.project, agent: config.agent, model: config.model, state: "starting",
         reason: "", session: null, branch: config.worktree ? config.branch : null,
-        target: config.target, work, worktree, container: config.container, auto_clean: config.autoClean, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
+        target: config.target, work, worktree, container: config.container, created_container: config.createdContainer, auto_clean: config.autoClean, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
         inbox: [{ kind: "prompt", text: prompt }], summary: "", stopped_by_user: false,
       };
     } else {
       record = store.readRecord();
       if (typeof record.work !== "string") record.work = config.work;
       record.cleaned = record.cleaned === true;
+      record.created_container = record.created_container === true;
     }
     // all questions, answered ones too: the next question id counts them all
     this.machine = new TaskMachine(record, store.readQuestions(), this.d.now);
@@ -179,10 +180,7 @@ export class Bridge implements ApiTarget {
       }
     }
     rec.cleaned = true;
-    this.run({ kind: "stop" });
-    rec.reason = "auto-cleaned";
-    rec.stopped_by_user = false;
-    this.d.store.writeRecord(rec);
+    this.run({ kind: "stop", reason: "auto-cleaned", byUser: false });
   }
 
   // touch: restarts the idle timer while the task sits in waiting or idle, or is dormant (a lazy boot

@@ -4,7 +4,7 @@ import type { TaskRecord, Question } from "../src/types.js";
 
 const rec = (over: Partial<TaskRecord> = {}): TaskRecord => ({
   version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "starting", reason: "",
-  session: null, branch: null, target: null, work: "/work", worktree: null, container: null, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [],
+  session: null, branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [],
   inbox: [{ kind: "prompt", text: "Fix the login bug" }], summary: "", stopped_by_user: false, ...over,
 });
 const m = (over: Partial<TaskRecord> = {}, qs: Question[] = []) => new TaskMachine(rec(over), qs, () => "now");
@@ -337,6 +337,14 @@ describe("cancel, stop, suspension, failure", () => {
     t.apply({ kind: "turnEnd", stopReason: "cancelled", summary: "" });
     expect(t.record.state).toBe("idle");
     expect(t.apply({ kind: "cancel" })).toMatchObject({ ok: false, code: "conflict" });
+  });
+
+  it("stop with a reason and no user flag records them", () => {
+    const t = running();
+    const o = t.apply({ kind: "stop", reason: "auto-cleaned", byUser: false });
+    expect(fx(o)).toContainEqual({ kind: "emit", type: "state", data: { state: "stopped", reason: "auto-cleaned" } });
+    expect(t.record.stopped_by_user).toBe(false);
+    expect(t.record.reason).toBe("auto-cleaned");
   });
 
   it("stop cancels a running turn, ends the agent and exits 0; a late turn end is ignored", () => {

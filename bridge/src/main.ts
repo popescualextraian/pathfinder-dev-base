@@ -9,6 +9,7 @@ import { agentEnvironment, loadConfig } from "./config.js";
 import { follow } from "./follow.js";
 import { harnessFor } from "./harness.js";
 import { Notifier } from "./notify.js";
+import { parseHoldPid } from "./release.js";
 import { makeRedactor } from "./redact.js";
 import { startServer } from "./server.js";
 import { Store } from "./store.js";
@@ -40,7 +41,9 @@ async function serve(): Promise<void> {
     },
     release: () => {
       try {
-        process.kill(Number(readFileSync(join(stateDir, "hold.pid"), "utf8").trim()), "SIGTERM");
+        const pid = parseHoldPid(readFileSync(join(stateDir, "hold.pid"), "utf8"));
+        if (pid === null) { log("release skipped: hold.pid does not hold a pid"); return; }
+        process.kill(pid, "SIGTERM");
       } catch (e) {
         log(`release failed: ${(e as Error).message}`);
       }
@@ -57,7 +60,8 @@ async function serve(): Promise<void> {
     die((e as Error).message);
   }
   log(`listening on ${server.port}`);
-  // Docker stop or a host shutdown: end the agent, keep the state (the next boot shows interrupted, spec D10).
+  // Docker stop or a host shutdown: agentic-task-hold (the container's command) gets the signal and
+  // forwards SIGTERM here; end the agent, keep the state (the next boot shows interrupted, spec D10).
   process.on("SIGTERM", () => { void bridge.shutdownAgent().finally(() => server.close().finally(() => process.exit(143))); });
 }
 

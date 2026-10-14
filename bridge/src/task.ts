@@ -18,7 +18,7 @@ export type Input =
   | { kind: "userPrompt"; text: string }
   | { kind: "answer"; question?: string; text: string; grant: string[] }
   | { kind: "cancel" }
-  | { kind: "stop" }
+  | { kind: "stop"; reason?: string; byUser?: boolean }
   | { kind: "ask"; text: string; options: string[]; recommend: string | null }
   | { kind: "permissionRequest"; title: string; command: string; options: PermissionOption[] }
   | { kind: "agentReady"; session: string }
@@ -106,8 +106,8 @@ export class TaskMachine {
         if (this.agentLive || this.spawning) fx.push({ kind: "kill" });
         this.promptText = null;
         this.agentLive = this.spawning = this.promptOutstanding = this.cancelling = false;
-        this.record.stopped_by_user = true;
-        this.setState("stopped", "stopped by user", fx);
+        this.record.stopped_by_user = input.byUser ?? true;
+        this.setState("stopped", input.reason ?? "stopped by user", fx);
         fx.push({ kind: "exit", code: 0 });
         return { ok: true, effects: fx };
 

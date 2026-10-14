@@ -44,6 +44,7 @@ export interface TaskRecord {
   work: string;
   worktree: string | null;
   container: string | null;
+  created_container: boolean;
   auto_clean: boolean;
   cleaned: boolean;
   created: string;

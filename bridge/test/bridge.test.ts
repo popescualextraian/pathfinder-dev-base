@@ -333,7 +333,7 @@ describe("Bridge with a scripted agent", () => {
     const { bridge, store, agents, exits } = await stubbed({ idleMs: 300 });
     const now = new Date().toISOString();
     store.writeRecord({ version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "suspended",
-      reason: "idle timeout", session: "s1", branch: null, target: null, work: "/work", worktree: null, container: null, auto_clean: false, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [],
+      reason: "idle timeout", session: "s1", branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [],
       inbox: [], summary: "", stopped_by_user: false });
     bridge.boot();
     await tick(150);
@@ -378,6 +378,21 @@ describe("worktree and auto-clean", () => {
     expect([rec.work, rec.worktree, rec.branch]).toEqual([wtDir, wtDir, "agentic/T-1-hello"]);
   });
 
+  it("AGENTIC_WORKTREE=1 without AGENTIC_BRANCH refuses the boot and makes no worktree", async () => {
+    const dir = taskDir("hello");
+    const calls: string[][] = [];
+    await expect(start(dir, { AGENTIC_WORKTREE: "1" }, (args) => { calls.push(args); return { ok: true, out: "/x", err: "" }; }))
+      .rejects.toThrow("AGENTIC_WORKTREE=1 needs AGENTIC_BRANCH");
+    expect(calls).toEqual([]);
+  });
+
+  it("records whether the task created its container", async () => {
+    const a = await start(taskDir("hello"), { AGENTIC_CREATED_CONTAINER: "1" });
+    expect(a.store.readRecord().created_container).toBe(true);
+    const b = await start(taskDir("hello"));
+    expect(b.store.readRecord().created_container).toBe(false);
+  });
+
   it("a worktree that cannot be made refuses the boot with the script's reason", async () => {
     const dir = taskDir("hello");
     await expect(start(dir, { AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "b" },
@@ -395,7 +410,9 @@ describe("worktree and auto-clean", () => {
     expect(wt.map((a) => a[0])).toEqual(["add", "remove"]);
     expect(wt[1]).toEqual(["remove", dir, "T-1", "agentic/T-1-hello"]);
     const rec = store.readRecord();
-    expect([rec.state, rec.cleaned, rec.reason]).toEqual(["stopped", true, "auto-cleaned"]);
+    expect([rec.state, rec.cleaned, rec.reason, rec.stopped_by_user]).toEqual(["stopped", true, "auto-cleaned", false]);
+    const states = store.readEvents(0).filter((e) => e.type === "state" && e.data.state === "stopped");
+    expect(states.map((e) => e.data.reason)).toEqual(["auto-cleaned"]);
     expect(released()).toBe(1);
   });
 
