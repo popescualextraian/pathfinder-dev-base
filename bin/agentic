@@ -376,7 +376,7 @@ cmd_run() {
   [ -n "$agent" ] || agent="$(image_label "$img" agentic.harness)"
   agent="${agent:-claude}"
   case "$agent" in claude|copilot) ;; *) die "--agent must be claude or copilot" ;; esac
-  for a in "${allow[@]}"; do [[ "$a" =~ ^(push|open-pr|deploy:[A-Za-z0-9_.-]+)$ ]] || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
+  for a in "${allow[@]}"; do valid_grant "$a" || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
   [ -n "$id" ] || id="$(new_task_id)"
   valid_task_id "$id" || die "the task id must match [A-Za-z0-9._-]+"
   [ ! -e "$(task_dir "$id")" ] || die "task $id exists"
@@ -401,7 +401,7 @@ cmd_run() {
   trap run_cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
   mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
   (umask 077; mkdir -p "$(task_hdir "$id")")
-  for v in env mounts repos interrupted; do rm -f -- "$(task_file "$id" "$v")"; done
+  for v in "${TASK_HOST_FILES[@]}"; do rm -f -- "$(task_file "$id" "$v")"; done
   own="$(project_clone)" || die "could not clone the project's repository into $ws/repos"
   [ "${#repos[@]}" -gt 0 ] || repos=("$own")
   for r in "${repos[@]}"; do add_worktree "$r" "$id" "$branch" "$base" "$img" || die "could not create the worktree of $r"; done
@@ -493,8 +493,7 @@ cmd_send() {
   need_config
   [ $# -eq 2 ] || die 'usage: agentic send ID "text"'
   need_task "$1"; ensure_running "$1"
-  bridge_call "$1" POST /prompt "$(jq -cn --arg t "$2" '{text: $t}')"
-  bridge_result "$1"
+  bridge_post "$1" /prompt "$(jq -cn --arg t "$2" '{text: $t}')"
 }
 
 cmd_answer() {
@@ -513,19 +512,15 @@ cmd_answer() {
     3) id="${pos[0]}"; q="${pos[1]}"; text="${pos[2]}" ;;
     *) die 'usage: agentic answer ID [QID] "text" [--allow A]...' ;;
   esac
-  for g in ${grants[@]+"${grants[@]}"}; do
-    [[ "$g" =~ ^(push|open-pr|deploy:[A-Za-z0-9_.-]+)$ ]] || die "bad grant '$g' (push, open-pr or deploy:TARGET)"
-  done
+  for g in ${grants[@]+"${grants[@]}"}; do valid_grant "$g" || die "bad grant '$g' (push, open-pr or deploy:TARGET)"; done
   need_task "$id"; ensure_running "$id"
-  bridge_call "$id" POST /answer "$(jq -cn --arg q "$q" --arg t "$text" \
+  bridge_post "$id" /answer "$(jq -cn --arg q "$q" --arg t "$text" \
     '{text: $t, grant: $ARGS.positional} + (if $q == "" then {} else {question: $q} end)' --args ${grants[@]+"${grants[@]}"})"
-  bridge_result "$id"
 }
 
 cmd_cancel() {
   need_config; need_task "${1:-}"; need_running "$1"
-  bridge_call "$1" POST /cancel
-  bridge_result "$1"
+  bridge_post "$1" /cancel
 }
 
 cmd_stop() {
@@ -552,8 +547,7 @@ cmd_resume() {
   esac
   ensure_running "$id"
   rm -f "$(task_file "$id" interrupted)"
-  bridge_call "$id" POST /prompt "$(jq -cn '{text: "You were interrupted. Check git status and continue."}')"
-  bridge_result "$id"
+  bridge_post "$id" /prompt "$(jq -cn '{text: "You were interrupted. Check git status and continue."}')"
 }
 
 cmd_logs() {
@@ -651,28 +645,12 @@ main() {
   local cmd="${1:-help}"
   if [ "$#" -gt 0 ]; then shift; fi
   case "$cmd" in
-    init) cmd_init "$@" ;;
     add|copy|mount|volume) cmd_setup_line "$cmd" "$@" ;;
-    remove) cmd_remove "$@" ;;
-    list) cmd_list ;;
-    build) cmd_build "$@" ;;
-    build-base) cmd_build_base "$@" ;;
     shell) if [ "$#" -eq 1 ] && valid_task_id "$1" && [ -f "$(task_dir "$1" 2>/dev/null)/state.json" ]; then cmd_task_shell "$1"; else cmd_shell "$@"; fi ;;
-    login) cmd_login "$@" ;;
-    setup) cmd_setup "$@" ;;
-    doctor) cmd_doctor "$@" ;;
-    dev) cmd_dev "$@" ;;
-    run) cmd_run "$@" ;;
-    status) cmd_status "$@" ;;
-    send) cmd_send "$@" ;;
-    answer) cmd_answer "$@" ;;
-    cancel) cmd_cancel "$@" ;;
-    stop) cmd_stop "$@" ;;
-    resume) cmd_resume "$@" ;;
-    logs) cmd_logs "$@" ;;
-    follow) cmd_follow "$@" ;;
-    takeover) cmd_takeover "$@" ;;
-    clean) cmd_clean "$@" ;;
+    build-base) cmd_build_base "$@" ;;
+    # each of these is handled by cmd_<command>
+    init|remove|list|build|login|setup|doctor|dev|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean)
+      "cmd_$cmd" "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
   esac
