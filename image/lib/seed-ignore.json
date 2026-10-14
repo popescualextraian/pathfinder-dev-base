@@ -1,0 +1,6 @@
+{
+  "claude/.claude.json": ["userID", "machineID", "firstStartTime", "firstStartVersion", "migrationVersion",
+    "seenNotifications", "opusProMigrationComplete", "sonnet1m45MigrationComplete",
+    "hasResetAutoModeOptInForDefaultOffer"],
+  "copilot/config.json": ["logged_in_users", "last_logged_in_user", "trusted_folders"]
+}

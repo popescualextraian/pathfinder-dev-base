@@ -1,0 +1,8 @@
+# harness	kind	path        (link: symlinked from the home into the seed; json: 3-way merged; spec 6.1)
+claude	link	plugins
+claude	json	.claude.json
+claude	json	settings.json
+copilot	link	installed-plugins
+copilot	json	config.json
+copilot	json	settings.json
+copilot	json	mcp-config.json
