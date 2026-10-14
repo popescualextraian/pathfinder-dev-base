@@ -69,3 +69,12 @@ lay() { bash -c "source '$REPO_ROOT/lib/host/common.sh'; source '$REPO_ROOT/lib/
   mkdir -p "$BATS_TEST_TMPDIR/none"
   [ -z "$(lay "detect_layout '$BATS_TEST_TMPDIR/none'")" ]
 }
+
+@test "yaml_set_top removes its temp file and fails when the write fails" {
+  [ "$(id -u)" != 0 ] || skip "root reads a mode 000 file"
+  f="$BATS_TEST_TMPDIR/y.yaml"
+  printf 'version: 2\n' > "$f"; chmod 000 "$f"
+  run lib "yaml_set_top '$f' target api"
+  [ "$status" -ne 0 ]
+  [ -z "$(ls "$BATS_TEST_TMPDIR" | grep '^y\.yaml\.' || true)" ]
+}
