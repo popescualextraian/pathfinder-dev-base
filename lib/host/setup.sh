@@ -10,21 +10,25 @@ setup_edit() {
     --entrypoint /opt/agentic/bin/agentic-setup-edit "$img" "$@"
 }
 
-# localise KIND PATH: PATH as a path inside .agentic/, copied to .agentic/KIND/ when it is outside.
+# localise KIND PATH: sets LOCAL to PATH as a path inside .agentic/, copied to .agentic/KIND/ when
+# it is outside; CREATED names that copy when this call made it, for taking it back.
 localise() {
   local kind="$1" src="$2" cfg base
-  cfg="$(cfg_dir)"
+  cfg="$(cfg_dir)"; CREATED=""
   [ -e "$src" ] || die "$src does not exist"
   src="$(realpath -- "$src")"
-  case "$src/" in "$cfg/"?*) printf '%s\n' "${src#"$cfg"/}"; return 0 ;; esac
+  case "$src/" in "$cfg/"?*) LOCAL="${src#"$cfg"/}"; return 0 ;; esac
   base="$(basename "$src")"
   if [ -e "$cfg/$kind/$base" ]; then
     diff -rq -- "$src" "$cfg/$kind/$base" >/dev/null 2>&1 || die ".agentic/$kind/$base exists and differs; rename one of them"
   else
-    mkdir -p "$cfg/$kind"; cp -R -- "$src" "$cfg/$kind/$base"
+    mkdir -p "$cfg/$kind"; cp -R -- "$src" "$cfg/$kind/$base"; CREATED="$cfg/$kind/$base"
   fi
-  printf '%s/%s\n' "$kind" "$base"
+  LOCAL="$kind/$base"
 }
+
+# need_words N USAGE: dies with USAGE unless WORDS has at least N words.
+need_words() { [ "${#WORDS[@]}" -ge "$1" ] || die "usage: $2"; }
 
 # host_path PATH: a mount source as it is written in the file: ~/... under the home, relative under
 # the project root, otherwise absolute. The shell has usually expanded ~ already.
@@ -84,13 +88,20 @@ after_change() {
 cmd_setup_line() {
   need_config
   split_flags "$@"
+  local rc=0; CREATED=""
   case "${WORDS[0]:-} ${WORDS[1]:-}" in
-    "copy "*) WORDS[1]="$(localise files "${WORDS[1]:?usage: agentic copy SRC DEST}")" ;;
-    "mount "*) WORDS[1]="$(host_path "${WORDS[1]:?usage: agentic mount SRC DEST}")" ;;
-    "add skill"|"add agent"|"add command") WORDS[2]="$(localise "${WORDS[1]}s" "${WORDS[2]:?usage: agentic add ${WORDS[1]} PATH}")" ;;
+    "copy "*) need_words 3 "agentic copy SRC DEST"; localise files "${WORDS[1]}"; WORDS[1]="$LOCAL" ;;
+    "mount "*) need_words 3 "agentic mount SRC DEST [--readonly]"; WORDS[1]="$(host_path "${WORDS[1]}")" ;;
+    "add skill"|"add agent"|"add command")
+      need_words 3 "agentic add ${WORDS[1]} PATH [--target T]"; localise "${WORDS[1]}s" "${WORDS[2]}"; WORDS[2]="$LOCAL" ;;
     "add workspace") case "${WORDS[2]:-}" in https://*|ssh://*|git@*:*|"") ;; *) WORDS[2]="$(host_path "${WORDS[2]}")" ;; esac ;;
   esac
-  setup_edit add "$(line_of "${WORDS[@]}")"
+  # a refused line takes back the file this call brought into .agentic/
+  setup_edit add "$(line_of "${WORDS[@]}")" || rc=$?
+  if [ "$rc" != 0 ]; then
+    if [ -n "$CREATED" ]; then rm -rf -- "$CREATED"; fi
+    exit "$rc"
+  fi
   after_change "$BUILD" "$YES"
 }
 
@@ -98,7 +109,10 @@ cmd_setup_line() {
 cmd_remove() {
   need_config
   split_flags "$@"
-  local kind="${WORDS[0]:?usage: agentic remove KIND KEY [--target T]}" key="${WORDS[1]:?usage: agentic remove KIND KEY}" out rc=0 cfg
+  # KIND KEY, then nothing or --target T: any other word (--target=T) would widen the removal
+  [ "${#WORDS[@]}" -eq 2 ] || { [ "${#WORDS[@]}" -eq 4 ] && [ "${WORDS[2]}" = --target ]; } \
+    || die "usage: agentic remove KIND KEY [--target T]"
+  local kind="${WORDS[0]}" key="${WORDS[1]}" out rc=0 cfg
   cfg="$(cfg_dir)"
   case "$kind" in
     skill|agent|command)

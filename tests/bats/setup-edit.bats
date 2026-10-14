@@ -101,3 +101,12 @@ lines() { yq -o=json '.setup' "$D/agentic.yaml" | jq -r '.[]'; }
   [ "${lines[1]}" = $'volume\tm2\t/home/dev/.m2\t\tvolume m2 /home/dev/.m2' ]
   [ "${lines[2]}" = $'bind\t../lib\t/workspaces/repos/lib\t\tadd workspace ../lib' ]
 }
+
+@test "remove refuses an argument it does not know and keeps the lines" {
+  "$E" --dir "$D" add "add plugin a@m --target copilot"
+  for extra in "--target=copilot" "extra" "--target copilot more"; do
+    run "$E" --dir "$D" remove plugin a@m $extra
+    [ "$status" -eq 2 ]
+  done
+  [[ "$(lines)" == *"add plugin a@m --target copilot"* ]]
+}

@@ -124,3 +124,43 @@ edit_call() { docker_sub run | tail -n +2; }
   (cd "$PROJ/sub" && bash -c "source '$A'; main mount '~/.aws' /home/dev/.aws --no-build")
   [ "$(edit_call | tail -1)" = "mount ~/.aws /home/dev/.aws" ]
 }
+
+@test "remove refuses an argument it does not know, such as --target=T, and keeps the folder" {
+  mkdir -p "$PROJ/.agentic/skills/x"
+  for extra in "--target=claude" "extra" "--target claude more"; do
+    DOCKER_RUN_RC=3 run in_project "main remove skill skills/x $extra --no-build"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"usage: agentic remove KIND KEY [--target T]"* ]]
+  done
+  [ -d "$PROJ/.agentic/skills/x" ]
+  [ -z "$(edit_call)" ]
+}
+
+@test "a refused copy takes back the file it brought into .agentic/files" {
+  echo s > "$BATS_TEST_TMPDIR/key.txt"
+  DOCKER_RUN_RC=1 run in_project "main copy '$BATS_TEST_TMPDIR/key.txt' relative/dest --no-build"
+  [ "$status" -ne 0 ]
+  [ ! -e "$PROJ/.agentic/files/key.txt" ]
+}
+
+@test "a refused copy keeps a file that was already in .agentic/files" {
+  mkdir -p "$PROJ/.agentic/files"; echo s > "$PROJ/.agentic/files/key.txt"; echo s > "$BATS_TEST_TMPDIR/key.txt"
+  DOCKER_RUN_RC=1 run in_project "main copy '$BATS_TEST_TMPDIR/key.txt' relative/dest --no-build"
+  [ "$status" -ne 0 ]
+  [ -f "$PROJ/.agentic/files/key.txt" ]
+}
+
+@test "a refused add skill takes back the folder it brought into .agentic/skills" {
+  mkdir -p "$BATS_TEST_TMPDIR/review"; echo x > "$BATS_TEST_TMPDIR/review/SKILL.md"
+  DOCKER_RUN_RC=1 run in_project "main add skill '$BATS_TEST_TMPDIR/review' --bogus --no-build"
+  [ "$status" -ne 0 ]
+  [ ! -e "$PROJ/.agentic/skills/review" ]
+}
+
+@test "a missing argument prints the agentic usage, not a bash error" {
+  for c in "copy" "copy a" "mount" "mount a" "add skill" "remove" "remove skill"; do
+    run in_project "main $c --no-build"
+    [ "$status" -ne 0 ]
+    [[ "$output" == "agentic: usage: agentic "* ]]
+  done
+}

@@ -44,7 +44,9 @@ cmd_add() {
 
 cmd_remove() {
   local kind="${1:?usage: remove KIND KEY [--target T]}" key="${2:?usage: remove KIND KEY [--target T]}" want="" l i=0 hit=()
-  if [ "${3:-}" = --target ]; then want="$(norm_targets "${4:-}")" || { say "--target takes claude, copilot or claude,copilot"; exit 1; }; fi
+  # nothing after KEY, or --target T: another word (--target=T) would widen the removal
+  [ "$#" -eq 2 ] || { [ "$#" -eq 4 ] && [ "$3" = --target ]; } || { say "usage: remove KIND KEY [--target T]"; exit 2; }
+  if [ "$#" -eq 4 ]; then want="$(norm_targets "$4")" || { say "--target takes claude, copilot or claude,copilot"; exit 1; }; fi
   key="${key%/}"
   local all=(); mapfile -t all < <(lines)
   for l in "${all[@]}"; do
