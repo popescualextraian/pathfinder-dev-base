@@ -16,6 +16,7 @@ setup() {
   export DOCKER_STATUS=running DOCKER_PORT=49153 AGENTIC_WSLG_DIR="$BATS_TEST_TMPDIR/no-wslg"
   T="$AGENTIC_WORKSPACES/demo/tasks"
   H="$AGENTIC_DATA/projects/demo/tasks"
+  : > "$BATS_TEST_TMPDIR/docker.known"
 }
 
 ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
@@ -30,6 +31,7 @@ record() {
   printf 'agentic-demo-task-%s\n1\n%s\n' "$1" "$1" > "$H/$1/container"
   printf 'AGENTIC_WORK=/work\n' >> "$H/$1/env"
   echo "$T/$1/.ready" > "$BATS_TEST_TMPDIR/docker.ready"
+  echo "agentic-demo-task-$1" >> "$BATS_TEST_TMPDIR/docker.known"
 }
 
 @test "run creates a task container with the checkout at /work, starts the bridge in it and prints the id" {
@@ -526,4 +528,80 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   [ "$status" -eq 0 ]
   call="$(docker_run_with agentic-task-hold)"
   grep -qx 'agentic-demo-m2:/home/dev/.m2' <<<"$call"
+}
+
+@test "a project name that is not [a-z0-9-] is refused: the agent can write agentic.yaml" {
+  printf 'version: 2\nproject: ../x\nlayout: single\n' > "$PROJ/.agentic/agentic.yaml"
+  run ag run --id T-P1 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"agentic.yaml has a project name that is not [a-z0-9-]"* ]]
+  [ ! -s "$DOCKER_LOG" ] || ! grep -q -- '--- run' "$DOCKER_LOG"
+  [ ! -e "$AGENTIC_WORKSPACES/x" ] && [ ! -e "$AGENTIC_WORKSPACES/../x" ]
+}
+
+@test "a bind source that is or goes through a symlink is refused before any docker run" {
+  mkdir -p "$AGENTIC_WORKSPACES/demo" "$BATS_TEST_TMPDIR/elsewhere"
+  for d in tasks events; do
+    ln -s "$BATS_TEST_TMPDIR/elsewhere" "$AGENTIC_WORKSPACES/demo/$d"
+    run ag run --id T-P2 "x"
+    [ "$status" -eq 1 ]; [[ "$output" == *"symlink"* ]]
+    [ ! -s "$DOCKER_LOG" ] || ! grep -q -- '--- run' "$DOCKER_LOG"
+    [ -z "$(ls -A "$BATS_TEST_TMPDIR/elsewhere")" ]
+    rm "$AGENTIC_WORKSPACES/demo/$d"
+  done
+  rmdir "$AGENTIC_WORKSPACES/demo/repos"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$AGENTIC_WORKSPACES/demo/repos"
+  run ag run --id T-P2 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"symlink"* ]]
+  [ ! -s "$DOCKER_LOG" ] || ! grep -q -- '--- run' "$DOCKER_LOG"
+}
+
+@test "the task directory is made exclusively: a planted symlink is refused and never written through" {
+  mkdir -p "$T" "$BATS_TEST_TMPDIR/victim"
+  ln -s "$BATS_TEST_TMPDIR/victim" "$T/T-X1"
+  run ag run --id T-X1 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"task T-X1 exists"* ]]
+  [ -z "$(ls -A "$BATS_TEST_TMPDIR/victim")" ]
+  [ -L "$T/T-X1" ]
+  ! grep -q -- '--- run' "$DOCKER_LOG" 2>/dev/null
+}
+
+@test "prompt and credential copies never follow a planted symlink" {
+  hd="$AGENTIC_DATA/projects/demo/harness"; mkdir -p "$hd/claude"; echo '{}' > "$hd/claude/.credentials.json"
+  echo keep > "$BATS_TEST_TMPDIR/victim"
+  # a sibling agent plants the links as soon as the host has made the directory (here: when od makes the first token)
+  printf '#!/bin/sh\nmkdir -p "%s/T-X2/home/claude"\nln -sf "%s" "%s/T-X2/prompt.md"\nln -sf "%s" "%s/T-X2/home/claude/.credentials.json"\nexec /usr/bin/od "$@"\n' \
+    "$T" "$BATS_TEST_TMPDIR/victim" "$T" "$BATS_TEST_TMPDIR/victim" "$T" > "$BATS_TEST_TMPDIR/bin/od"
+  chmod +x "$BATS_TEST_TMPDIR/bin/od"
+  run ag run --id T-X2 "x"
+  [ "$(cat "$BATS_TEST_TMPDIR/victim")" = keep ]
+}
+
+@test "a container that already has the task's name is refused and never removed" {
+  echo agentic-demo-task-T-Y1 >> "$BATS_TEST_TMPDIR/docker.known"
+  run ag run --id T-Y1 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"a container agentic-demo-task-T-Y1 already exists; remove it or pick another --id"* ]]
+  ! grep -q -- '--- rm' "$DOCKER_LOG"
+  ! grep -q -- '--- run' "$DOCKER_LOG"
+  [ ! -e "$T/T-Y1" ] && [ ! -e "$H/T-Y1" ]
+}
+
+@test "an active task in a container that runs without its bridge is interrupted" {
+  record T-Z1 running
+  [ "$(lib task_state T-Z1)" = running ]
+  [ "$(DOCKER_BRIDGE_RC=1 lib task_state T-Z1)" = interrupted ]
+}
+
+@test "the cap counts containers with a running bridge, not containers" {
+  DOCKER_PS="a b c" DOCKER_BRIDGE_RC=1 run ag run --id T-Z2 "x"
+  [ "$status" -eq 0 ]
+}
+
+@test "a task in a running container without a bridge gets one by docker exec" {
+  record T-Z3 running
+  DOCKER_BRIDGE_RC=1 run ag send T-Z3 "go"
+  [ "$status" -eq 0 ]
+  ex="$(docker_call_with exec agentic-task-start)"
+  grep -qx agentic-demo-task-T-Z3 <<<"$ex"
+  grep -qx -- "$H/T-Z3/env" <<<"$ex"
+  ! grep -qx -- '--- start' "$DOCKER_LOG"
 }

@@ -6,6 +6,8 @@
 # DOCKER_BRIDGE_RC (exit code of the `pgrep` that tells whether a bridge runs; default 0, running),
 # DOCKER_WT_ERR (makes a worktree.sh exec fail with this message), DOCKER_EXEC_RC (exit code of any other
 # `docker exec`), DOCKER_NO_READY (the hold command never marks its start done).
+# A docker.known file in $BATS_TEST_TMPDIR (one container name per line) makes inspect of a task container
+# not in it fail as missing; `run --name` adds to it.
 # `docker start` makes later status inspects say running. DOCKER_DOWN (inspect .State.Status fails like an unreachable daemon).
 # A throwaway git container (`run ... --entrypoint git IMAGE ARG...`, the image right after the entrypoint)
 # runs git here on ARG... with its -e variables and DOCKER_STUB_CONTAINER=1, so a planted command can
@@ -21,6 +23,10 @@ case "$1" in
   inspect)
     if [[ "$*" == *.Mounts* ]]; then printf '%s' "${DOCKER_MOUNTS:-}"; exit 0; fi
     if [[ "$*" == *State.Status* ]]; then
+      # with a docker.known file, a task container not listed in it (made by `run --name` or by a test) is missing
+      if [ -f "$BATS_TEST_TMPDIR/docker.known" ] && [[ "${@: -1}" == *-task-* ]] && ! grep -qxF -- "${@: -1}" "$BATS_TEST_TMPDIR/docker.known"; then
+        echo "Error: No such object: ${@: -1}" >&2; exit 1
+      fi
       if [ -f "$BATS_TEST_TMPDIR/docker.status" ]; then cat "$BATS_TEST_TMPDIR/docker.status"; exit 0; fi
       if [ -n "${DOCKER_DOWN:-}" ]; then echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock" >&2; exit 1; fi
       [ -n "${DOCKER_STATUS:-}" ] || { echo "Error: No such object: stub" >&2; exit 1; }
@@ -55,6 +61,11 @@ case "$1" in
       shift 3
       exec env "${envs[@]}" DOCKER_STUB_CONTAINER=1 git "$@"
     fi
+    prev=""
+    for a in "$@"; do
+      if [ "$prev" = --name ] && [ -f "$BATS_TEST_TMPDIR/docker.known" ] && [ "${DOCKER_RUN_RC:-0}" = 0 ]; then echo "$a" >> "$BATS_TEST_TMPDIR/docker.known"; fi
+      prev="$a"
+    done
     if [ -n "${DOCKER_RUN_OUT:-}" ]; then printf '%s\n' "$DOCKER_RUN_OUT"; fi; exit "${DOCKER_RUN_RC:-0}" ;;
 esac
 exit 0

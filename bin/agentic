@@ -391,7 +391,7 @@ cmd_run() {
   for a in ${allow[@]+"${allow[@]}"}; do valid_grant "$a" || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
   [ -n "$id" ] || id="$(new_task_id)"
   valid_task_id "$id" || die "the task id must match [A-Za-z0-9._-]+"
-  [ ! -e "$(task_dir "$id")" ] || die "task $id exists"
+  if [ -e "$(task_dir "$id")" ] || [ -L "$(task_dir "$id")" ]; then die "task $id exists"; fi
   local work tname branch=""
   work="$(task_work "$target")" || exit 1
   tname="${work#/work}"; tname="${tname#/}"
@@ -407,6 +407,12 @@ cmd_run() {
     esac
   else
     c="$(task_container "$id")"
+    # a container of that name is not ours to use or to roll back
+    case "$(container_status "$id")" in
+      missing) ;;
+      unknown) die "docker did not answer" ;;
+      *) die "a container $c already exists; remove it or pick another --id" ;;
+    esac
   fi
   check_cap
 
@@ -415,16 +421,23 @@ cmd_run() {
   p="$(task_project)"; ws="$(task_ws)"; dir="$(task_dir "$id")"
   RUN_ARGS=()
   if [ "$created" = 1 ]; then project_run_args "$img"; fi
+  # the agent can write the checkout and tasks/: a bind source that is or goes through a symlink is refused
+  for v in "$ws" "$ws/tasks" "$ws/events"; do bind_src_ok "$v" || die "$v is a symlink or goes through one; refused"; done
   v="$(dotenv_value "$(project_root)/.agentic/.env" AGENTIC_GATE)"
   if [ -n "$v" ] && [ "$v" != 1 ]; then say "warning: .agentic/.env sets AGENTIC_GATE=$(printf '%s' "$v" | plain): the gate is off for every task"; fi
 
+  # The task directory is made exclusively: tasks/ is shared with the other task containers, so
+  # nothing in it is trusted to be ours, and files are written without following a link (noclobber).
+  mkdir -p "$ws/tasks" "$ws/events"
+  for v in "$ws/tasks" "$ws/events"; do bind_src_ok "$v" || die "$v is a symlink or goes through one; refused"; done
+  mkdir "$dir" 2>/dev/null || die "task $id exists"
   # From here any failure, die or signal removes what was created (unless --keep-on-failure).
   RUN_ROLLBACK_ID="$id"; RUN_KEEP="$keep"
   trap run_cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
-  mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
+  mkdir "$dir/home" "$dir/home/claude" "$dir/home/copilot"
   (umask 077; mkdir -p "$(task_hdir "$id")")
   for v in "${TASK_HOST_FILES[@]}"; do rm -f -- "$(task_file "$id" "$v")"; done
-  printf '%s\n' "$prompt" > "$dir/prompt.md"
+  (set -o noclobber; printf '%s\n' "$prompt" > "$dir/prompt.md")
   (umask 077; printf '%s\n%s\n%s\n' "$c" "$created" "$creator" > "$(task_file "$id" container)")
   (umask 077; {
     printf 'AGENTIC_TASK_TOKEN=%s\nAGENTIC_AGENT_TOKEN=%s\n' "$(new_token)" "$(new_token)"
@@ -440,7 +453,7 @@ cmd_run() {
   if [ "$created" = 1 ]; then
     data="$AGENTIC_DATA/projects/$p/harness"
     for v in claude/.credentials.json copilot/config.json; do
-      if [ -f "$data/$v" ] && [ ! -L "$data/$v" ]; then (umask 077; read_agent_file "$data/$v" > "$dir/home/$v"); fi
+      if [ -f "$data/$v" ] && [ ! -L "$data/$v" ]; then (umask 077; set -o noclobber; read_agent_file "$data/$v" > "$dir/home/$v"); fi
     done
     read -ra extra <<<"${AGENTIC_TASK_DOCKER_ARGS:-}"
     rm -f "$dir/.ready"

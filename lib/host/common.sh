@@ -48,9 +48,16 @@ yaml_set_top() {
   fi
   rm -f -- "$tmp"; return 1
 }
+# bind_src_ok PATH: PATH is missing or is its own canonical path (no symlink in it or above it).
+bind_src_ok() {
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then return 0; fi
+  [ "$(realpath -e -- "$1" 2>/dev/null)" = "$1" ]
+}
 project_name() {
   local p; p="$(yaml_top "$(cfg_dir)/agentic.yaml" project)"
   [ -n "$p" ] || die "agentic.yaml has no project name"
+  # the agent can write agentic.yaml, and the name becomes a path (workspace, data) and a container name
+  [[ "$p" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || die "agentic.yaml has a project name that is not [a-z0-9-]: $(printf '%s' "$p" | tr -d '\000-\037\177')"
   printf '%s\n' "$p"
 }
 project_image() { printf 'agentic-%s:local\n' "$(project_name)"; }
@@ -99,8 +106,10 @@ proxy_build_args() {
 project_run_args() {
   local root cfg p repos
   root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"
+  # the workspace root is canonical; the rest is not resolved, so a symlink below it is seen
   repos="$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/repos"
   mkdir -p "$repos"
+  bind_src_ok "$repos" || die "$repos is a symlink or goes through one; refused"
   RUN_ARGS=(--label "agentic.project=$p" -v "$root:/work" -v "$repos:/workspaces/repos" -v "$cfg:/agentic-config:ro")
   shared_run_args "$1"
 }
