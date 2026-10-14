@@ -4,8 +4,6 @@ set -euo pipefail
 AGENTIC_ROOT="${AGENTIC_ROOT:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
 # shellcheck source=../lib/host/common.sh
 source "$AGENTIC_ROOT/lib/host/common.sh"
-# shellcheck source=../lib/host/aws.sh
-source "$AGENTIC_ROOT/lib/host/aws.sh"
 # shellcheck source=../lib/host/detect.sh
 source "$AGENTIC_ROOT/lib/host/detect.sh"
 # shellcheck source=../lib/host/task.sh

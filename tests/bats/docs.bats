@@ -6,7 +6,7 @@ load helpers
   [ "$status" -eq 0 ]
   grep -qF '| `project` | string |' <<<"$output"
   grep -qF '| `tools.maven` | false or string | `"3.9.9"` |' <<<"$output"
-  grep -qF '| `mcp.playwright.mode` | "headless" / "headed" | `"headless"` |' <<<"$output"
+  grep -qF '| `targets` | array | `["claude","copilot"]` |' <<<"$output"
   grep -qF '| `docker.socket` | boolean | `false` |' <<<"$output"
 }
 

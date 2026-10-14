@@ -1,10 +1,8 @@
-version: 1
+version: 2
 project: demo
 tools:
   java: {versions: [17, 11], default: 17}
   terraform: "1.9.8"
   apt: [tree, graphviz]
-mcp:
-  atlassian: {enabled: true, jira_url: https://jira.example.com}
 docker:
   socket: true

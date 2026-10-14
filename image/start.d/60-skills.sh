@@ -4,7 +4,7 @@ set -uo pipefail
 source "${AGENTIC_DIR:-/opt/agentic}/lib/common.sh"
 check=0; [ "${1:-}" = --check ] && check=1
 dirs=("$AGENTIC_DIR/skills")
-if p="$(config_path "$(cfg .skills)")"; then dirs+=("$p"); fi
+if p="$(config_path .agentic/skills)"; then dirs+=("$p"); fi
 targets=("$(claude_dir)/skills" "$(copilot_dir)/skills")
 rc=0
 declare -A pick=()

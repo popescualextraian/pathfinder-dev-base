@@ -1,20 +1,9 @@
 # agentic-dev-base project configuration (docs/configuration.md in agentic-dev-base).
 # Secrets never go here: put them in .agentic/.env (git-ignored) and reference them as ${VAR}.
-version: 1
+version: 2
 project: @PROJECT@
 
-git:
-  host: @GIT_HOST@
-
 @TOOLS@
-
-mcp:
-  atlassian:
-    enabled: false
-    jira_url: ""          # e.g. https://jira.example.com
-    confluence_url: ""    # e.g. https://confluence.example.com
-  playwright: {enabled: true, mode: headless}   # headed needs a display
-  graphify: {enabled: true}
 
 harness:
   default: claude

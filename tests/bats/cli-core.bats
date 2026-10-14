@@ -9,7 +9,7 @@ setup() {
   PROJ="$BATS_TEST_TMPDIR/my project"
   mkdir -p "$PROJ/.agentic" "$PROJ/src/deep"
   git init -q "$PROJ"
-  printf 'version: 1\nproject: demo  # the name\n' > "$PROJ/.agentic/agentic.yaml"
+  printf 'version: 2\nproject: demo  # the name\n' > "$PROJ/.agentic/agentic.yaml"
   A="$REPO_ROOT/bin/agentic"
   unset HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy
 }
@@ -177,7 +177,7 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
 }
 
 @test "build refuses a missing overlay base image" {
-  printf 'version: 1\nproject: demo\nbase_image: my-overlay:1\n' > "$PROJ/.agentic/agentic.yaml"
+  printf 'version: 2\nproject: demo\nbase_image: my-overlay:1\n' > "$PROJ/.agentic/agentic.yaml"
   DOCKER_LABEL=current DOCKER_IMAGE_EXISTS=0 run in_project 'main build'
   [ "$status" -eq 1 ]
   [[ "$output" == *"base image my-overlay:1 not found"* ]]
@@ -191,45 +191,3 @@ write_aws() {
   echo '{}' > "$HOME/.aws/sso/cache/token.json"
 }
 
-@test "build_aws_dir keeps only the profile, its sso-session, its credentials and the SSO cache" {
-  write_aws
-  run bash -c "source '$A'; build_aws_dir '$HOME/.aws' '$BATS_TEST_TMPDIR/out' dev"
-  [ "$status" -eq 0 ]
-  grep -q '\[profile dev\]' "$BATS_TEST_TMPDIR/out/config"
-  grep -q '\[sso-session s1\]' "$BATS_TEST_TMPDIR/out/config"
-  run grep -q 'profile other' "$BATS_TEST_TMPDIR/out/config"
-  [ "$status" -ne 0 ]
-  [ "$(cat "$BATS_TEST_TMPDIR/out/credentials")" = "$(printf '[dev]\naws_access_key_id = AKIADEV')" ]
-  [ -f "$BATS_TEST_TMPDIR/out/sso/cache/token.json" ]
-}
-
-@test "build_aws_dir rewrites in place: the directory survives, stale credentials and cache go" {
-  write_aws
-  out="$BATS_TEST_TMPDIR/out"
-  bash -c "source '$A'; build_aws_dir '$HOME/.aws' '$out' dev"
-  ino="$(stat -c %i "$out")"; cino="$(stat -c %i "$out/config")"
-  echo '{}' > "$out/sso/cache/stale.json"
-  printf '[default]\naws_access_key_id = AKIADEFAULT\n' > "$HOME/.aws/credentials"
-  echo '{}' > "$HOME/.aws/sso/cache/new.json"
-  # Hold the directory open, as the dev container's bind mount does, so its inode cannot be reused.
-  (cd "$out" && exec sleep 60) 3>&- &
-  holder=$!
-  run bash -c "source '$A'; build_aws_dir '$HOME/.aws' '$out' dev"
-  kill "$holder"
-  [ "$status" -eq 0 ]
-  [ "$(stat -c %i "$out")" = "$ino" ]
-  [ "$(stat -c %i "$out/config")" = "$cino" ]
-  grep -q '\[profile dev\]' "$out/config"
-  [ ! -e "$out/credentials" ]
-  [ -f "$out/sso/cache/new.json" ]
-  [ ! -e "$out/sso/cache/stale.json" ]
-}
-
-@test "run arguments mount the filtered AWS dir when .env names a profile" {
-  write_aws
-  printf 'AWS_PROFILE=dev\n' > "$PROJ/.agentic/.env"
-  run in_project 'build_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
-  grep -qx "$AGENTIC_DATA/projects/demo/aws:/home/dev/.aws:ro" <<<"$output"
-  run grep -q "$HOME/.aws:/home/dev/.aws" <<<"$output"
-  [ "$status" -ne 0 ]
-}

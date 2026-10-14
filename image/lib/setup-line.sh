@@ -92,6 +92,9 @@ parse_line() {
       L_KIND=mcp; L_PHASE=build; L_KEY="${pos[0]}"
       for a in "${L_ENV[@]}"; do
         [[ "$a" =~ ^[A-Za-z_][A-Za-z0-9_]*(=.*)?$ ]] || _fail "--env takes KEY or KEY=VALUE, not '$a'" || return 1
+        if [[ "$a" == *=* ]] && [[ "$(tr '[:upper:]' '[:lower:]' <<<"${a%%=*}")" =~ token|password|secret ]]; then
+          _fail "--env ${a%%=*}: literal secret; write --env ${a%%=*} and put the value in .agentic/.env"; return 1
+        fi
       done
       if [ -n "$L_TRANSPORT" ]; then
         case "$L_TRANSPORT" in http|sse) ;; *) _fail "--transport takes http or sse" || return 1 ;; esac

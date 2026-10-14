@@ -11,7 +11,7 @@ setup() {
   # an origin repository containing .agentic/agentic.yaml
   O="$BATS_TEST_TMPDIR/origin"
   git init -q -b main "$O"
-  mkdir -p "$O/.agentic"; printf 'version: 1\nproject: cloned\n' > "$O/.agentic/agentic.yaml"
+  mkdir -p "$O/.agentic"; printf 'version: 2\nproject: cloned\n' > "$O/.agentic/agentic.yaml"
   git -C "$O" add . && git -C "$O" -c user.name=t -c user.email=t@t commit -q -m init
 }
 
@@ -84,7 +84,7 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
 
 # --- 10-validate
 @test "10 resolves the mounted config and records its directory" {
-  config $'version: 1\nproject: demo'
+  config $'version: 2\nproject: demo'
   run bash "$S/10-validate.sh"
   [ "$status" -eq 0 ]
   [ "$(jq -r .project "$AGENTIC_STATE/config.json")" = demo ]
@@ -93,7 +93,7 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
 
 @test "10 fails on an invalid config and keeps the previous resolved config" {
   echo '{"project":"old"}' > "$AGENTIC_STATE/config.json"
-  config $'version: 1\nproject: demo\nfoo: 1'
+  config $'version: 2\nproject: demo\nfoo: 1'
   run bash "$S/10-validate.sh"
   [ "$status" -eq 1 ]
   [[ "$output" == *".foo: unknown key"* ]]
@@ -101,13 +101,13 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
 }
 
 @test "10 under agentic setup warns on an invalid config, records the errors and starts with defaults" {
-  config $'version: 1\nproject: demo\nfoo: 1'
+  config $'version: 2\nproject: demo\nfoo: 1'
   AGENTIC_SETUP=1 run bash "$S/10-validate.sh"
   [ "$status" -eq 2 ]
   [[ "$output" == *".foo: unknown key"* ]]
   grep -q '.foo: unknown key' "$AGENTIC_STATE/config-errors.txt"
   [ "$(cat "$AGENTIC_STATE/config-dir")" = "$AGENTIC_CONFIG_MOUNT" ]
-  config $'version: 1\nproject: demo'
+  config $'version: 2\nproject: demo'
   AGENTIC_SETUP=1 run bash "$S/10-validate.sh"
   [ "$status" -eq 0 ]
   [ ! -e "$AGENTIC_STATE/config-errors.txt" ]
@@ -137,7 +137,7 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
 # --- 20-onboarding
 @test "20 seeds Claude onboarding and trusts /work, /workspaces and each clone" {
   mkdir -p "$AGENTIC_WORKSPACES_DIR/lib/.git" "$AGENTIC_WORKSPACES_DIR/repos/app/.git"
-  config $'version: 1\nproject: demo'; bash "$S/10-validate.sh"
+  config $'version: 2\nproject: demo'; bash "$S/10-validate.sh"
   run bash "$S/20-onboarding.sh"
   [ "$status" -eq 0 ]
   f="$HOME/.claude.json"
@@ -153,44 +153,17 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
 @test "20 keeps existing keys and follows CLAUDE_CONFIG_DIR" {
   export CLAUDE_CONFIG_DIR="$BATS_TEST_TMPDIR/cc"; mkdir -p "$CLAUDE_CONFIG_DIR"
   echo '{"theme":"dark"}' > "$CLAUDE_CONFIG_DIR/.claude.json"
-  config $'version: 1\nproject: demo'; bash "$S/10-validate.sh"
+  config $'version: 2\nproject: demo'; bash "$S/10-validate.sh"
   bash "$S/20-onboarding.sh"
   [ "$(jq -r .theme "$CLAUDE_CONFIG_DIR/.claude.json")" = dark ]
   [ "$(jq -r .hasCompletedOnboarding "$CLAUDE_CONFIG_DIR/.claude.json")" = true ]
 }
 
 @test "20 --check warns about missing onboarding and changes nothing" {
-  config $'version: 1\nproject: demo'; bash "$S/10-validate.sh"
+  config $'version: 2\nproject: demo'; bash "$S/10-validate.sh"
   run bash "$S/20-onboarding.sh" --check
   [ "$status" -eq 2 ]
   [ ! -f "$HOME/.claude.json" ]
 }
 
 # --- 30-git
-@test "30 sets the identity from config, else from GIT_AUTHOR_*, and exports it" {
-  config $'version: 1\nproject: demo\ngit:\n  user_name: Cfg Name'; bash "$S/10-validate.sh"
-  GIT_AUTHOR_EMAIL=env@example.com run bash "$S/30-git.sh"
-  [ "$status" -eq 0 ]
-  [ "$(git config --global user.name)" = "Cfg Name" ]
-  [ "$(git config --global user.email)" = env@example.com ]
-  grep -q '^export GIT_COMMITTER_NAME=Cfg\\ Name$' "$AGENTIC_STATE/env"
-}
-
-@test "30 identity from the environment (.env) wins over git.user_* in the config" {
-  config $'version: 1\nproject: demo\ngit:\n  user_name: Bot\n  user_email: bot@example.com'; bash "$S/10-validate.sh"
-  GIT_AUTHOR_NAME="Env Name" GIT_AUTHOR_EMAIL=env@example.com run bash "$S/30-git.sh"
-  [ "$status" -eq 0 ]
-  [ "$(git config --global user.name)" = "Env Name" ]
-  [ "$(git config --global user.email)" = env@example.com ]
-}
-
-@test "30 sets GH_HOST for git.host and leaves git credentials to GIT_CONFIG_* in .env" {
-  config $'version: 1\nproject: demo\ngit:\n  host: git.example.com'; bash "$S/10-validate.sh"
-  GH_TOKEN=supersecret GIT_TOKEN=other run bash "$S/30-git.sh"
-  [ "$status" -eq 0 ]
-  grep -q '^export GH_HOST=git.example.com$' "$AGENTIC_STATE/env"
-  run grep -E 'GIT_CONFIG|GH_ENTERPRISE_TOKEN|supersecret' "$AGENTIC_STATE/env"
-  [ "$status" -eq 1 ]
-  run grep -s credential "$HOME/.gitconfig"
-  [ "$status" -ne 0 ]
-}

@@ -125,3 +125,10 @@ setup() {
   [[ "$output" == *".setup[1]: unknown command"* ]]
   [[ "$output" == *".setup[2]: same command, key and targets as .setup[0]"* ]]
 }
+
+@test "a literal value under a token, password or secret name is refused; a reference is fine" {
+  ! parse_line "add mcp docs --env API_TOKEN=abc123 -- run"
+  [[ "$L_ERR" == *"--env API_TOKEN: literal secret; write --env API_TOKEN and put the value in .agentic/.env"* ]]
+  parse_line "add mcp docs --env API_TOKEN -- run"
+  parse_line "add mcp docs --env DB_URL=https://db.example.com -- run"
+}

@@ -9,7 +9,7 @@ setup() {
   export AGENTIC_DATA="$BATS_TEST_TMPDIR/data" AGENTIC_WORKSPACES="$BATS_TEST_TMPDIR/ws"
   PROJ="$BATS_TEST_TMPDIR/proj"
   mkdir -p "$PROJ/.agentic"; git init -q -b main "$PROJ"
-  printf 'version: 1\nproject: demo\n' > "$PROJ/.agentic/agentic.yaml"
+  printf 'version: 2\nproject: demo\n' > "$PROJ/.agentic/agentic.yaml"
   git -C "$PROJ" add -A; git -C "$PROJ" -c user.name=t -c user.email=t@example.com commit -qm init
   A="$REPO_ROOT/bin/agentic"
   export DOCKER_STATUS=running DOCKER_PORT=49153 AGENTIC_WSLG_DIR="$BATS_TEST_TMPDIR/no-wslg"

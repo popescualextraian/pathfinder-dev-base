@@ -8,7 +8,7 @@ setup() {
   export AGENTIC_DATA="$BATS_TEST_TMPDIR/data" AGENTIC_WORKSPACES="$BATS_TEST_TMPDIR/ws"
   PROJ="$BATS_TEST_TMPDIR/proj"
   mkdir -p "$PROJ/.agentic"; git init -q "$PROJ"
-  printf 'version: 1\nproject: demo\n' > "$PROJ/.agentic/agentic.yaml"
+  printf 'version: 2\nproject: demo\n' > "$PROJ/.agentic/agentic.yaml"
   A="$REPO_ROOT/bin/agentic"
   export AGENTIC_WSLG_DIR="$BATS_TEST_TMPDIR/no-wslg"   # tests that want WSLg create it
 }

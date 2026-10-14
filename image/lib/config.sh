@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Config discovery, resolution and validation. Source after common.sh.
+# shellcheck source=setup-line.sh
+source "$AGENTIC_DIR/lib/setup-line.sh"
 
 # config_find: the directory holding agentic.yaml; nothing when there is none. Fails, with a
 # message, when AGENTIC_CONFIG_B64 is set but does not decode.
@@ -32,31 +34,36 @@ config_resolve() {
 # config_image_errs FILE: what only this image can decide, checked as the build checks it: every
 # tool has a preset here, and build-time paths stay inside .agentic/ (the build context).
 config_image_errs() {
-  local f="$1" k key p top=" version project base_image git certs plugins mcp skills hooks harness docker "
+  local f="$1" k p top=" version project base_image targets tools hooks harness docker setup "
   while IFS= read -r k; do
     [ -f "$AGENTIC_DIR/tools/$k.sh" ] && continue
     if [[ "$top" == *" $k "* ]]; then echo ".tools.$k: no preset $k in this image; $k is a top-level key, not a tool"
     else echo ".tools.$k: no preset $k in this image"; fi
   done < <(jq -r '.tools // {} | to_entries[]
     | select(.key != "apt" and .key != "extra_dockerfile" and .value != false and .value != null) | .key' "$f")
-  for key in .certs .tools.extra_dockerfile .hooks.on_build; do
-    p="$(jq -r "$key // empty" "$f")"
-    [ -n "$p" ] || continue
-    case "/$p/" in */../*) echo "$key: $p must be inside .agentic/"; continue ;; esac
-    case "$p" in .agentic/*) ;; *) echo "$key: $p must be inside .agentic/" ;; esac
-  done
+  p="$(jq -r '.tools.extra_dockerfile // empty' "$f")"
+  if [ -n "$p" ]; then
+    case "/$p/" in
+      */../*) echo ".tools.extra_dockerfile: $p must be inside .agentic/" ;;
+      *) case "$p" in .agentic/*) ;; *) echo ".tools.extra_dockerfile: $p must be inside .agentic/" ;; esac ;;
+    esac
+  fi
+  if [ -f "$AGENTIC_DIR/defaults/agentic.yaml" ] && yq -e 'has("setup")' "$AGENTIC_DIR/defaults/agentic.yaml" >/dev/null 2>&1; then
+    echo ".setup: overlay defaults cannot hold setup: lines; ship them in /opt/agentic/defaults/recommended"
+  fi
 }
 
 # config_validate FILE: prints one error per line; exit 1 if there is any.
 config_validate() {
   local errs
+  if [ "$(jq -r '.version // empty' "$1")" = 1 ]; then
+    echo ".version: version 1 is no longer supported; re-run agentic init (keep your .env)"; return 1
+  fi
   errs="$(jq -r -L "$AGENTIC_DIR/lib" --slurpfile s "$AGENTIC_DIR/schema/agentic.schema.json" '
     include "schema-check"; include "config-rules";
     errs($s[0]; "") as $e
     | (if ($e | length) > 0 then $e else semantic_errs end) + secret_errs | .[]' "$1")" || return 1
   if [ -z "$errs" ]; then errs="$(config_image_errs "$1")"; fi
-  # repos: was removed in sub-project 2; say what to do instead of "unknown key".
-  # shellcheck disable=SC2001  # anchored match, not expressible as ${var//}
-  errs="$(sed 's#^\.repos: unknown key$#.repos: no longer supported; delete it (tasks use the clones in the project'"'"'s workspace, see docs/tasks.md)#' <<<"$errs")"
+  if [ -z "$errs" ]; then errs="$(setup_errs "$1")"; fi
   if [ -n "$errs" ]; then printf '%s\n' "$errs"; return 1; fi
 }

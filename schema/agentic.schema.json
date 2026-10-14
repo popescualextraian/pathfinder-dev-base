@@ -6,17 +6,10 @@
   "required": ["version", "project"],
   "additionalProperties": false,
   "properties": {
-    "version": {"description": "Schema version. Always 1.", "enum": [1]},
+    "version": {"description": "Schema version. Always 2.", "enum": [2]},
     "project": {"description": "Project name. Names the image agentic-<project>:local and the workspace directory.", "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"},
+    "targets": {"description": "Default --target of every setup line: the harnesses that assets, plugins, marketplaces and MCP servers go to.", "type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["claude", "copilot"]}},
     "base_image": {"description": "Image the derived image is built FROM: the base or an overlay built FROM the base.", "type": "string", "minLength": 1},
-    "git": {
-      "description": "Git settings.", "type": "object", "additionalProperties": false,
-      "properties": {
-        "host": {"description": "Git host for GH_HOST. Git credentials go in .env as GIT_CONFIG_* (see .env.example).", "type": "string"},
-        "user_name": {"description": "Commit author name, unless GIT_AUTHOR_NAME is set (.env). Empty uses the host's git config.", "type": "string"},
-        "user_email": {"description": "Commit author email, unless GIT_AUTHOR_EMAIL is set (.env). Empty uses the host's git config.", "type": "string"}
-      }
-    },
     "tools": {
       "description": "Build-time tools. Changing them needs agentic build.",
       "type": "object",
@@ -40,56 +33,17 @@
         "extra_dockerfile": {"description": "Dockerfile lines appended to the derived image, run as root, inside .agentic/.", "type": "string"}
       }
     },
-    "certs": {"description": "Directory inside .agentic/ whose *.crt files are trusted by the system, Java, Node, Python and Chromium.", "type": "string"},
-    "plugins": {
-      "description": "Harness plugins. Claude plugins are baked at build time; Copilot plugins install at first start.",
-      "type": "object", "additionalProperties": false,
-      "properties": {
-        "claude": {"description": "Claude plugins as name@marketplace.", "type": "array", "items": {"type": "string", "pattern": "^[^@ ]+@[^@ ]+$"}},
-        "copilot": {"description": "Copilot plugins as name@marketplace.", "type": "array", "items": {"type": "string", "pattern": "^[^@ ]+@[^@ ]+$"}},
-        "marketplaces": {"description": "Marketplace repositories (owner/repo) added before installing.", "type": "array", "items": {"type": "string"}}
-      }
-    },
-    "mcp": {
-      "description": "MCP servers, applied at every start without a rebuild.",
-      "type": "object", "additionalProperties": false,
-      "properties": {
-        "atlassian": {"description": "Jira and Confluence (mcp-atlassian). Tokens: JIRA_PERSONAL_TOKEN, CONFLUENCE_PERSONAL_TOKEN in .env.", "type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}, "jira_url": {"type": "string"}, "confluence_url": {"type": "string"}}},
-        "playwright": {"description": "Browser automation. headed needs a display; without one Xvfb starts.", "type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}, "mode": {"enum": ["headless", "headed"]}}},
-        "graphify": {"description": "Code and docs graph server (graphify-out/graph.json in the working directory).", "type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}},
-        "custom": {
-          "description": "Other MCP servers. ${VAR} references are expanded by the harness from the environment.",
-          "type": "array",
-          "items": {
-            "type": "object", "required": ["name", "type"], "additionalProperties": false,
-            "properties": {
-              "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
-              "type": {"enum": ["stdio", "http"]},
-              "command": {"type": "string"},
-              "args": {"type": "array", "items": {"type": "string"}},
-              "env": {"type": "object", "additionalProperties": {"type": "string"}},
-              "url": {"type": "string"},
-              "headers": {"type": "object", "additionalProperties": {"type": "string"}}
-            }
-          }
-        }
-      }
-    },
-    "skills": {"description": "Directory inside .agentic/ with project skills (<name>/SKILL.md), copied into both harnesses.", "type": "string"},
     "hooks": {
       "description": "Project hooks.", "type": "object", "additionalProperties": false,
       "properties": {
-        "on_build": {"description": "Script run as dev at the end of the derived build. Never sees .env.", "type": "string"},
         "on_start": {"description": "Script run as dev at every container start, with the full environment.", "type": "string"},
         "on_start_required": {"description": "When true, a failing on_start stops the container.", "type": "boolean"}
       }
     },
     "harness": {
-      "description": "Harness choice and models.", "type": "object", "additionalProperties": false,
+      "description": "Harness choice.", "type": "object", "additionalProperties": false,
       "properties": {
-        "default": {"description": "Harness used by agentic setup.", "enum": ["claude", "copilot"]},
-        "claude": {"type": "object", "additionalProperties": false, "properties": {"model": {"description": "Model; empty uses the harness default.", "type": "string"}}},
-        "copilot": {"type": "object", "additionalProperties": false, "properties": {"model": {"description": "Model; empty uses the harness default.", "type": "string"}}}
+        "default": {"description": "Agent of agentic run without --agent, and of agentic setup.", "enum": ["claude", "copilot"]}
       }
     },
     "docker": {
@@ -97,6 +51,7 @@
       "properties": {
         "socket": {"description": "Mount the host Docker socket. It is host root; off by default. Changing it needs agentic build.", "type": "boolean"}
       }
-    }
+    },
+    "setup": {"description": "The container's setup as agentic commands without the agentic prefix (docs/setup.md): add marketplace|plugin|mcp|skill|agent|command|workspace, copy, mount, volume. Replayed in order by agentic build and the start.", "type": "array", "items": {"type": "string", "minLength": 1}}
   }
 }

@@ -90,24 +90,19 @@ build_run_args() {
 }
 
 # shared_run_args IMAGE: appends what every container of the project gets to RUN_ARGS: the .env
-# file, git identity, proxy, AWS profile and the opt-in Docker socket.
+# file, git identity, proxy and the opt-in Docker socket.
 shared_run_args() {
-  local img="$1" root cfg p data v name email profile sock
-  root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"; data="$AGENTIC_DATA/projects/$p"
+  local img="$1" root cfg v name email sock
+  root="$(project_root)"; cfg="$root/.agentic"
   check_env_file "$cfg/.env"
   if [ -f "$cfg/.env" ]; then RUN_ARGS+=(--env-file "$cfg/.env"); fi
   # the host's git identity, for what .env leaves unset (-e would win over --env-file)
   name="$(pgit -C "$root" config user.name || true)"; email="$(pgit -C "$root" config user.email || true)"
-  if [ -n "$name" ] && [ -z "$(dotenv_value "$cfg/.env" GIT_AUTHOR_NAME)" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_NAME=$name"); fi
-  if [ -n "$email" ] && [ -z "$(dotenv_value "$cfg/.env" GIT_AUTHOR_EMAIL)" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_EMAIL=$email"); fi
+  if [ -n "$name" ] && [ -z "$(dotenv_value "$cfg/.env" GIT_AUTHOR_NAME)" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_NAME=$name" -e "GIT_COMMITTER_NAME=$name"); fi
+  if [ -n "$email" ] && [ -z "$(dotenv_value "$cfg/.env" GIT_AUTHOR_EMAIL)" ]; then RUN_ARGS+=(-e "GIT_AUTHOR_EMAIL=$email" -e "GIT_COMMITTER_EMAIL=$email"); fi
   for v in "${PROXY_VARS[@]}"; do
     if [ -n "${!v:-}" ]; then RUN_ARGS+=(-e "$v"); fi
   done
-  profile="$(dotenv_value "$cfg/.env" AWS_PROFILE)"
-  if [ -n "$profile" ] && [ -d "$HOME/.aws" ]; then
-    build_aws_dir "$HOME/.aws" "$data/aws" "$profile"
-    RUN_ARGS+=(-v "$data/aws:/home/dev/.aws:ro")
-  fi
   sock="${AGENTIC_DOCKER_SOCK:-/var/run/docker.sock}"
   if [ "$(image_label "$img" agentic.docker_socket)" = true ] && [ -S "$sock" ]; then
     RUN_ARGS+=(-v "$sock:/var/run/docker.sock" --group-add "$(stat -c %g "$sock")")

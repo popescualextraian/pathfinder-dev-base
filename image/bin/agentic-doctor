@@ -66,14 +66,6 @@ while IFS=$'\t' read -r name type target; do
   esac
 done < <(jq -r '.mcpServers // {} | to_entries[] | [.key, (.value.type // "stdio"), (.value.url // .value.command)] | @tsv' "$(claude_json)" 2>/dev/null)
 
-echo "certificates"
-for key in .mcp.atlassian.jira_url .mcp.atlassian.confluence_url; do
-  u="$(cfg "$key")"
-  if [ -n "$u" ] && cfg_true .mcp.atlassian.enabled; then probe_url "${key##*.}" "$u"; fi
-done
-host="$(cfg .git.host)"
-if [ -n "$host" ]; then probe_url "git host" "https://$host"; fi
-
 echo "docker"
 if cfg_true .docker.socket; then
   if docker version >/dev/null 2>&1; then ok "docker daemon"; else err "docker.socket is true but the daemon is not reachable"; fi

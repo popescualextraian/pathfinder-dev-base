@@ -4,8 +4,6 @@ USER root
 ARG UID=1000
 ARG GID=1000
 RUN agentic-remap-user "$UID" "$GID"
-COPY certs/ /usr/local/share/ca-certificates/agentic/
-RUN update-ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends tree graphviz && rm -rf /var/lib/apt/lists/*
 RUN bash /opt/agentic/tools/java.sh install 17 && bash /opt/agentic/tools/java.sh install 11
 RUN bash /opt/agentic/tools/maven.sh install 3.9.9
@@ -21,10 +19,6 @@ RUN agentic-trust-java
 RUN echo extra > /etc/agentic-extra
 USER dev
 RUN agentic-trust-nss && agentic-render-toolchains
-ARG AGENTIC_PLUGINS_REFRESH=0
-RUN agentic-install-plugins '{"claude":["superpowers@claude-plugins-official"],"marketplaces":["anthropics/claude-plugins-official"]}'
-COPY --chown=dev hooks/on-build.sh /tmp/agentic-on-build.sh
-RUN bash /tmp/agentic-on-build.sh && rm -f /tmp/agentic-on-build.sh
 USER root
 RUN agentic-inventory > /opt/agentic/inventory.txt
 USER dev

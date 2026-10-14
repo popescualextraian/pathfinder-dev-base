@@ -52,7 +52,7 @@ install_cmd_stub() {
 make_task_dir() {
   export AGENTIC_TASK_DIR="$BATS_TEST_TMPDIR/task"
   mkdir -p "$AGENTIC_TASK_DIR"
-  jq -n '{version: 1, allowed_actions: $ARGS.positional}' --args "$@" > "$AGENTIC_TASK_DIR/state.json"
+  jq -n '{version: 2, allowed_actions: $ARGS.positional}' --args "$@" > "$AGENTIC_TASK_DIR/state.json"
 }
 
 # install_curl_stub: a curl stand-in for bridge calls. Each call appends its arguments, the header

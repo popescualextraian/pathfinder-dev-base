@@ -12,38 +12,38 @@ setup() {
 write() { printf '%s\n' "$2" > "$1"; }
 
 @test "resolve merges base defaults, overlay defaults and the project, project last" {
-  write "$AGENTIC_DIR/defaults/agentic.yaml" $'git:\n  host: git.example.com\nharness:\n  default: copilot'
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\nharness:\n  default: claude'
+  write "$AGENTIC_DIR/defaults/agentic.yaml" $'docker:\n  socket: true\nharness:\n  default: copilot'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\nharness:\n  default: claude'
   run "$AC" resolve "$P"
   [ "$status" -eq 0 ]
   [ "$(jq -r .project <<<"$output")" = demo ]
-  [ "$(jq -r .git.host <<<"$output")" = git.example.com ]
+  [ "$(jq -r .docker.socket <<<"$output")" = true ]
   [ "$(jq -r .harness.default <<<"$output")" = claude ]
-  [ "$(jq -r .mcp.playwright.mode <<<"$output")" = headless ]
+  [ "$(jq -c .targets <<<"$output")" = '["claude","copilot"]' ]
 }
 
 @test "lists from the project replace the defaults" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  apt: [tree]\n  python: ["3.11"]'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  apt: [tree]\n  python: ["3.11"]'
   run "$AC" resolve "$P"
   [ "$(jq -c .tools.python <<<"$output")" = '["3.11"]' ]
   [ "$(jq -c .tools.apt <<<"$output")" = '["tree"]' ]
 }
 
 @test "the smallest valid file validates" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo'
   run "$AC" validate "$P"
   [ "$status" -eq 0 ]
 }
 
 @test "a missing project is reported" {
-  write "$P/agentic.yaml" 'version: 1'
+  write "$P/agentic.yaml" 'version: 2'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
   [[ "$output" == *".project: is required"* ]]
 }
 
 @test "unknown keys and wrong types are reported with their path" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ndocker:\n  socket: "yes"\nfoo: 1'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ndocker:\n  socket: "yes"\nfoo: 1'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
   [[ "$output" == *".docker.socket: expected boolean, got string"* ]]
@@ -51,31 +51,31 @@ write() { printf '%s\n' "$2" > "$1"; }
 }
 
 @test "project names are restricted to a safe pattern" {
-  write "$P/agentic.yaml" $'version: 1\nproject: "My App"'
+  write "$P/agentic.yaml" $'version: 2\nproject: "My App"'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
   [[ "$output" == *".project: does not match"* ]]
 }
 
 @test "java accepts false or versions with a default inside them" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  java: {versions: [17, 11], default: 11}'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  java: {versions: [17, 11], default: 11}'
   run "$AC" validate "$P"
   [ "$status" -eq 0 ]
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  java: {versions: [17], default: 8}'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  java: {versions: [17], default: 8}'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
   [[ "$output" == *".tools.java.default: 8 is not in versions"* ]]
 }
 
 @test "a version preset accepts false or a version string, not true" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  terraform: true'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  terraform: true'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
   [[ "$output" == *".tools.terraform: matches none of the allowed forms"* ]]
 }
 
 @test "a preset this image lacks is reported by validate, as the build would" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  hello: "1.0"'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  hello: "1.0"'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
   [[ "$output" == *".tools.hello: no preset hello in this image"* ]]
@@ -84,57 +84,46 @@ write() { printf '%s\n' "$2" > "$1"; }
 @test "a preset an overlay adds to the image passes validate" {
   rm "$AGENTIC_DIR/tools"; cp -r "$REPO_ROOT/image/tools" "$AGENTIC_DIR/tools"
   printf '#!/usr/bin/env bash\n' > "$AGENTIC_DIR/tools/hello.sh"
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  hello: "1.0"'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  hello: "1.0"'
   run "$AC" validate "$P"
   [ "$status" -eq 0 ]
 }
 
 @test "a top-level key placed under tools gets a hint" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  certs: certs'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  setup: x'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
-  [[ "$output" == *".tools.certs: no preset certs in this image; certs is a top-level key, not a tool"* ]]
+  [[ "$output" == *".tools.setup: no preset setup in this image; setup is a top-level key, not a tool"* ]]
 }
 
 @test "build paths outside .agentic/ are reported by validate" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ncerts: certs\ntools:\n  extra_dockerfile: .agentic/../x\nhooks:\n  on_build: /tmp/b.sh'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  extra_dockerfile: .agentic/../x'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
-  [[ "$output" == *".certs: certs must be inside .agentic/"* ]]
   [[ "$output" == *".tools.extra_dockerfile: .agentic/../x must be inside .agentic/"* ]]
-  [[ "$output" == *".hooks.on_build: /tmp/b.sh must be inside .agentic/"* ]]
 }
 
-@test "a literal secret is rejected, a reference is accepted" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\nmcp:\n  custom:\n    - {name: docs, type: http, url: "https://mcp.example.com", headers: {api_token: abc123}}'
+@test "a literal secret in a setup line is rejected, a reference is accepted" {
+  write "$P/agentic.yaml" $'version: 2
+project: demo
+setup:
+  - add mcp docs --env API_TOKEN=abc123 -- run'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"api_token: literal secret"* ]]
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\nmcp:\n  custom:\n    - {name: docs, type: http, url: "https://mcp.example.com", headers: {api_token: "${DOCS_TOKEN}"}}'
+  [[ "$output" == *"API_TOKEN: literal secret"* ]]
+  write "$P/agentic.yaml" $'version: 2
+project: demo
+setup:
+  - add mcp docs --env API_TOKEN -- run'
   run "$AC" validate "$P"
   [ "$status" -eq 0 ]
-}
-
-@test "custom MCP servers need a command or url and may not take a built-in name" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\nmcp:\n  custom:\n    - {name: a, type: stdio}\n    - {name: playwright, type: http, url: "https://x.example.com"}'
-  run "$AC" validate "$P"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"a: stdio server needs command"* ]]
-  [[ "$output" == *"playwright: name is reserved"* ]]
-}
-
-@test "atlassian enabled needs at least one URL" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\nmcp:\n  atlassian: {enabled: true}'
-  run "$AC" validate "$P"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *".mcp.atlassian: enabled needs jira_url or confluence_url"* ]]
 }
 
 @test "config_find prefers the mount, then /work/.agentic, then AGENTIC_CONFIG_B64" {
   source "$AGENTIC_DIR/lib/common.sh"; source "$AGENTIC_DIR/lib/config.sh"
   export AGENTIC_CONFIG_MOUNT="$BATS_TEST_TMPDIR/mount" AGENTIC_WORK="$BATS_TEST_TMPDIR/work"
   mkdir -p "$AGENTIC_CONFIG_MOUNT" "$AGENTIC_WORK/.agentic"
-  export AGENTIC_CONFIG_B64; AGENTIC_CONFIG_B64="$(printf 'version: 1\nproject: fromenv\n' | base64 -w0)"
+  export AGENTIC_CONFIG_B64; AGENTIC_CONFIG_B64="$(printf 'version: 2\nproject: fromenv\n' | base64 -w0)"
   [ "$(config_find)" = "$AGENTIC_STATE/env-config" ]
   [ "$(yq .project "$AGENTIC_STATE/env-config/agentic.yaml")" = fromenv ]
   touch "$AGENTIC_WORK/.agentic/agentic.yaml"
@@ -166,18 +155,47 @@ write() { printf '%s\n' "$2" > "$1"; }
 }
 
 @test "apt pins may not carry shell metacharacters" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  apt: ["tree=1;id"]'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  apt: ["tree=1;id"]'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\ntools:\n  apt: ["tree=2.1.1-2"]'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntools:\n  apt: ["tree=2.1.1-2"]'
   run "$AC" validate "$P"
   [ "$status" -eq 0 ]
 }
 
-@test "an old config with repos gets a message that says what to do" {
-  write "$P/agentic.yaml" $'version: 1\nproject: demo\nrepos:\n  - {name: demo}'
+@test "version 1 is refused with re-run agentic init" {
+  write "$P/agentic.yaml" $'version: 1\nproject: demo'
   run "$AC" validate "$P"
   [ "$status" -eq 1 ]
-  [[ "$output" == *".repos: no longer supported; delete it"* ]]
-  [[ "$output" != *"unknown key"* ]]
+  [[ "$output" == *"re-run agentic init"* ]]
+}
+
+@test "version 2 with setup lines and targets is valid" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\ntargets: [claude]\nsetup:\n  - add plugin a@b\n  - volume m2 /home/dev/.m2'
+  run "$AC" validate "$P"
+  [ "$status" -eq 0 ]
+}
+
+@test "a bad setup line is reported with its index" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\nsetup:\n  - add plugin nope'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".setup[0]: usage: add plugin NAME@MARKETPLACE"* ]]
+}
+
+@test "removed version 1 keys are unknown" {
+  for k in 'git: {host: x}' 'certs: .agentic/certs' 'plugins: {claude: []}' 'mcp: {}' 'skills: .agentic/skills'; do
+    write "$P/agentic.yaml" "$(printf 'version: 2\nproject: demo\n%s' "$k")"
+    run "$AC" validate "$P"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"unknown key"* ]]
+  done
+}
+
+@test "an overlay default with setup: is refused" {
+  write "$AGENTIC_DIR/defaults/agentic.yaml" 'setup: [add plugin a@b]'
+  write "$P/agentic.yaml" $'version: 2\nproject: demo'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"overlay defaults cannot hold setup:"* ]]
 }

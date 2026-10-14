@@ -93,7 +93,7 @@ step() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$AGENTIC_STEPS_DIR/$1.sh"; }
 @test "the host command runs agentic-doctor through the entrypoint with the image's config hash" {
   install_docker_stub
   P="$BATS_TEST_TMPDIR/proj"; mkdir -p "$P/.agentic"; git init -q "$P"
-  printf 'version: 1\nproject: demo\n' > "$P/.agentic/agentic.yaml"
+  printf 'version: 2\nproject: demo\n' > "$P/.agentic/agentic.yaml"
   DOCKER_LABEL=abc123 run bash -c "cd '$P' && bash '$REPO_ROOT/bin/agentic' doctor"
   [ "$status" -eq 0 ]
   call="$(docker_sub run)"
