@@ -227,7 +227,10 @@ the bind source when the container starts. Avoid running a dev agent while a tas
 cleaned.
 
 Outside the model: an image built with the Docker socket label (`agentic.docker_socket`) mounts
-the Docker socket into every task, which is host root access for the agent.
+the Docker socket into every task, which is host root access for the agent. The project's `mount`
+and `volume` setup lines (`docs/setup.md`) reach every task too: whatever a mount brings in, for
+example cloud credentials from `~/.aws`, is in reach of an unattended agent, and the gate does not
+watch what the agent does with it. Prefer a scoped token in `.env` for tasks.
 
 ### Routes
 

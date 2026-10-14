@@ -12,7 +12,7 @@ builds on the ones before it.
 | 1 | One container to rule them all | available: the base image |
 | 2 | Run it remotely | planned (same image, any host) |
 | 3 | Agentic colleagues | planned (scheduled runs) |
-| 4 | Spec-driven development | available: Superpowers, Atlassian MCP |
+| 4 | Spec-driven development | available: Superpowers (a recommended setup line); trackers through `add mcp` |
 | 5 | Invest in the plan | available: the spec gate |
 | 6 | Knowledge in AI format | in progress: the wiki skill |
 | 7 | A minimal, agent-maintained wiki | in progress: the wiki skill |

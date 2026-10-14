@@ -12,7 +12,7 @@ come back later. Everything keeps running while you are away.
 | `agentic dev` | Starts the container if needed, then attaches to the session `main` (creating it if it is gone). |
 | `agentic dev status` | `running=true/false`, and `outdated` when the image was rebuilt since the container started. |
 | `agentic dev stop` | Stops the container. The next `agentic dev` starts it again. |
-| `agentic dev recreate` | Removes the container, starts a new one from the current image and attaches. Use it after `agentic build`. |
+| `agentic dev recreate` | Removes the container, starts a new one from the current image and attaches. Use it after `agentic build`; `agentic add ... --yes` does it for you. |
 | `agentic dev --host-profile wsl\|none` | Forces the WSL host conveniences on or off (see below). |
 | `agentic shell [CMD...]` | A separate throwaway container, removed on exit. It is not part of the dev session. |
 
@@ -97,7 +97,8 @@ can share `/work` without worktrees.
   working. Scroll with `Ctrl-b [`.
 - To scroll with the wheel instead, add `set -g mouse on` to `~/.tmux.conf` in the container and
   run `tmux source ~/.tmux.conf`. Hold `Shift` to select or paste with the mouse. A recreate
-  loses that file. To keep it, append the line from `.agentic/hooks/on-build.sh`.
+  loses that file. To keep it, put it in `.agentic/files/tmux.conf` and add
+  `agentic copy .agentic/files/tmux.conf /home/dev/.tmux.conf`.
 - Text copied in tmux scroll mode reaches the system clipboard through OSC 52, where the terminal
   supports it.
 - On WSL with WSLg, the container gets the display, the Wayland clipboard and the host `/tmp`, so

@@ -43,7 +43,7 @@ This document is the umbrella design. Each sub-project has its own spec in `docs
 
 | # | Sub-project | Delivers | Unlocks |
 |---|---|---|---|
-| 1 | Base image and config | Base image, `agentic.yaml`, derived project image, tool presets, default MCPs/plugins/skills, `/agentic-setup` skill, `agentic init/build/login/setup/shell/dev/doctor`, downstream layer contract, worker-mode hook | Dev mode; overlays; hub task containers |
+| 1 | Base image and config | Base image, `agentic.yaml` with `setup:` lines, derived project image, tool presets, recommended setup lines, `/agentic-setup` skill, `agentic init/build/login/setup/shell/dev/doctor/add/remove/list`, downstream layer contract, worker-mode hook | Dev mode; overlays; hub task containers |
 | 2 | Runtime and CLI | Detached tasks: one ACP bridge per task container (HTTP + WebSocket API), worktrees, questions with grants, the action gate behind AGENTIC_GATE, notify, `run/status/follow/send/answer/cancel/stop/resume/takeover/clean` | Autonomous mode, local and hub-less |
 | 3 | Hub integration (in the overlay) | A worker-mode adapter that lets an external task hub start and drive this image; the gate active under the hub; blocking requests surfaced as the hub's needs-you signal | UI, team board, scheduling and remote runs, all provided by the hub |
 
@@ -56,7 +56,7 @@ Not built here: a central server, a UI, a scheduler or a remote orchestrator; a 
 ## Layers
 
 ```
- project repo/.agentic/   →  agentic-<project>:local     (derived image: tools, certs, plugins)
+ project repo/.agentic/   →  agentic-<project>:local     (derived image: tools, setup lines, assets)
                                FROM
  overlay (internal)       →  agentic-dev-<org>:<tag>     (optional: org presets, defaults, hub adapter)
                                FROM
@@ -88,6 +88,13 @@ never a second copy of a base file to keep in sync.
 ```
 
 - **Image (1).** Base image plus a derived image per project, rendered from `agentic.yaml`.
+  Build-phase setup lines run against a seed home in the image (`/opt/agentic/seed`); the start
+  step `40-seed` links its plugin folders into the mounted harness home and merges its settings
+  (3-way: what a removed line added goes, what the user changed stays). Run-phase lines (`mount`,
+  `volume`) travel as an image label that the CLI turns into `docker run -v` arguments.
+- **State (1).** The container is disposable; state lives only in `/work`, `/workspaces`, the
+  harness homes and `/task`, which the launcher mounts (`docs/remote.md`). One container belongs
+  to one user.
 - **CLI (1, 2).** `bin/agentic` on the host is the only thing a developer installs for hub-less
   use.
 - **Entry modes (1).** By default the entrypoint applies config and runs the given command (CLI
@@ -111,7 +118,10 @@ never a second copy of a base file to keep in sync.
 | Setup help | `/agentic-setup` skill on top of deterministic `agentic init` | LLM only for judgement |
 | Base image distribution | Built locally first; registry publishing later | Nothing to host |
 | Java | Temurin 21 and Maven in the base; extra JDKs side by side per project, with generated Maven and Gradle toolchains | Old projects need old JDKs |
-| Plugins | Baked into the image, linked into the mounted harness home at start | Reproducible, offline-capable |
+| Extension | `.env`, `setup:` lines in our own command grammar, plain Docker; no per-technology schema fields or start steps | The project owns its technologies; the shell command and the file line are the same text |
+| Setup lines | Baked into a seed home at build, merged into the mounted harness home at start | Reproducible, offline-capable, and the user's own settings survive |
+| Recommended plugins | Lines written by `agentic init`, deletable; nothing hard-wired | Recommended, not imposed |
+| Users | One container per user | Logins, sessions and memory are personal |
 | Mounts | Optional; the image also starts from env alone | Hubs and managed containers have no bind mounts |
 | Docker socket | Off by default; opt-in per project | Guardrail: the socket is host root |
 | Licence | Decided at publication | Private until then |

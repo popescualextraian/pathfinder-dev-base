@@ -9,7 +9,7 @@ render() {
   echo "# agentic.yaml reference"
   echo
   echo "Generated from \`schema/agentic.schema.json\` and \`config/defaults.yaml\` by"
-  echo "\`tools/gen-config-docs.sh\`. Do not edit by hand."
+  echo "\`tools/gen-config-docs.sh\`. Do not edit by hand. Setup lines (\`setup:\`): [setup.md](setup.md)."
   echo
   echo "| Field | Type | Default | Description |"
   echo "|---|---|---|---|"

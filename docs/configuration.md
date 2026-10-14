@@ -1,7 +1,7 @@
 # agentic.yaml reference
 
 Generated from `schema/agentic.schema.json` and `config/defaults.yaml` by
-`tools/gen-config-docs.sh`. Do not edit by hand.
+`tools/gen-config-docs.sh`. Do not edit by hand. Setup lines (`setup:`): [setup.md](setup.md).
 
 | Field | Type | Default | Description |
 |---|---|---|---|

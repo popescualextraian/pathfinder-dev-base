@@ -1,7 +1,7 @@
 # Building an overlay
 
 An overlay is an image built `FROM agentic-dev-base` that adds an organisation's pieces:
-presets, default config, skills, start steps, worker adapters. It lives in its own repository
+presets, default config, recommended setup lines, skills, start steps, worker adapters. It lives in its own repository
 and never patches base files. Projects use it with `base_image:` in `agentic.yaml`.
 
 ## Contract
@@ -11,7 +11,9 @@ and never patches base files. Projects use it with `base_image:` in `agentic.yam
 | `/opt/agentic/start.d/NN-*.sh` | Extra start steps, run in number order with the base steps. Exit 0 ok, 1 fatal, 2 warning; support `--check`; export variables with `env_export` from `/opt/agentic/lib/common.sh`. |
 | `/opt/agentic/tools/<name>.sh` | Extra tool presets: `install VERSION`, `env VERSION`, `check VERSION`. Projects use them as `tools.<name>: "<version>"`. |
 | `/opt/agentic/skills/<name>/` | Extra skills, copied into both harnesses at start. |
-| `/opt/agentic/defaults/agentic.yaml` | Organisation defaults, merged under each project's `agentic.yaml` (the project wins; lists are replaced). |
+| `/opt/agentic/defaults/agentic.yaml` | Organisation defaults, merged under each project's `agentic.yaml` (the project wins; lists are replaced). It cannot hold `setup:`. |
+| `/opt/agentic/defaults/recommended` | Recommended setup lines, one per line (`docs/setup.md`), replacing the base's. `agentic init --base IMAGE` writes them into a project's `setup:`, where the project can see and delete them. |
+| `/usr/local/share/ca-certificates/*.crt` | Organisation CA certificates; any `*.crt` under this folder is trusted by the system, Java, Node, Python and Chromium after `update-ca-certificates`, `agentic-trust-java` and `agentic-trust-nss`. |
 | `/opt/agentic/worker.d/<name>.sh` | Worker-mode adapters, started with `AGENTIC_WORKER_MODE=<name>`. |
 
 The base guarantees for an adapter: bash, curl, tar, git and Node are present; the entrypoint
@@ -38,6 +40,7 @@ needs no mount and no TTY; start steps never wait for input; `CLAUDE_CONFIG_DIR`
 ```dockerfile
 FROM agentic-dev-base:local
 COPY defaults/agentic.yaml /opt/agentic/defaults/agentic.yaml
+COPY recommended /opt/agentic/defaults/recommended
 COPY --chmod=755 tools/ /opt/agentic/tools/
 COPY skills/ /opt/agentic/skills/
 COPY --chmod=755 start.d/ /opt/agentic/start.d/

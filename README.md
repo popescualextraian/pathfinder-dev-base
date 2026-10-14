@@ -1,10 +1,11 @@
 # agentic-dev-base
 
-A container toolbox for agentic development. One base image with the tools agents need (git,
-Claude Code, Copilot CLI, AWS and Azure CLI, gh, Java 21 and Maven, Node 22, Python 3.12, Docker
-CLI, Playwright with Chromium) and recommended extras (Atlassian, Playwright and Graphify MCP
-servers, the Superpowers plugin, the `/agentic-setup` and `/wiki` skills). Each project adds its
-own layer from `.agentic/agentic.yaml`.
+A container for agentic development. One base image with the tools agents need (git, Claude
+Code, Copilot CLI, AWS and Azure CLI, gh, Java 21 and Maven, Node 22, Python 3.12, Docker CLI,
+Playwright with Chromium) and the `/agentic-setup` and `/wiki` skills. Each project extends it in
+the standard ways: `.env` for secrets and settings, one-line `setup:` commands for plugins,
+marketplaces, MCP servers, skills, files and mounts, and plain Dockerfile lines for anything else.
+The project owns its technologies; this repository owns the agentic part.
 
 Built for my own daily use first, and shared so anyone can use it: no company-specific pieces,
 MIT licensed.
@@ -24,17 +25,20 @@ the agent, don't write code". See the [philosophy](docs/philosophy.md).
 bash, git and Docker. Clone this repository once and put `bin/agentic` on your PATH.
 
 Behind a TLS-intercepting proxy, put your CA certificate into `~/.agentic/ca/` before the first
-build (the base image needs it to download anything), and into the project's `.agentic/certs/`
-so Java, Node, Python and Chromium trust it too. The files in `~/.agentic/ca/` must be named
-`*.crt` and hold PEM content; others are ignored. `AGENTIC_BUILD_CA_DIR` points the build at
-another directory.
+build (the base image needs it to download anything), and copy it into the project image so
+Java, Node, Python and Chromium trust it too:
+`agentic copy ~/.agentic/ca/corp.crt /usr/local/share/ca-certificates/corp.crt`. The files in
+`~/.agentic/ca/` must be named `*.crt` and hold PEM content; others are ignored.
+`AGENTIC_BUILD_CA_DIR` points the build at another directory.
 
 ## Usage
 
 1. **Install.** Clone this repository, put `bin/agentic` on your PATH. Optionally run
    `make test lint smoke` to check that everything is green.
-2. **Init.** `cd` into your project, `agentic init` → `.agentic/` with the detected tools;
-   `.agentic/detect-report.md` names the build files it read. Commit `.agentic/`.
+2. **Init.** `cd` into your project, `agentic init` → `.agentic/` with the detected tools and the
+   recommended setup lines (Superpowers, the Playwright MCP server; `--bare` for none);
+   `.agentic/detect-report.md` names the build files it read. Review the `setup:` lines, then
+   commit `.agentic/`.
 3. **Build.** `agentic build` → the base image (first time ~15 min), then
    `agentic-<project>:local`.
 4. **Log in** once per project, with either harness and in either mode:
@@ -42,15 +46,16 @@ another directory.
      login. Or put `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`) in `.agentic/.env`.
    - `agentic login copilot` → device code, `/exit`. Or put `COPILOT_GITHUB_TOKEN` in
      `.agentic/.env`.
-5. **Refine (optional).** `agentic setup` → the `/agentic-setup` skill reviews and improves
-   `.agentic/` for your project.
+5. **Extend.** `agentic add plugin ...`, `agentic add mcp ...`, `agentic copy ...`,
+   `agentic mount ...`: one line each, see [docs/setup.md](docs/setup.md). Or `agentic setup` →
+   the `/agentic-setup` skill reviews your repository and proposes the lines.
 6. **Work.**
    - `agentic dev` → a persistent container with a tmux session in `/work`; run `claude` or
      `copilot`. Detach with `Ctrl-b d`; `agentic dev` again re-attaches. `agentic dev stop`,
      `recreate` and `status` manage it.
    - `agentic shell [CMD...]` → a throwaway container, removed on exit.
    More in [Dev mode](#dev-mode).
-7. **Check.** `agentic doctor` → start steps, tools, logins, MCP servers and certificates, each
+7. **Check.** `agentic doctor` → start steps, tools, logins, MCP servers and setup lines, each
    with `ok` or what is wrong (for example `ok claude`).
 
 ## The `.agentic/` folder
@@ -60,13 +65,12 @@ after a change marked *build*, run `agentic build`, then `agentic dev recreate`.
 
 | Path | Purpose | Takes effect |
 |---|---|---|
-| `agentic.yaml` | Project config: tools, plugins, MCP servers, Docker socket, hooks ([reference](docs/configuration.md)) | build; MCP at next start |
-| `.env` (git-ignored), `.env.example` | Secrets and logins (`ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN`, …); loaded at start, never in the image | next start |
-| `certs/` | `*.crt` files trusted by the system, Java, Node, Python and Chromium (for example a proxy CA) | build |
-| `skills/` | Project skills (`<name>/SKILL.md`), copied into Claude and Copilot | build |
-| `hooks/on-build.sh` | Runs as `dev` at the end of the build, without `.env`; user-level installs (`npm i -g`, `pipx`) | build |
+| `agentic.yaml` | Project config: tools, Docker socket, hooks, and the `setup:` lines ([setup](docs/setup.md), [reference](docs/configuration.md)) | build |
+| `.env` (git-ignored), `.env.example` | Secrets and settings tools read natively (`ANTHROPIC_API_KEY`, `GH_TOKEN`, `GIT_AUTHOR_NAME`, …); loaded at start, never in the image | next start |
+| `files/` | Sources of `copy` lines (settings files, CA certificates) | build |
+| `skills/`, `agents/`, `commands/`, `instructions.md` | Copied into Claude and Copilot (`targets:`) | build |
 | `hooks/on-start.sh` | Runs as `dev` in `/work` at every start, with `.env`; a failure only warns unless `hooks.on_start_required` | next start |
-| `Dockerfile.extra` (optional) | Extra Dockerfile lines, run as root, appended to the project image | build |
+| `Dockerfile.extra` (optional) | Extra Dockerfile lines, run as root, appended to the project image; build-time installs go here | build |
 | `detect-report.md` | Which build files `init` read to detect your tools; for information only | — |
 
 `agentic doctor` warns when `agentic.yaml` changed since the last build.
@@ -135,7 +139,8 @@ and measurement. See [`docs/philosophy.md`](docs/philosophy.md).
 
 ## Private repositories
 
-The repository (`AGENTIC_REPO_URL`) clones over https with `GIT_TOKEN` or `GH_TOKEN` from
+Workspaces (`agentic add workspace URL`) clone with the git settings below. The repository
+(`AGENTIC_REPO_URL`) clones over https with `GIT_TOKEN` or `GH_TOKEN` from
 `.agentic/.env`. Never put a token in the URL itself (`https://user:token@...`): URLs end up in
 configs and logs. For that clone, `git@host:` and `ssh://git@host/` URLs are rewritten to https,
 because no SSH keys are mounted.
@@ -160,16 +165,14 @@ same variables. `.agentic/.env.example` has the template, and `/agentic-setup` w
 
 ## Extending
 
-| Need | Where |
-|---|---|
-| system package | `tools.apt` |
-| another tool version | the preset (`tools.java: {versions: [8, 17], default: 17}`) |
-| any other tool | `.agentic/Dockerfile.extra` |
-| user-level install | `.agentic/hooks/on-build.sh` |
-| something at every start | `.agentic/hooks/on-start.sh` |
-| MCP server | `mcp.custom` |
-| plugin | `plugins` |
-| project skill | `.agentic/skills/<name>/SKILL.md` |
-| organisation-wide pieces | an overlay image, see `docs/overlay.md` |
+Three ways, all standard:
 
-Every field: `docs/configuration.md`. Design: `docs/architecture.md`.
+- **`.env`** for secrets and every setting a tool reads from its environment.
+- **Setup lines** for plugins, marketplaces, MCP servers, skills, agents, files, mounts, volumes
+  and extra repositories: [docs/setup.md](docs/setup.md).
+- **Plain Docker** for everything else: `tools:` presets and `tools.apt` in `agentic.yaml`,
+  `.agentic/Dockerfile.extra`, or an organisation-wide [overlay](docs/overlay.md) image.
+
+Running the container on a VM or a managed service: [docs/remote.md](docs/remote.md). Every
+field: [docs/configuration.md](docs/configuration.md). Design:
+[docs/architecture.md](docs/architecture.md).

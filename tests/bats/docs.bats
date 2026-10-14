@@ -48,3 +48,34 @@ load helpers
 @test "the setup hand-over suggests /wiki seed when the project has no wiki" {
   grep -qF '/wiki seed' "$REPO_ROOT/skills/agentic-setup/SKILL.md"
 }
+
+@test "docs/setup.md documents every setup command, and the skill reference lists the same commands" {
+  f="$REPO_ROOT/docs/setup.md"
+  for c in 'add marketplace' 'add plugin' 'add mcp' 'add skill' 'add agent' 'add command' 'add workspace' '`copy' '`mount' '`volume' 'agentic remove' 'agentic list' 'build --refresh'; do
+    grep -q -- "$c" "$f" || { echo "missing: $c"; return 1; }
+  done
+  cmds() { grep -oE '^\| `(add [a-z]+|copy|mount|volume) ' "$1" | sort -u; }
+  [ "$(cmds "$f" | wc -l)" -eq 10 ]
+  diff <(cmds "$f") <(cmds "$REPO_ROOT/skills/agentic-setup/reference/setup-lines.md")
+}
+
+@test "no document describes a removed field, file or step" {
+  run grep -rnE 'mcp\.atlassian|mcp\.graphify|mcp\.custom|plugins\.claude|plugins\.marketplaces|git\.user_name|git\.host|harness\.claude\.model|on_build|on-build|\.agentic/certs|agentic-install-plugins|--refresh-plugins|30-git|40-mcp|50-plugins|60-skills|70-graphify|80-display' \
+    "$REPO_ROOT/README.md" "$REPO_ROOT/docs" "$REPO_ROOT/templates" "$REPO_ROOT/skills" --include='*.md' --exclude-dir=specs --exclude-dir=plans
+  echo "$output"
+  [ "$status" -eq 1 ]
+}
+
+@test "every local link in the README and docs points to a file that exists" {
+  cd "$REPO_ROOT"
+  for f in README.md docs/*.md; do
+    while IFS= read -r l; do
+      [ -e "$(dirname "$f")/$l" ] || { echo "$f: $l"; return 1; }
+    done < <(grep -oE '\]\([^)#]+' "$f" | sed 's/^](//' | grep -vE '^(https?|mailto):' || true)
+  done
+}
+
+@test "docs/remote.md covers the contract, the VM, a managed service and one user per container" {
+  f="$REPO_ROOT/docs/remote.md"
+  for w in '/work' '/workspaces' 'volume' 'DOCKER_HOST' 'docker push' 'one user'; do grep -q -- "$w" "$f" || { echo "missing: $w"; return 1; }; done
+}
