@@ -814,7 +814,7 @@ MIRRORS_REL=projects/demo/mirrors
   git -C "$PROJ" config user.name t
   ag run --id T-D1 "x" 2>/dev/null
   log="$BATS_TEST_TMPDIR/hostgit.log"
-  for c in "rev-parse --show-toplevel" "remote get-url origin" "config user.name"; do
+  for c in "remote get-url origin" "config user.name"; do
     grep -qF -- "args: -c core.fsmonitor=false -c core.hooksPath=/dev/null -C $PROJ $c" "$log"
   done
   run grep -E -- "args: -C " "$log"

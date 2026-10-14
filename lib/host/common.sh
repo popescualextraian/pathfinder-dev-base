@@ -11,10 +11,19 @@ say() { echo "agentic: $*" >&2; }
 # pgit ARG...: host git in the project's checkout, which a dev container can write: no fsmonitor,
 # no hooks.
 pgit() { git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"; }
-# project_root: the git top level of $AGENTIC_PROJECT (default: the current directory).
+# project_root: the nearest directory, from $AGENTIC_PROJECT (default: the current directory)
+# upwards, that holds .agentic/agentic.yaml; else that directory. File tests only: no git, and no
+# getcwd (a working directory deleted and recreated still resolves through $PWD).
 project_root() {
-  local d="${AGENTIC_PROJECT:-$PWD}"
-  pgit -C "$d" rev-parse --show-toplevel 2>/dev/null || (cd "$d" && pwd)
+  local start d
+  start="$(cd "${AGENTIC_PROJECT:-$PWD}" && pwd)" || return 1
+  d="$start"
+  while :; do
+    if [ -f "$d/.agentic/agentic.yaml" ]; then printf '%s\n' "$d"; return 0; fi
+    [ "$d" != / ] || break
+    d="$(dirname "$d")"
+  done
+  printf '%s\n' "$start"
 }
 cfg_dir() { printf '%s\n' "$(project_root)/.agentic"; }
 need_config() {
@@ -28,6 +37,12 @@ yaml_top() {
       sub(/[[:space:]]+#.*$/, "", v); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
       gsub(/^"|"$/, "", v); gsub(/^\047|\047$/, "", v)
       print v; exit }' "$1"
+}
+# yaml_set_top FILE KEY VALUE: sets a top-level scalar: replaces the KEY: line, else appends one.
+yaml_set_top() {
+  local tmp; tmp="$(mktemp "$1.XXXXXX")"
+  awk -v key="$2" -v val="$3" 'index($0, key ":") == 1 { if (!done) print key ": " val; done = 1; next }
+    { print } END { if (!done) print key ": " val }' "$1" > "$tmp" && mv -- "$tmp" "$1"
 }
 project_name() {
   local p; p="$(yaml_top "$(cfg_dir)/agentic.yaml" project)"
