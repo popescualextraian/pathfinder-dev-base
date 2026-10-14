@@ -11,11 +11,27 @@ say() { echo "agentic: $*" >&2; }
 # pgit ARG...: host git in the project's checkout, which a dev container can write: no fsmonitor,
 # no hooks.
 pgit() { git -c core.fsmonitor=false -c core.hooksPath=/dev/null "$@"; }
-# project_root: the git top level of $AGENTIC_PROJECT (default: the current directory).
+# project_root: the git top level of $AGENTIC_PROJECT (default: the current directory), or the
+# workspace folder above it when that folder has an agentic.yaml.
 project_root() {
-  local d="${AGENTIC_PROJECT:-$PWD}"
-  pgit -C "$d" rev-parse --show-toplevel 2>/dev/null || (cd "$d" && pwd)
+  local d="${AGENTIC_PROJECT:-$PWD}" t
+  if t="$(pgit -C "$d" rev-parse --show-toplevel 2>/dev/null)"; then
+    if [ -f "$(dirname "$t")/.agentic/agentic.yaml" ]; then dirname "$t"; else printf '%s\n' "$t"; fi
+  else (cd "$d" && pwd); fi
 }
+# sub_repos DIR: the names of the git repositories directly under DIR (a .git folder or file).
+sub_repos() {
+  local d
+  for d in "$1"/*/; do d="${d%/}"; if [ -e "$d/.git" ]; then basename "$d"; fi; done
+}
+# project_shape ROOT: repo, workspace (repositories one level down) or empty. Found at each use.
+project_shape() {
+  if [ -e "$1/.git" ]; then echo repo
+  elif [ -n "$(sub_repos "$1")" ]; then echo workspace
+  else echo empty; fi
+}
+# comma_list: stdin lines joined with ", ".
+comma_list() { paste -sd, - | sed 's/,/, /g'; }
 cfg_dir() { printf '%s\n' "$(project_root)/.agentic"; }
 need_config() {
   [ -f "$(cfg_dir)/agentic.yaml" ] || die "no .agentic/agentic.yaml in $(project_root); run agentic init"

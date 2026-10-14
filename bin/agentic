@@ -131,8 +131,31 @@ make_cfg() {
   exit 1
 }
 
+# init_shape_notes ROOT SHAPE REPOS: what init found about the folder and what that means.
+init_shape_notes() {
+  local root="$1" r sib
+  case "$2" in
+    repo)
+      sib="$(sub_repos "$(dirname "$root")" | grep -vxF -- "$(basename "$root")" | comma_list || true)"
+      if [ -n "$sib" ]; then
+        echo "note: $(dirname "$root") also holds the repositories $sib;"
+        echo "  to work on them together, run agentic init in $(dirname "$root")"
+      fi ;;
+    workspace)
+      echo "workspace folder with the repositories $3 (mounted together at /work)"
+      while IFS= read -r r; do
+        if [ -d "$root/$r/.agentic" ]; then
+          echo "warning: $r/.agentic is not read in a workspace folder; move what is needed up to $root/.agentic"
+        fi
+      done < <(sub_repos "$root") ;;
+    *)
+      echo "note: $root holds no git repository; it is an empty workspace folder (or code without git)."
+      echo "  To fill it: agentic login git https://HOST/GROUP/REPO.git (any repository on that host), then clone repositories into it (on the host, or in agentic shell under /work)" ;;
+  esac
+}
+
 cmd_init() {
-  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r
+  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r shape shape_line repos
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1 ;;
@@ -163,6 +186,12 @@ cmd_init() {
   done
   det="$(detect_tools "$root")"
   name="$(slugify "$(basename "$root")")"
+  shape="$(project_shape "$root")"; repos="$(sub_repos "$root" | comma_list)"
+  case "$shape" in
+    repo) shape_line="single repository" ;;
+    workspace) shape_line="workspace folder ($repos)" ;;
+    *) shape_line="empty workspace folder (no git repository)" ;;
+  esac
   if [ "$bare" = 0 ]; then rec="$(recommended_lines "$base")"; else rec=""; fi
   while IFS= read -r line; do
     case "$line" in
@@ -180,6 +209,8 @@ cmd_init() {
   {
     echo "# Detection report ($(date -u +%Y-%m-%d))"
     echo
+    echo "Shape: $shape_line"
+    echo
     echo "Build files found:"
     files="$(report_files "$root")"
     sed -n '1,50s/^/- /p' <<<"$files"
@@ -189,6 +220,7 @@ cmd_init() {
     echo "Notes:"; grep '^note=' <<<"$det" | sed 's/^note=/- /' || true
   } > "$cfg/detect-report.md"
   echo "wrote $cfg/agentic.yaml"
+  init_shape_notes "$root" "$shape" "$repos"
   # the harness homes belong to the project name, not to .agentic/: a re-init finds them again
   if [ -d "$AGENTIC_DATA/projects/$name/harness" ]; then
     echo "note: $AGENTIC_DATA/projects/$name holds the data of an earlier project named $name;"
@@ -398,6 +430,7 @@ cmd_run() {
   [ ! -e "$(task_dir "$id")" ] || die "task $id exists"
   [ -n "$branch" ] || branch="${AGENTIC_BRANCH_PREFIX:-agentic/}$id-$(task_slug "$prompt")"
   check_cap
+  mapfile -t repos < <(task_repos "${repos[@]}"); [ "${#repos[@]}" -gt 0 ] || exit 1
 
   # Everything that can refuse (the .env file, a missing mount source) runs before anything is created.
   local p ws dir c own r data port
@@ -418,8 +451,14 @@ cmd_run() {
   mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
   (umask 077; mkdir -p "$(task_hdir "$id")")
   for v in "${TASK_HOST_FILES[@]}"; do rm -f -- "$(task_file "$id" "$v")"; done
-  own="$(project_clone)" || die "could not clone the project's repository into $ws/repos"
-  [ "${#repos[@]}" -gt 0 ] || repos=("$own")
+  # each repository with a host checkout gets its clone; a single repository's own always does
+  if [ "$(project_shape "$(project_root)")" = repo ]; then
+    own="$(basename "$(project_root)")"
+    checkout_clone "$own" >/dev/null || die "could not clone the project's repository into $ws/repos"
+  fi
+  for r in "${repos[@]}"; do
+    if checkout_dir "$r" >/dev/null; then checkout_clone "$r" >/dev/null || die "could not clone $r into $ws/repos"; fi
+  done
   for r in "${repos[@]}"; do add_worktree "$r" "$id" "$branch" "$base" "$img" || die "could not create the worktree of $r"; done
   printf '%s\n' "$prompt" > "$dir/prompt.md"
   (umask 077; printf 'AGENTIC_TASK_TOKEN=%s\nAGENTIC_AGENT_TOKEN=%s\n' "$(new_token)" "$(new_token)" > "$(task_file "$id" env)")

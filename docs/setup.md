@@ -177,6 +177,38 @@ pass `--name "Your Name" --email you@example.com`; that writes `GIT_AUTHOR_*` an
 `GIT_COMMITTER_*` into `.env`. `agentic doctor` warns when the origin's host has no credentials or
 there is no identity.
 
+## Several repositories: a workspace folder
+
+A project folder need not be a repository. Make a folder, put the repositories in it, one level
+down, and run `agentic init` in the folder; the dev container mounts the whole folder at `/work`
+(`/work/api`, `/work/ui`), so the agent works on all of them together. agentic does not manage
+the repositories: clone, pull and delete them yourself, on the host or inside `agentic shell`.
+
+```
+mkdir ~/work/shop && cd ~/work/shop
+agentic init                                         # an empty workspace folder
+agentic login git https://git.example.com/team/api.git
+git clone https://git.example.com/team/api.git && git clone https://git.example.com/team/ui.git
+agentic build && agentic dev
+```
+
+`init` says which shape it found and never asks: a single repository (as before, with a hint when
+the parent folder holds other repositories), a workspace folder (it lists the repositories, reads
+their build files, and warns about a `.agentic/` inside one of them: only the folder's own is
+read), or an empty folder. The shape is found at each use, so adding or removing a repository
+needs no change to `agentic.yaml`. The CLI finds the folder's `.agentic/` from inside one of its
+repositories too. `agentic doctor` lists the repositories and checks each origin's host for
+credentials.
+
+Tasks take one repository of the folder as their working tree: `agentic run --repo api "..."`
+(a folder with a single repository needs no `--repo`). Each gets a worktree of its own clone, as
+described in [detached-mode.md](detached-mode.md).
+
+On Windows, keep the folder on the Linux filesystem of WSL (`~/work/shop`) rather than under
+`/mnt/c`: file access from the container is many times faster there.
+
+`add workspace` stays for a repository outside the folder.
+
 ## Where things live
 
 Only the configuration lives in the repository. Everything a harness remembers lives on your

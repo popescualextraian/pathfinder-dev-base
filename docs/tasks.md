@@ -149,8 +149,9 @@ Host git on task clones: no host git process opens a `.git` directory a task can
 - The host fetches with the user's credentials only into a private bare mirror per clone,
   `$AGENTIC_DATA/projects/<project>/mirrors/<name>.git`, which is never mounted into a container
   (not even a dev container, which sees only `repos/`). Each mirror fetches from the URL it
-  recorded when it was made (pinned): for the project's own clone, the checkout's `origin`
-  (credentials stripped; without an origin, the checkout itself) at the first `run`; for a `--repo`
+  recorded when it was made (pinned): for the project's own clone, or the clone of a repository
+  in a workspace folder, the checkout's `origin` (credentials stripped; without an origin, the
+  checkout itself) at the first `run`; for a `--repo`
   clone, its origin, read before any task has had access to the clone, though a dev agent may have
   written it. A recorded origin must name a remote: `https://`, `ssh://`, `git://` or scp-style
   `[user@]host:path`. A local path, `file://` or a `<name>::` transport helper is refused, so no

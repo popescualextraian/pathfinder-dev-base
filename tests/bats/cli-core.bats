@@ -29,6 +29,17 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
   [ "$output" = demo ]
 }
 
+@test "inside a repository of a workspace folder the project root is the workspace folder" {
+  W="$BATS_TEST_TMPDIR/ws folder"
+  mkdir -p "$W/.agentic" "$W/api/src"; git init -q "$W/api"
+  printf 'version: 2\nproject: ws\n' > "$W/.agentic/agentic.yaml"
+  run bash -c "cd '$W/api/src' && source '$A'; project_root"
+  [ "$output" = "$W" ]
+  rm -r "$W/.agentic"
+  run bash -c "cd '$W/api/src' && source '$A'; project_root"
+  [ "$output" = "$W/api" ]
+}
+
 @test "without a config the CLI says to run agentic init" {
   rm "$PROJ/.agentic/agentic.yaml"
   run in_project 'need_config'

@@ -156,3 +156,24 @@ step() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$AGENTIC_STEPS_DIR/$1.sh"; }
   run bash "$D"
   [[ "$output" != *"git:"* ]]
 }
+
+@test "git: a workspace folder lists its repositories and checks each origin's host once" {
+  export AGENTIC_WORK="$BATS_TEST_TMPDIR/work"; mkdir -p "$AGENTIC_WORK/notes"
+  for r in api ui web; do git init -q "$AGENTIC_WORK/$r"; done
+  git -C "$AGENTIC_WORK/api" remote add origin git@github.com:example/api.git
+  git -C "$AGENTIC_WORK/web" remote add origin https://github.com/example/web.git
+  git -C "$AGENTIC_WORK/ui" remote add origin https://gitlab.example.com/example/ui.git
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0='!true'
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com
+  run bash "$D"
+  [[ "$output" == *"ok    workspace folder: api, ui, web"* ]]
+  [ "$(grep -c 'ok    git (github.com)' <<<"$output")" -eq 1 ]
+  [[ "$output" == *"warn  git: no credentials for gitlab.example.com (agentic login git)"* ]]
+  [[ "$output" != *"notes"* ]]
+}
+
+@test "git: an empty workspace folder warns how to fill it" {
+  export AGENTIC_WORK="$BATS_TEST_TMPDIR/work"; mkdir -p "$AGENTIC_WORK"
+  run bash "$D"
+  [[ "$output" == *"warn  no git repository in $AGENTIC_WORK (agentic login git URL, then clone into it)"* ]]
+}

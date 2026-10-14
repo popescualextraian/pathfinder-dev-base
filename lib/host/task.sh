@@ -266,11 +266,23 @@ remote_url_ok() {
   return 1
 }
 
-# project_url: the checkout's origin (credentials stripped), which must be a remote URL, else the
-# checkout itself. A dev agent can change the checkout's origin: it is read only when the project's
-# mirror is first made.
+# checkout_dir NAME: the host checkout that repos/NAME is cloned from: the project root of a single
+# repository, or a repository directly under a workspace folder. Fails for any other name.
+checkout_dir() {
+  local root; root="$(project_root)"
+  [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != . && "$1" != .. ]] || return 1
+  case "$(project_shape "$root")" in
+    repo) [ "$1" = "$(basename "$root")" ] && printf '%s\n' "$root" ;;
+    workspace) [ -e "$root/$1/.git" ] && printf '%s\n' "$root/$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# project_url [DIR]: the origin of checkout DIR (default the project root; credentials stripped),
+# which must be a remote URL, else the checkout itself. A dev agent can change the checkout's
+# origin: it is read only when the mirror is first made.
 project_url() {
-  local root url; root="$(project_root)"
+  local root="${1:-$(project_root)}" url
   url="$(pgit -C "$root" remote get-url origin 2>/dev/null | sed -E 's#(://)[^/@]+@#\1#' || true)"
   if [ -n "$url" ]; then remote_url_ok "$url" || return 1
   else url="$root"; url_ok "$url" || return 1; fi
@@ -279,13 +291,13 @@ project_url() {
 
 # repo_url NAME: where the mirror of repos/NAME fetches from: the URL its mirror recorded when it was
 # made (pinned: delete the mirror to take the origin again); else, on first use, the checkout's
-# origin for the project's own clone, or the clone's origin (a remote URL), read before any task
+# origin for a clone of a host checkout (checkout_dir), or the clone's origin (a remote URL), read before any task
 # had access to the clone (a clone is only mounted into a task after its mirror exists), though a
 # dev agent may have written it.
 repo_url() {
-  local clone m url; clone="$(task_ws)/repos/$1"; m="$(mirror_dir "$1")"
+  local clone m url c; clone="$(task_ws)/repos/$1"; m="$(mirror_dir "$1")"
   if [ -d "$m" ]; then url="$(mgit "$1" config --get remote.origin.url)" || return 1
-  elif [ "$1" = "$(basename "$(project_root)")" ]; then url="$(project_url)" || return 1
+  elif c="$(checkout_dir "$1")"; then url="$(project_url "$c")" || return 1
   else
     clone_ok "$clone" || return 1
     url="$(git config --file "$clone/.git/config" --get remote.origin.url)" || return 1
@@ -296,11 +308,11 @@ repo_url() {
 }
 
 # sync_mirror NAME URL: makes the private bare mirror of repos/NAME from URL, or fetches into it. The
-# URL follows --, so it is never taken for an option. The file transport only for the project root,
-# the fallback of a checkout without an origin.
+# URL follows --, so it is never taken for an option. The file transport only for NAME's own host
+# checkout, the fallback of a checkout without an origin.
 sync_mirror() {
   local m file=(); m="$(mirror_dir "$1")"
-  if [ "$2" = "$(project_root)" ]; then file=(-c protocol.file.allow=always); fi
+  if [ "$2" = "$(checkout_dir "$1" || true)" ]; then file=(-c protocol.file.allow=always); fi
   if [ ! -d "$m" ]; then
     mkdir -p "$(dirname "$m")"
     ugit "${file[@]}" clone -q --bare -- "$2" "$m" >&2
@@ -309,11 +321,12 @@ sync_mirror() {
   fi
 }
 
-# project_clone: the project's own clone under repos/; prints its name. A missing clone is made by
-# the host from the mirror, in a fresh directory no task has seen, with origin set to the remote.
-project_clone() {
-  local name clone url m
-  name="$(basename "$(project_root)")"; clone="$(task_ws)/repos/$name"; m="$(mirror_dir "$name")"
+# checkout_clone NAME: the clone under repos/ of host checkout NAME (checkout_dir); prints NAME. A
+# missing clone is made by the host from the mirror, in a fresh directory no task has seen, with
+# origin set to the remote.
+checkout_clone() {
+  local name="$1" clone url m
+  clone="$(task_ws)/repos/$name"; m="$(mirror_dir "$name")"
   if [ ! -e "$clone" ]; then
     url="$(repo_url "$name")" || return 1
     sync_mirror "$name" "$url" || return 1
@@ -323,6 +336,22 @@ project_clone() {
     printf '.worktrees/\n' >> "$clone/.git/info/exclude"
   fi
   printf '%s\n' "$name"
+}
+
+# task_repos NAME...: the repositories of a task, one per line: the names given, or else a single
+# repository's own, or the only repository of a workspace folder. Dies when none or several fit.
+task_repos() {
+  local root all; root="$(project_root)"
+  case "$(project_shape "$root")" in
+    repo) if [ $# -gt 0 ]; then printf '%s\n' "$@"; else basename "$root"; fi ;;
+    workspace)
+      if [ $# -gt 0 ]; then printf '%s\n' "$@"; return 0; fi
+      all="$(sub_repos "$root")"
+      [ "$(wc -l <<<"$all")" -eq 1 ] \
+        || die "$root holds several repositories ($(comma_list <<<"$all")); name one with --repo NAME"
+      printf '%s\n' "$all" ;;
+    *) die "$root holds no git repository; clone one into it first" ;;
+  esac
 }
 
 # add_worktree NAME ID BRANCH BASE IMAGE: a worktree of repos/NAME on BRANCH from BASE (default the

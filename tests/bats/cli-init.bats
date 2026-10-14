@@ -214,3 +214,45 @@ ini() { (cd "$PROJ" && bash "$A" init "$@"); }
   run "$REPO_ROOT/image/bin/agentic-config" validate "$PROJ/.agentic"
   [ "$status" -eq 0 ]
 }
+
+# ws_repo NAME: a git repository NAME directly under $WS.
+ws_repo() { mkdir -p "$WS/$1"; git init -q "$WS/$1"; }
+
+@test "init in a repository whose parent holds no other repository says nothing about a workspace" {
+  run ini
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"workspace"* ]]
+  grep -q '^Shape: single repository' "$PROJ/.agentic/detect-report.md"
+}
+
+@test "init in a repository whose parent holds other repositories names them and the parent" {
+  WS="$BATS_TEST_TMPDIR"; ws_repo billing; ws_repo web; mkdir "$WS/plain"
+  run ini
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"billing, web"* ]]
+  [[ "$output" != *"plain"* ]]
+  [[ "$output" == *"run agentic init in $WS"* ]]
+}
+
+@test "init in a folder of repositories lists them, reads their build files and warns about their .agentic" {
+  WS="$BATS_TEST_TMPDIR/ws"; ws_repo api; ws_repo ui; mkdir -p "$WS/notes"
+  echo '{}' > "$WS/ui/package.json"
+  mkdir -p "$WS/api/.agentic"
+  run bash -c "cd '$WS' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"workspace folder"*"api, ui"* ]]
+  [[ "$output" == *"api/.agentic is not read"* ]]
+  [[ "$output" != *"ui/.agentic"* ]]
+  [ "$(yq .project "$WS/.agentic/agentic.yaml")" = ws ]
+  grep -q '^Shape: workspace folder (api, ui)' "$WS/.agentic/detect-report.md"
+  grep -q 'ui/package.json' "$WS/.agentic/detect-report.md"
+}
+
+@test "init in a folder without repositories says how to fill it" {
+  WS="$BATS_TEST_TMPDIR/empty"; mkdir -p "$WS"
+  run bash -c "cd '$WS' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no git repository"* ]]
+  [[ "$output" == *"agentic login git https://"*"clone"* ]]
+  grep -q '^Shape: empty workspace folder' "$WS/.agentic/detect-report.md"
+}

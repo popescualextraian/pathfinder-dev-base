@@ -6,7 +6,9 @@ description: Use when the user wants to configure, review or extend agentic-dev-
 # Configure agentic-dev-base for this project
 
 You refine `.agentic/` with the user. `agentic init` already wrote a first version from a
-deterministic scan; you add judgement. You work in `/work` (the repository). The container is
+deterministic scan; you add judgement. You work in `/work`: one repository, or a workspace folder
+whose repositories sit one level down (`/work/<name>`, each with its own `.git`; the `Shape:` line
+of `.agentic/detect-report.md` says which). The container is
 extended three ways: `.env` for secrets and settings tools read natively, `setup:` lines in
 `agentic.yaml` (read `reference/setup-lines.md` for every command), and plain Docker in
 `.agentic/Dockerfile.extra`. Reference for the other fields:
@@ -110,8 +112,10 @@ Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_
 1. **Read**: `.agentic/agentic.yaml`, `.agentic/detect-report.md`, build files (`pom.xml`,
    `build.gradle*`, `package.json`, `pyproject.toml`, `*.tf`, `go.mod`, `*.csproj`), CI files
    (`.gitlab-ci.yml`, `.github/workflows/*`), Dockerfiles and compose files, the README, and
-   any existing agent instruction files. For an empty repository, skip to step 3 and ask for
-   the stack.
+   any existing agent instruction files; in a workspace folder, those of every repository one
+   level down. For an empty repository or folder, skip to step 3 and ask for the stack (and, for
+   a folder, which repositories to clone: `agentic-git login URL` first, then `git clone` into
+   `/work`).
 2. **Adopt what the repository already has**: skills in `.claude/skills/`, agents in
    `.claude/agents/` or `.github/agents/`, MCP servers in `.mcp.json`. Offer to copy assets into
    `/work/.agentic/skills|agents|commands/` (they are then installed for every user of the
@@ -123,13 +127,14 @@ Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_
      the socket is host root before suggesting it);
    - Jira keys appear in commit messages or branch names but no Jira MCP server is set up;
    - Terraform has no exact version;
-   - a git remote (`git -C /work remote -v`, submodules, a repository the user pushes to) has no
+   - a git remote (`git -C /work remote -v`, or each `/work/<name>` in a workspace folder,
+     submodules, a repository the user pushes to) has no
      credential entry (`agentic-env names` shows no `GIT_CONFIG_COUNT`): see **Git** above;
    - the build would download through a TLS-intercepting proxy but no CA certificate is copied.
 4. **Ask for what you cannot see** (after checking the inventory): tools used day to day that are
    not in the repository or the image, deploy targets and their CLIs, issue tracker and wiki URLs,
-   extra MCP servers, plugins and marketplaces the team uses, other repositories to work on
-   (`add workspace`), the preferred harness, corporate CA certificates (copy them with
+   extra MCP servers, plugins and marketplaces the team uses, other repositories to work on (in a
+   workspace folder, clone them into `/work`; otherwise `add workspace`), the preferred harness, corporate CA certificates (copy them with
    `copy files/NAME.crt /usr/local/share/ca-certificates/NAME.crt`).
 5. **Handle specific needs with the lowest rung that works**:
 

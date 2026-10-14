@@ -829,3 +829,65 @@ MIRRORS_REL=projects/demo/mirrors
   call="$(docker_run_with agentic-bridge)"
   grep -qx 'agentic-demo-m2:/home/dev/.m2' <<<"$call"
 }
+
+# workspace NAME...: a workspace folder $W (project wsd) holding a committed repository per NAME.
+workspace() {
+  W="$BATS_TEST_TMPDIR/wsfolder"; mkdir -p "$W/.agentic"
+  printf 'version: 2\nproject: wsd\n' > "$W/.agentic/agentic.yaml"
+  local r
+  for r in "$@"; do
+    git init -q -b main "$W/$r"
+    git -C "$W/$r" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m "$r"
+  done
+}
+wag() { (cd "$W" && bash "$A" "$@" </dev/null); }
+
+@test "run --repo in a workspace folder gives the named repository a worktree at /work, cloned from its checkout" {
+  workspace api ui
+  run --separate-stderr wag run --id T-W1 --repo api "x"
+  [ "$status" -eq 0 ]
+  ws="$AGENTIC_WORKSPACES/wsd"
+  [ "$(git -C "$ws/repos/api/.worktrees/T-W1" rev-parse HEAD)" = "$(git -C "$W/api" rev-parse HEAD)" ]
+  [ "$(git --git-dir="$AGENTIC_DATA/projects/wsd/mirrors/api.git" config remote.origin.url)" = "$W/api" ]
+  [ ! -e "$ws/repos/wsfolder" ]
+  call="$(docker_run_with agentic-bridge)"
+  grep -qx "$ws/repos/api/.worktrees/T-W1:/work" <<<"$call"
+}
+
+@test "run in a workspace folder with one repository takes it without --repo" {
+  workspace api
+  run --separate-stderr wag run --id T-W2 "x"
+  [ "$status" -eq 0 ]
+  grep -qx "$AGENTIC_WORKSPACES/wsd/repos/api/.worktrees/T-W2:/work" <<<"$(docker_run_with agentic-bridge)"
+}
+
+@test "run in a workspace folder with several repositories needs --repo and lists them, creating nothing" {
+  workspace api ui
+  run wag run --id T-W3 "x"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"api, ui"*"--repo NAME"* ]]
+  [ ! -e "$AGENTIC_WORKSPACES/wsd/tasks/T-W3" ]
+}
+
+@test "run in a folder without a repository refuses" {
+  workspace
+  run wag run --id T-W4 "x"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no git repository"* ]]
+  [ ! -e "$AGENTIC_WORKSPACES/wsd/tasks/T-W4" ]
+}
+
+@test "a workspace repository's origin is pinned in its mirror, as for a single repository" {
+  workspace api
+  fake_ssh
+  OTHER="$BATS_TEST_TMPDIR/other"; git init -q -b main "$OTHER"
+  git -C "$OTHER" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m other
+  git -C "$W/api" remote add origin "ssh://example.invalid$OTHER"
+  run wag run --id T-W5 --repo api "x"
+  [ "$status" -eq 0 ]
+  [ "$(git --git-dir="$AGENTIC_DATA/projects/wsd/mirrors/api.git" config remote.origin.url)" = "ssh://example.invalid$OTHER" ]
+  git -C "$W/api" remote set-url origin "file://$OTHER"
+  rm -rf "$AGENTIC_DATA/projects/wsd/mirrors/api.git"
+  run wag run --id T-W6 --repo api "y"
+  [ "$status" -ne 0 ]; [[ "$output" == *"refused"* ]]
+}

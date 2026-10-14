@@ -96,9 +96,11 @@ outside world:
 - The work leaves the task through a push or a pull request, so allow one of them when you want
   the result back. Inside the task, a plain `git push` has no upstream: the agent uses
   `git push origin HEAD`.
-- Without `--repo` the task works on the project's own repository. `--repo R` (repeatable) names
-  the repositories instead: clone each one into
-  `~/agentic-workspaces/<project>/repos/R` once, then name it. The first `--repo` is the working
+- Without `--repo` the task works on the project's own repository; in a workspace folder
+  ([setup.md](setup.md#several-repositories-a-workspace-folder)), on its only repository, and with
+  several it refuses and lists them. `--repo R` (repeatable) names the repositories instead: a
+  repository directly under the workspace folder is cloned from its origin on first use; any other
+  must be cloned into `~/agentic-workspaces/<project>/repos/R` once, then named. The first `--repo` is the working
   tree at `/work`; the others appear at `/workspaces/R`, and clones not named are mounted
   read-only.
 - `clean` refuses while the worktree has uncommitted changes or commits on no remote branch;

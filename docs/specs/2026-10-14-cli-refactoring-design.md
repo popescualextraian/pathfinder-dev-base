@@ -62,7 +62,10 @@ once the split is done.
   container, where `/work` is the live mount), and agentic mounts it at `/work` as it does today.
   agentic does not manage the repositories. A single-repository project is unchanged. Decided:
   the workspace folder is the project folder at `/work`, visible on the host where the user works.
-  In order:
+  Done (steps 2 to 5: `project_shape` and `sub_repos` in `lib/host/common.sh`, `init` notes and
+  `detect-report.md`, `task_repos` and `checkout_clone` in `lib/host/task.sh`, `doctor`, the setup
+  skill, docs/setup.md "Several repositories"; `project_root` also finds the folder from inside one
+  of its repositories). In order:
   1. `agentic login git` (above) comes first: cloning inside the container needs the credentials.
   2. `init` detects the shape and says it; it never prompts (the setup skill and scripts run it):
      - the folder is a repository, and its parent holds no other repository: single repository,
