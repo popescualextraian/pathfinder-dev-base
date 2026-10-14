@@ -24,6 +24,11 @@ export interface Config {
   work: string;
   allowed: string[];
   paragraphFile: string;
+  worktree: boolean;
+  autoClean: boolean;
+  target: string | null;
+  container: string | null;
+  createdContainer: boolean;
 }
 
 const list = (v: string | undefined): string[] => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -76,6 +81,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     work: env.AGENTIC_WORK ?? "/work",
     allowed,
     paragraphFile: `${env.AGENTIC_DIR ?? "/opt/agentic"}/task/task-prompt.md`,
+    worktree: env.AGENTIC_WORKTREE === "1",
+    autoClean: env.AGENTIC_AUTO_CLEAN === "1",
+    target: opt(env.AGENTIC_TARGET),
+    container: opt(env.AGENTIC_CONTAINER),
+    createdContainer: env.AGENTIC_CREATED_CONTAINER === "1",
   };
 }
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // agentic-bridge: the task bridge (no arguments), or `agentic-bridge follow` inside the container.
+import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentProcess } from "./agent.js";
@@ -26,11 +27,24 @@ async function serve(): Promise<void> {
   const paragraph = existsSync(cfg.paragraphFile) ? readFileSync(cfg.paragraphFile, "utf8") : "";
   const spec = harnessFor(cfg.agent, { model: cfg.model, acpCmd: cfg.acpCmd });
   const env = agentEnvironment(process.env, cfg);
+  const agentic = process.env.AGENTIC_DIR ?? "/opt/agentic";
+  const stateDir = process.env.AGENTIC_STATE ?? join(process.env.HOME ?? "/home/dev", ".agentic");
   let close: (() => Promise<void>) | null = null;
   const bridge = new Bridge({
     store, config: cfg, paragraph, log, now: () => new Date().toISOString(),
     notifier: new Notifier({ eventsLog, webhook: cfg.webhook, project: cfg.project, log }),
-    agentFactory: (hooks) => new AgentProcess(spec, { cwd: cfg.work, env, paragraph, model: cfg.model }, hooks),
+    agentFactory: (hooks, cwd) => new AgentProcess(spec, { cwd, env, paragraph, model: cfg.model }, hooks),
+    worktree: (args) => {
+      const r = spawnSync("bash", [join(agentic, "task", "worktree.sh"), ...args], { encoding: "utf8" });
+      return { ok: r.status === 0, out: r.stdout ?? "", err: r.stderr ?? "" };
+    },
+    release: () => {
+      try {
+        process.kill(Number(readFileSync(join(stateDir, "hold.pid"), "utf8").trim()), "SIGTERM");
+      } catch (e) {
+        log(`release failed: ${(e as Error).message}`);
+      }
+    },
     exit: (code) => { log(`exit ${code}`); void bridge.shutdownAgent().then(() => close?.()).finally(() => process.exit(code)); },
   });
   const server = await startServer({ port: cfg.port, host: "0.0.0.0", tokens: cfg.tokens, access: { hosts: cfg.hosts, origins: cfg.origins },

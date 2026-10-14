@@ -40,6 +40,12 @@ export interface TaskRecord {
   reason: string;
   session: string | null;
   branch: string | null;
+  target: string | null;
+  work: string;
+  worktree: string | null;
+  container: string | null;
+  auto_clean: boolean;
+  cleaned: boolean;
   created: string;
   updated: string;
   seq: number;

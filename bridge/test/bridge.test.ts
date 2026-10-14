@@ -17,8 +17,12 @@ const FAKE = fileURLToPath(new URL("./fake-agent.mjs", import.meta.url));
 const running: Array<{ bridge: Bridge; close(): Promise<void> }> = [];
 afterEach(async () => { for (const r of running.splice(0)) { await r.bridge.shutdownAgent(); await r.close(); } });
 
-async function start(dir: string, extra: Record<string, string> = {}) {
+async function start(dir: string, extra: Record<string, string> = {},
+  worktree: (args: string[]) => { ok: boolean; out: string; err: string } = () => ({ ok: true, out: "", err: "" })) {
   const exits: number[] = [];
+  const cwds: string[] = [];
+  const wt: string[][] = [];
+  let released = 0;
   const env = { AGENTIC_TASK_TOKEN: "task-token-0123456789", AGENTIC_AGENT_TOKEN: "agent-token-0123456789",
     AGENTIC_TASK_DIR: dir, AGENTIC_TASK_ID: "T-1", AGENTIC_PROJECT: "demo", AGENTIC_ACP_CMD: JSON.stringify(["node", FAKE]),
     AGENTIC_WORK: dir, AGENTIC_EVENTS_DIR: join(dir, "no-events"), ...extra };
@@ -28,16 +32,25 @@ async function start(dir: string, extra: Record<string, string> = {}) {
   const bridge = new Bridge({
     store, config: cfg, paragraph: "Use agentic-ask.",
     notifier: new Notifier({ eventsLog: null, webhook: null, project: "demo", log: () => {} }),
-    agentFactory: (hooks) => new AgentProcess(harnessFor("claude", { model: null, acpCmd: cfg.acpCmd }),
-      { cwd: dir, env: { ...agentEnv, FAKE_AGENT_STATE: join(dir, "fake") }, paragraph: "Use agentic-ask.", model: null }, hooks),
+    agentFactory: (hooks, cwd) => { cwds.push(cwd); return new AgentProcess(harnessFor("claude", { model: null, acpCmd: cfg.acpCmd }),
+      { cwd, env: { ...agentEnv, FAKE_AGENT_STATE: join(dir, "fake") }, paragraph: "Use agentic-ask.", model: null }, hooks); },
+    worktree: (args) => { wt.push(args); return worktree(args); },
+    release: () => { released++; },
     exit: (code) => exits.push(code), now: () => new Date().toISOString(), log: () => {},
   });
   const server = await startServer({ port: 0, host: "127.0.0.1", tokens: cfg.tokens, access: { hosts: [], origins: [] },
     target: bridge, subscribe: (fn) => bridge.subscribe(fn) });
   agentEnv = agentEnvironment({ ...process.env }, { ...cfg, port: server.port });
   running.push({ bridge, close: server.close });
-  bridge.boot();
-  return { bridge, exits, store, port: server.port };
+  try {
+    bridge.boot();
+  } catch (e) {
+    await bridge.shutdownAgent();
+    await server.close();
+    running.pop();
+    throw e;
+  }
+  return { bridge, exits, store, port: server.port, cwds, wt, released: () => released };
 }
 
 // exit is called once the final webhooks are out: a moment after the command
@@ -202,6 +215,7 @@ async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch } = {}) {
     store, config: cfg, paragraph: "",
     notifier: new Notifier({ eventsLog: null, webhook: cfg.webhook, project: "demo", log: () => {}, fetch: fetchStub, retryDelayMs: 1 }),
     agentFactory: (hooks) => { const a = new StubAgent(hooks, script); agents.push(a); return a; },
+    worktree: () => ({ ok: true, out: "", err: "" }), release: () => {},
     exit: (c) => exits.push(c), now: () => new Date().toISOString(), log: () => {},
   });
   running.push({ bridge, close: async () => {} });
@@ -319,7 +333,7 @@ describe("Bridge with a scripted agent", () => {
     const { bridge, store, agents, exits } = await stubbed({ idleMs: 300 });
     const now = new Date().toISOString();
     store.writeRecord({ version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "suspended",
-      reason: "idle timeout", session: "s1", branch: null, created: now, updated: now, seq: 0, allowed_actions: [],
+      reason: "idle timeout", session: "s1", branch: null, target: null, work: "/work", worktree: null, container: null, auto_clean: false, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [],
       inbox: [], summary: "", stopped_by_user: false });
     bridge.boot();
     await tick(150);
@@ -338,5 +352,71 @@ describe("Bridge with a scripted agent", () => {
     expect(bodies.length).toBeGreaterThan(0);
     expect(bodies.join()).not.toContain("task-token-0123456789");
     expect(JSON.stringify(bridge.status())).not.toContain("task-token-0123456789");
+  });
+});
+
+describe("worktree and auto-clean", () => {
+  it("records the target, work, container and auto-clean; the agent starts in AGENTIC_WORK", async () => {
+    const dir = taskDir("hello");
+    const { bridge, store, cwds } = await start(dir, { AGENTIC_TARGET: "api", AGENTIC_CONTAINER: "agentic-demo-task-T-1" });
+    await waitState(bridge, "idle");
+    const rec = store.readRecord();
+    expect([rec.target, rec.work, rec.worktree, rec.container, rec.auto_clean, rec.cleaned, rec.branch])
+      .toEqual(["api", dir, null, "agentic-demo-task-T-1", false, false, null]);
+    expect(cwds).toEqual([dir]);
+  });
+
+  it("with AGENTIC_WORKTREE the worktree is made before the agent starts, and the agent works in it", async () => {
+    const dir = taskDir("hello");
+    const wtDir = mkdtempSync(join(tmpdir(), "wt-"));
+    const { bridge, store, cwds, wt } = await start(dir, { AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "agentic/T-1-hello" },
+      () => ({ ok: true, out: `${wtDir}\n`, err: "" }));
+    await waitState(bridge, "idle");
+    expect(wt[0]).toEqual(["add", dir, "T-1", "agentic/T-1-hello"]);
+    expect(cwds).toEqual([wtDir]);
+    const rec = store.readRecord();
+    expect([rec.work, rec.worktree, rec.branch]).toEqual([wtDir, wtDir, "agentic/T-1-hello"]);
+  });
+
+  it("a worktree that cannot be made refuses the boot with the script's reason", async () => {
+    const dir = taskDir("hello");
+    await expect(start(dir, { AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "b" },
+      () => ({ ok: false, out: "", err: "agentic-worktree: /work has no commit to start a worktree from\n" })))
+      .rejects.toThrow("could not create the worktree: agentic-worktree: /work has no commit to start a worktree from");
+  });
+
+  it("auto-clean after a normal turn removes the worktree, stops the task and releases the container it created", async () => {
+    const dir = taskDir("hello");
+    const wtDir = mkdtempSync(join(tmpdir(), "wt-"));
+    const { store, wt, exits, released } = await start(dir,
+      { AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "agentic/T-1-hello", AGENTIC_AUTO_CLEAN: "1", AGENTIC_CREATED_CONTAINER: "1" },
+      (args) => ({ ok: true, out: args[0] === "add" ? `${wtDir}\n` : "", err: "" }));
+    expect(await exited(exits)).toEqual([0]);
+    expect(wt.map((a) => a[0])).toEqual(["add", "remove"]);
+    expect(wt[1]).toEqual(["remove", dir, "T-1", "agentic/T-1-hello"]);
+    const rec = store.readRecord();
+    expect([rec.state, rec.cleaned, rec.reason]).toEqual(["stopped", true, "auto-cleaned"]);
+    expect(released()).toBe(1);
+  });
+
+  it("auto-clean in a reused container stops the task but does not end the container", async () => {
+    const dir = taskDir("hello");
+    const { store, exits, released } = await start(dir, { AGENTIC_AUTO_CLEAN: "1" });
+    expect(await exited(exits)).toEqual([0]);
+    expect(store.readRecord().cleaned).toBe(true);
+    expect(released()).toBe(0);
+  });
+
+  it("a worktree that cannot be removed keeps the task idle and reports why", async () => {
+    const dir = taskDir("hello");
+    const wtDir = mkdtempSync(join(tmpdir(), "wt-"));
+    const { bridge, store, released } = await start(dir,
+      { AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "b", AGENTIC_AUTO_CLEAN: "1", AGENTIC_CREATED_CONTAINER: "1" },
+      (args) => args[0] === "add" ? { ok: true, out: wtDir, err: "" } : { ok: false, out: "", err: "agentic-worktree: x has uncommitted changes" });
+    await waitState(bridge, "idle");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(store.readRecord().cleaned).toBe(false);
+    expect(store.readEvents(0).some((e) => e.type === "error" && String(e.data.message).includes("auto-clean kept the task"))).toBe(true);
+    expect(released()).toBe(0);
   });
 });

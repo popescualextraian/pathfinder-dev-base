@@ -9,7 +9,7 @@ import type { TaskRecord, Question } from "../src/types.js";
 export function record(over: Partial<TaskRecord> = {}): TaskRecord {
   return {
     version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "starting", reason: "",
-    session: null, branch: null, created: "t0", updated: "t0", seq: 0, allowed_actions: [], inbox: [],
+    session: null, branch: null, target: null, work: "/work", worktree: null, container: null, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [], inbox: [],
     summary: "", stopped_by_user: false, ...over,
   };
 }

@@ -13,12 +13,16 @@ import type { EventType, Question, TaskEvent, TaskRecord } from "./types.js";
 
 export class BridgeError extends Error {}
 
+export interface WorktreeResult { ok: boolean; out: string; err: string }
+
 export interface BridgeDeps {
   store: Store;
   config: Config;
   notifier: Notifier;
   paragraph: string;
-  agentFactory(hooks: AgentHooks): AgentLike;
+  agentFactory(hooks: AgentHooks, cwd: string): AgentLike;
+  worktree(args: string[]): WorktreeResult;
+  release(): void;
   exit(code: number): void;
   now(): string;
   log(line: string): void;
@@ -53,14 +57,30 @@ export class Bridge implements ApiTarget {
     if (fresh) {
       const prompt = store.readPrompt() ?? config.prompt;
       if (!prompt) throw new BridgeError(`no prompt: write ${store.path("prompt.md")} or set AGENTIC_PROMPT`);
+      let work = config.work;
+      let worktree: string | null = null;
+      if (config.worktree) {
+        if (!config.branch) throw new BridgeError("AGENTIC_WORKTREE=1 needs AGENTIC_BRANCH");
+        const r = this.d.worktree(["add", config.work, config.task, config.branch]);
+        const path = r.out.trim().split("\n").pop() ?? "";
+        if (!r.ok || !path) {
+          const why = (r.err || r.out).trim();
+          this.d.log(`worktree: ${why}`);
+          throw new BridgeError(`could not create the worktree: ${why}`);
+        }
+        worktree = work = path;
+      }
       const now = this.d.now();
       record = {
         version: 1, task: config.task, project: config.project, agent: config.agent, model: config.model, state: "starting",
-        reason: "", session: null, branch: config.branch, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
+        reason: "", session: null, branch: config.worktree ? config.branch : null,
+        target: config.target, work, worktree, container: config.container, auto_clean: config.autoClean, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
         inbox: [{ kind: "prompt", text: prompt }], summary: "", stopped_by_user: false,
       };
     } else {
       record = store.readRecord();
+      if (typeof record.work !== "string") record.work = config.work;
+      record.cleaned = record.cleaned === true;
     }
     // all questions, answered ones too: the next question id counts them all
     this.machine = new TaskMachine(record, store.readQuestions(), this.d.now);
@@ -136,7 +156,33 @@ export class Bridge implements ApiTarget {
     for (const e of out.effects) this.perform(e);
     this.d.store.writeRecord(m.record);
     if (input.kind !== "idleTimeout") this.touch();
+    if (this.cleanable(input)) this.autoClean();
     return out;
+  }
+
+  // cleanable: auto-clean is on and a turn just ended normally with nothing left to do.
+  private cleanable(input: Input): boolean {
+    const m = this.m();
+    return this.d.config.autoClean && input.kind === "turnEnd" && input.stopReason !== "cancelled"
+      && m.record.state === "idle" && m.record.inbox.length === 0 && m.openQuestions().length === 0 && !m.record.cleaned;
+  }
+
+  // autoClean: removes the worktree (refusing unpushed work), then stops the task; the exit releases
+  // the container when this task created it.
+  private autoClean(): void {
+    const rec = this.m().record;
+    if (rec.worktree && rec.branch) {
+      const r = this.d.worktree(["remove", this.d.config.work, rec.task, rec.branch]);
+      if (!r.ok) {
+        this.emit("error", { message: `auto-clean kept the task: ${(r.err || r.out).trim()}` });
+        return;
+      }
+    }
+    rec.cleaned = true;
+    this.run({ kind: "stop" });
+    rec.reason = "auto-cleaned";
+    rec.stopped_by_user = false;
+    this.d.store.writeRecord(rec);
   }
 
   // touch: restarts the idle timer while the task sits in waiting or idle, or is dormant (a lazy boot
@@ -185,7 +231,10 @@ export class Bridge implements ApiTarget {
         // after the webhooks of the final state (failed, stopped) have gone out
         this.down = true;
         this.clearTimers();
-        void this.drain().then(() => this.d.exit(e.code));
+        void this.drain().then(() => {
+          if (this.m().record.cleaned && this.d.config.createdContainer) this.d.release();
+          this.d.exit(e.code);
+        });
         break;
     }
   }
@@ -220,7 +269,7 @@ export class Bridge implements ApiTarget {
 
   private async spawn(mode: "new" | "load"): Promise<void> {
     let agent: AgentLike | null = null;
-    agent = this.d.agentFactory(this.hooks(() => agent));
+    agent = this.d.agentFactory(this.hooks(() => agent), this.m().record.work);
     this.agent = agent;
     const rec = this.m().record;
     try {
@@ -273,7 +322,7 @@ export class Bridge implements ApiTarget {
   private seed(): string {
     const m = this.m();
     const qa = m.questions.map((q) => `${q.id}: ${q.text} → ${q.status === "answered" ? q.answer : "(open)"}`).join("\n") || "(none)";
-    const log = spawnSync("git", ["-C", this.d.config.work, "log", "--oneline", "-20"], { encoding: "utf8" }).stdout?.trim() || "(none)";
+    const log = spawnSync("git", ["-C", m.record.work, "log", "--oneline", "-20"], { encoding: "utf8" }).stdout?.trim() || "(none)";
     return `Original task:\n${this.d.store.readPrompt() ?? this.d.config.prompt ?? ""}\n\nQuestions and answers so far:\n${qa}\n\nRecent commits:\n${log}\n\nThe earlier session could not be restored. Check git status and continue the task.`;
   }
 

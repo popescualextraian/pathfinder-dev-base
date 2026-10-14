@@ -6,7 +6,7 @@ import { Notifier, notifyPayload } from "../src/notify.js";
 import type { Question, TaskRecord } from "../src/types.js";
 
 const rec = { version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "waiting", reason: "question Q1",
-  session: "s", branch: "b", created: "t", updated: "t", seq: 3, allowed_actions: [], inbox: [], summary: "Need a DB", stopped_by_user: false } as TaskRecord;
+  session: "s", branch: "b", target: null, work: "/work", worktree: null, container: null, auto_clean: false, cleaned: false, created: "t", updated: "t", seq: 3, allowed_actions: [], inbox: [], summary: "Need a DB", stopped_by_user: false } as TaskRecord;
 const q: Question = { id: "Q1", source: "ask", text: "Which DB?", options: ["pg"], recommendation: "pg", asked: "t", status: "open" };
 
 describe("notify", () => {

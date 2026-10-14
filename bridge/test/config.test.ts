@@ -10,6 +10,15 @@ describe("loadConfig", () => {
       work: "/work", acpCmd: null, allowed: [], hosts: [], origins: [], webhook: null, paragraphFile: "/opt/agentic/task/task-prompt.md" });
   });
 
+  it("reads the worktree, auto-clean, target and container settings", () => {
+    const cfg = loadConfig({ ...base, AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "agentic/T-1-x", AGENTIC_AUTO_CLEAN: "1",
+      AGENTIC_TARGET: "api", AGENTIC_CONTAINER: "agentic-demo-task-T-1", AGENTIC_CREATED_CONTAINER: "1", AGENTIC_WORK: "/work/api" });
+    expect([cfg.worktree, cfg.autoClean, cfg.target, cfg.container, cfg.createdContainer, cfg.work, cfg.branch])
+      .toEqual([true, true, "api", "agentic-demo-task-T-1", true, "/work/api", "agentic/T-1-x"]);
+    const off = loadConfig({ ...base });
+    expect([off.worktree, off.autoClean, off.target, off.container, off.createdContainer]).toEqual([false, false, null, null, false]);
+  });
+
   it("refuses missing or short tokens, an unknown agent and a bad ACP command", () => {
     expect(() => loadConfig({})).toThrow("AGENTIC_TASK_TOKEN");
     expect(() => loadConfig({ ...base, AGENTIC_AGENT_TOKEN: "short" })).toThrow("AGENTIC_AGENT_TOKEN");
