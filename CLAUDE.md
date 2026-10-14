@@ -27,5 +27,11 @@ A generic container toolbox for agentic development: base image, per-project der
     make build    # base image agentic-dev-base:local
     make smoke    # build, then tests/image/smoke.sh (Docker, openssl, script)
 
-Every change needs `make test` and `make lint` green; a change under `image/`, `derive/`,
-`config/` or `schema/` also needs `make smoke`.
+What to run depends on what changed:
+
+- Docs only (`*.md` outside `skills/`): `tools/leak-check.sh`; add `tools/gen-config-docs.sh --check`
+  if you touched docs/configuration.md or the schema. No tests.
+- While iterating: the bats files for what you touch (`bats tests/bats/cli-init.bats`),
+  `shellcheck -x` on the changed scripts, `cd bridge && npm test` for bridge changes.
+- Before committing code: `make test` and `make lint`, once.
+- Under `image/`, `derive/`, `config/` or `schema/`: also `make smoke`.
