@@ -118,3 +118,13 @@ fake_jdk() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"java 99 is not installed"* ]]
 }
+
+@test "trust-java imports every crt under the CA folder" {
+  fake_jdk 17 17.0.12
+  mkdir -p "$AGENTIC_CA_DIR/agentic"
+  touch "$AGENTIC_CA_DIR/top.crt" "$AGENTIC_CA_DIR/agentic/deep.crt"
+  run "$B/agentic-trust-java"
+  [ "$status" -eq 0 ]
+  grep -q -- "-alias agentic-top " "$LOG"
+  grep -q -- "-alias agentic-deep " "$LOG"
+}

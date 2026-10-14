@@ -4,6 +4,8 @@ USER root
 ARG UID=1000
 ARG GID=1000
 RUN agentic-remap-user "$UID" "$GID"
+COPY --chown=dev ["files/corp.crt","/usr/local/share/ca-certificates/corp.crt"]
+RUN update-ca-certificates
 RUN apt-get update && apt-get install -y --no-install-recommends tree graphviz && rm -rf /var/lib/apt/lists/*
 RUN bash /opt/agentic/tools/java.sh install 17 && bash /opt/agentic/tools/java.sh install 11
 RUN bash /opt/agentic/tools/maven.sh install 3.9.9
@@ -19,8 +21,15 @@ RUN agentic-trust-java
 RUN echo extra > /etc/agentic-extra
 USER dev
 RUN agentic-trust-nss && agentic-render-toolchains
+COPY --chown=dev ["skills","/opt/agentic/project/skills"]
+ARG AGENTIC_SETUP_REFRESH=0
+RUN ["agentic-apply","--baseline"]
+RUN ["agentic-apply","--default-targets","claude,copilot","add plugin r@m"]
+COPY --chown=dev ["files/settings.xml","/home/dev/.m2/settings.xml"]
+RUN ["agentic-apply","--default-targets","claude,copilot","add mcp x --env TOKEN -- run-x 'a b'"]
+RUN ["agentic-apply","--finish"]
 USER root
 RUN agentic-inventory > /opt/agentic/inventory.txt
 USER dev
-LABEL agentic.project="demo" agentic.config.hash="HASH" agentic.docker_socket="true" agentic.harness="claude"
+LABEL agentic.project="demo" agentic.config.hash="HASH" agentic.docker_socket="true" agentic.harness="claude" agentic.run="bW91bnQJfi8uYXdzCS9ob21lL2Rldi8uYXdzCXJvCW1vdW50IH4vLmF3cyAvaG9tZS9kZXYvLmF3cyAtLXJlYWRvbmx5CnZvbHVtZQltMgkvaG9tZS9kZXYvLm0yCQl2b2x1bWUgbTIgL2hvbWUvZGV2Ly5tMgo="
 WORKDIR /work

@@ -57,6 +57,25 @@ while IFS= read -r tool; do
 done < <(jq -r '.tools | keys[]' "$RESOLVED")
 
 extra=""; REL=""
+# setup lines: CA copies go before the tools (downloads may need them), build lines after the
+# user's Dockerfile, one cached RUN each; run-phase lines travel as the agentic.run label.
+dt="$(jq -r '(.targets // ["claude","copilot"]) | join(",")' "$RESOLVED")"
+ca_copies=() steps=() run_tsv="" applies=0
+while IFS= read -r l; do
+  parse_line "$l" || { problems+=("setup: $l: $L_ERR"); continue; }
+  case "$L_KIND" in
+    copy)
+      if [ ! -e "$cdir/$L_SRC" ]; then problems+=("setup: $l: $L_SRC is not in .agentic/"); continue; fi
+      c="COPY --chown=dev $(jq -cn --arg s "$L_SRC" --arg d "$L_DEST" '[$s, $d]')"
+      if [[ "$L_DEST" == /usr/local/share/ca-certificates/* ]]; then ca_copies+=("$c"); else steps+=("$c"); fi ;;
+    marketplace|plugin|mcp)
+      steps+=("RUN $(jq -cn --arg t "$dt" --arg l "$l" '["agentic-apply", "--default-targets", $t, $l]')")
+      applies=1 ;;
+    mount) run_tsv+="$(printf 'mount\t%s\t%s\t%s\t%s' "$L_SRC" "$L_DEST" "$L_OPT" "$l")"$'\n' ;;
+    volume) run_tsv+="$(printf 'volume\t%s\t%s\t\t%s' "$L_KEY" "$L_DEST" "$l")"$'\n' ;;
+    workspace) if [ "$L_OPT" = path ]; then run_tsv+="$(printf 'bind\t%s\t%s\t\t%s' "$L_SRC" "$L_DEST" "$l")"$'\n'; fi ;;
+  esac
+done < <(jq -r '.setup // [] | .[]' "$RESOLVED")
 if inside .tools.extra_dockerfile && [ -f "$cdir/$REL" ]; then extra="$REL"; fi
 if [ "${#problems[@]}" -gt 0 ]; then printf '%s\n' "${problems[@]}" >&2; exit 1; fi
 
@@ -70,6 +89,7 @@ echo "ARG UID=1000"
 echo "ARG GID=1000"
 # shellcheck disable=SC2016  # $UID/$GID are expanded by docker build, not here
 echo 'RUN agentic-remap-user "$UID" "$GID"'
+if [ "${#ca_copies[@]}" -gt 0 ]; then printf '%s\n' "${ca_copies[@]}"; echo "RUN update-ca-certificates"; fi
 mapfile -t apt < <(jq -r '.tools.apt[]?' "$RESOLVED")
 if [ "${#apt[@]}" -gt 0 ]; then
   echo "RUN apt-get update && apt-get install -y --no-install-recommends ${apt[*]} && rm -rf /var/lib/apt/lists/*"
@@ -85,8 +105,17 @@ if [ -n "$extra" ]; then
 fi
 echo "USER dev"
 echo "RUN agentic-trust-nss && agentic-render-toolchains"
+for a in skills agents commands instructions.md; do
+  if [ -e "$cdir/$a" ]; then echo "COPY --chown=dev $(jq -cn --arg s "$a" --arg d "/opt/agentic/project/$a" '[$s, $d]')"; fi
+done
+if [ "$applies" = 1 ]; then
+  echo "ARG AGENTIC_SETUP_REFRESH=0"
+  echo 'RUN ["agentic-apply","--baseline"]'
+fi
+if [ "${#steps[@]}" -gt 0 ]; then printf '%s\n' "${steps[@]}"; fi
+if [ "$applies" = 1 ]; then echo 'RUN ["agentic-apply","--finish"]'; fi
 echo "USER root"
 echo "RUN agentic-inventory > /opt/agentic/inventory.txt"
 echo "USER dev"
-echo "LABEL agentic.project=\"$(cfg .project)\" agentic.config.hash=\"$hash\" agentic.docker_socket=\"$socket\" agentic.harness=\"$(cfg .harness.default)\""
+echo "LABEL agentic.project=\"$(cfg .project)\" agentic.config.hash=\"$hash\" agentic.docker_socket=\"$socket\" agentic.harness=\"$(cfg .harness.default)\" agentic.run=\"$(printf '%s' "$run_tsv" | base64 -w0)\""
 echo "WORKDIR /work"

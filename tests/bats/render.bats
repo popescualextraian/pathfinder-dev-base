@@ -61,3 +61,53 @@ normalise() { sed -E 's/agentic\.config\.hash="[0-9a-f]+"/agentic.config.hash="H
   [ "$status" -eq 1 ]
   [[ "$output" == *"tools.extra_dockerfile: .agentic/../../outside must be inside .agentic/"* ]]
 }
+
+@test "a CA copy comes before the tools and refreshes the trust store" {
+  run bash "$R" "$C"
+  [ "$status" -eq 0 ]
+  ca="$(grep -n 'ca-certificates/corp.crt' <<<"$output" | cut -d: -f1)"
+  upd="$(grep -n '^RUN update-ca-certificates' <<<"$output" | cut -d: -f1)"
+  java="$(grep -n 'java.sh install' <<<"$output" | cut -d: -f1)"
+  [ "$ca" -lt "$upd" ]
+  [ "$upd" -lt "$java" ]
+}
+
+@test "build lines become one RUN each, in order, after the baseline" {
+  run bash "$R" "$C"
+  base="$(grep -n 'agentic-apply","--baseline' <<<"$output" | cut -d: -f1)"
+  plug="$(grep -nF '"add plugin r@m"' <<<"$output" | cut -d: -f1)"
+  copy="$(grep -nF '"files/settings.xml","/home/dev/.m2/settings.xml"' <<<"$output" | cut -d: -f1)"
+  mcp="$(grep -nF '"add mcp x --env TOKEN -- run-x '"'"'a b'"'"'"' <<<"$output" | cut -d: -f1)"
+  [ "$base" -lt "$plug" ]
+  [ "$plug" -lt "$copy" ]
+  [ "$copy" -lt "$mcp" ]
+  grep -qF 'RUN ["agentic-apply","--finish"]' <<<"$output"
+}
+
+@test "run-phase lines are not in the Dockerfile but in the run label" {
+  run bash "$R" "$C"
+  if grep -q 'mount ~/.aws' <<<"$(grep -v '^LABEL' <<<"$output")"; then return 1; fi
+  label="$(sed -nE 's/.*agentic\.run="([^"]*)".*/\1/p' <<<"$output")"
+  run bash -c "base64 -d <<<'$label'"
+  [ "${lines[0]}" = $'mount\t~/.aws\t/home/dev/.aws\tro\tmount ~/.aws /home/dev/.aws --readonly' ]
+  [ "${lines[1]}" = $'volume\tm2\t/home/dev/.m2\t\tvolume m2 /home/dev/.m2' ]
+}
+
+@test "project assets are copied when present" {
+  run bash "$R" "$C"
+  grep -qF 'COPY --chown=dev ["skills","/opt/agentic/project/skills"]' <<<"$output"
+  if grep -q '/opt/agentic/project/agents' <<<"$output"; then return 1; fi
+}
+
+@test "a copy whose source is missing fails the render" {
+  printf '  - copy files/missing /x\n' >> "$C/agentic.yaml"
+  run bash "$R" "$C"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"files/missing is not in .agentic/"* ]]
+}
+
+@test "without setup lines there is no baseline and no finish" {
+  yq -i 'del(.setup)' "$C/agentic.yaml"
+  run bash "$R" "$C"
+  if grep -q agentic-apply <<<"$output"; then return 1; fi
+}

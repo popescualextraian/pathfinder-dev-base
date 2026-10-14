@@ -6,3 +6,10 @@ tools:
   apt: [tree, graphviz]
 docker:
   socket: true
+setup:
+  - add plugin r@m
+  - copy files/settings.xml /home/dev/.m2/settings.xml
+  - copy files/corp.crt /usr/local/share/ca-certificates/corp.crt
+  - add mcp x --env TOKEN -- run-x 'a b'
+  - mount ~/.aws /home/dev/.aws --readonly
+  - volume m2 /home/dev/.m2
