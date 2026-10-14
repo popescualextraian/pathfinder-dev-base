@@ -1,4 +1,4 @@
-version: 1
+version: 2
 project: smoke-project
 base_image: agentic-smoke-overlay:local
 tools:
@@ -6,5 +6,11 @@ tools:
   terraform: "1.5.7"
   hello: "1.0"
   apt: [tree]
-mcp:
-  atlassian: {enabled: true, jira_url: "https://jira.example.com"}
+setup:
+  - copy files/smoke-ca.crt /usr/local/share/ca-certificates/smoke-ca.crt
+  - copy files/marketplace /opt/smoke-marketplace
+  - add marketplace /opt/smoke-marketplace
+  - add plugin hello@smoke-marketplace
+  - add mcp fake --env SMOKE_TOKEN -- true
+  - add agent agents/db.md --target claude
+  - volume m2 /home/dev/.m2

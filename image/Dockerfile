@@ -24,6 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     AWS_PAGER="" \
     DISABLE_AUTOUPDATER=1 \
+    CLAUDE_CONFIG_DIR=/home/dev/.claude \
     COPILOT_AUTO_UPDATE=false \
     JAVA_HOME=/opt/java/${JAVA_BASE} \
     MAVEN_HOME=/opt/maven/${MAVEN_BASE} \

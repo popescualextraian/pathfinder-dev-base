@@ -73,3 +73,13 @@ setup() {
   "$P" --finish
   [ "$(jq -c . "$AGENTIC_SEED/.built/claude-plugins.json")" = '["r@m"]' ]
 }
+
+@test "Copilot's writer locks left by an earlier layer are removed before each Copilot call" {
+  mkdir -p "$AGENTIC_SEED/copilot"
+  touch "$AGENTIC_SEED/copilot/.mcp-writer.lock" "$AGENTIC_SEED/copilot/.mcp-writer.binding" "$AGENTIC_SEED/copilot/installed-plugins.lock"
+  printf '#!/bin/sh\nls -A "$COPILOT_HOME" > "$LOG.copilot-home"\n' > "$BATS_TEST_TMPDIR/bin/copilot"
+  run "$P" --default-targets copilot "add mcp x -- run-x"
+  [ "$status" -eq 0 ]
+  if grep -q lock "$LOG.copilot-home"; then return 1; fi
+  if grep -q binding "$LOG.copilot-home"; then return 1; fi
+}

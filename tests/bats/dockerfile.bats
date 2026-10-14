@@ -48,3 +48,7 @@ D="$REPO_ROOT/image/Dockerfile"
   grep -q 'chown -R dev:dev /work /workspaces /task' "$f"
   grep -qx 'bridge/node_modules' "$REPO_ROOT/.dockerignore"
 }
+
+@test "Claude keeps .claude.json in the mounted ~/.claude, so hand-made settings survive a recreate" {
+  grep -Eq '^ +CLAUDE_CONFIG_DIR=/home/dev/.claude \\$' "$D"
+}

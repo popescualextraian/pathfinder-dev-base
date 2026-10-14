@@ -1,2 +1,2 @@
-git:
-  host: localhost
+hooks:
+  on_start_required: true

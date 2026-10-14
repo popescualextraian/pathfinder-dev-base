@@ -18,7 +18,11 @@ on() {
   local h="$1"; shift
   case "$h" in
     claude) CLAUDE_CONFIG_DIR="$seed/claude" timeout "$t" claude "$@" </dev/null ;;
-    copilot) COPILOT_HOME="$seed/copilot" timeout "$t" copilot "$@" </dev/null ;;
+    copilot)
+      # Copilot's writer locks from an earlier image layer look changed in this one (the layered
+      # filesystem copies them up) and make it refuse to write; the build is the only writer.
+      rm -f "$seed/copilot/.mcp-writer.lock" "$seed/copilot/.mcp-writer.binding" "$seed/copilot/installed-plugins.lock"
+      COPILOT_HOME="$seed/copilot" timeout "$t" copilot "$@" </dev/null ;;
   esac
 }
 

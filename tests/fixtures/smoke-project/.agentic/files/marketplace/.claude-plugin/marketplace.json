@@ -1,0 +1,1 @@
+{"name":"smoke-marketplace","owner":{"name":"smoke"},"plugins":[{"name":"hello","source":"./plugins/hello","description":"Says hello"}]}

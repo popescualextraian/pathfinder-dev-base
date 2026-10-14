@@ -40,8 +40,8 @@ installed plugin and is not linked.
 
 - Personal skills: `~/.copilot/skills/<name>/SKILL.md` (also `~/.agents/skills/`), confirmed with
   `copilot skill list`.
-- Custom agents: `~/.copilot/agents/<name>.agent.md` is the documented location; loading needs a
-  login, so it is checked live in Task 18 with the other live checks.
+- Custom agents: `~/.copilot/agents/<name>.agent.md`, confirmed live: a Claude-style agent file
+  (`name`, `description` frontmatter) copied there unchanged answered `copilot --agent <name>`.
 - Instructions: `copilot-instructions.md` in the Copilot home (already used by the gate).
 - User-level slash commands: none documented (`copilot help commands` lists only built-ins). `add
   command` stays Claude-only, with a warning.

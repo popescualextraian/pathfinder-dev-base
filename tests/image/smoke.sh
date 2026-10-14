@@ -30,10 +30,10 @@ git -C "$proj" add -A
 git -C "$proj" -c user.name=smoke -c user.email=smoke@example.com commit -qm init
 mkdir -p "$proj/.smoke-tls"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=agentic smoke CA" \
-  -keyout "$tmp/ca.key" -out "$proj/.agentic/certs/smoke-ca.crt" 2>/dev/null
+  -keyout "$tmp/ca.key" -out "$proj/.agentic/files/smoke-ca.crt" 2>/dev/null
 openssl req -newkey rsa:2048 -nodes -subj "/CN=localhost" \
   -keyout "$proj/.smoke-tls/server.key" -out "$tmp/server.csr" 2>/dev/null
-openssl x509 -req -in "$tmp/server.csr" -CA "$proj/.agentic/certs/smoke-ca.crt" -CAkey "$tmp/ca.key" \
+openssl x509 -req -in "$tmp/server.csr" -CA "$proj/.agentic/files/smoke-ca.crt" -CAkey "$tmp/ca.key" \
   -CAcreateserial -days 1 -out "$proj/.smoke-tls/server.crt" \
   -extfile <(printf 'subjectAltName=DNS:localhost') 2>/dev/null
 
@@ -61,20 +61,25 @@ check "use-java switches the shell" 'use-java 8 && java -version 2>&1 | grep -q 
 check "terraform, apt package, Dockerfile.extra, overlay preset" 'terraform version | grep -q 1.5.7 \
   && command -v tree && test -f /etc/agentic-extra && [ "$(hello)" = "hello 1.0" ]'
 check "overlay step, overlay defaults and all skills" 'test -f ~/.overlay-step-ran \
-  && [ "$(jq -r .git.host ~/.agentic/config.json)" = localhost ] \
+  && [ "$(jq -r .hooks.on_start_required ~/.agentic/config.json)" = true ] \
   && test -f ~/.claude/skills/agentic-setup/SKILL.md && test -f ~/.claude/skills/overlay-skill/SKILL.md \
   && test -f ~/.claude/skills/smoke-skill/SKILL.md && test -f ~/.copilot/skills/smoke-skill/SKILL.md'
 check "agentic-wiki and the /wiki skill" 'agentic-wiki -C /work/wiki-demo check \
   && test -f ~/.claude/skills/wiki/SKILL.md && test -f ~/.copilot/skills/wiki/SKILL.md \
   && grep -qx -- "- agentic-wiki" /opt/agentic/inventory.txt'
 check "on-start hook ran" 'test -f ~/.on-start-ran'
-check "MCP servers match the config" 'jq -e ".mcpServers.playwright.args | index(\"--headless\")" ~/.claude.json \
-  && jq -e ".mcpServers.graphify" ~/.claude.json \
-  && jq -e ".mcpServers.atlassian.args | index(\"--jira-url\")" ~/.claude.json \
-  && jq -e ".mcpServers.playwright.type == \"local\"" ~/.copilot/mcp-config.json'
-check "plugins are baked, linked and enabled" 'test -L ~/.claude/plugins \
-  && jq -e ".plugins[\"superpowers@claude-plugins-official\"]" ~/.claude/plugins/installed_plugins.json \
-  && jq -e ".enabledPlugins[\"superpowers@claude-plugins-official\"]" ~/.claude/settings.json'
+check "setup lines: plugin for both harnesses, MCP with a reference, narrowed agent, instructions, volume" '
+  claude plugin list 2>/dev/null | grep -q hello@smoke-marketplace && copilot plugin list 2>/dev/null | grep -q hello \
+  && test -L ~/.claude/plugins \
+  && jq -e ".mcpServers.fake.env.SMOKE_TOKEN == \"\${SMOKE_TOKEN}\"" ~/.claude/.claude.json \
+  && jq -e ".mcpServers.fake" ~/.copilot/mcp-config.json \
+  && test -f ~/.claude/agents/db.md && test ! -e ~/.copilot/agents/db.agent.md \
+  && grep -q "smoke instructions" ~/.claude/CLAUDE.md && grep -q "smoke instructions" ~/.copilot/copilot-instructions.md \
+  && mountpoint -q /home/dev/.m2'
+echo "-- init --base takes the overlay's recommended lines"
+(t="$(mktemp -d)" && git init -q "$t" && cd "$t" && "$A" init --base agentic-smoke-overlay:local >/dev/null \
+  && grep -qF -- '- add mcp overlay-recommended -- true' .agentic/agentic.yaml && rm -rf "$t") \
+  || fail "init --base did not take the overlay's recommended lines"
 check "the project CA is trusted by curl, Node, Python and Java, and is in Chromium's store" '
   openssl s_server -accept 8443 -cert /work/.smoke-tls/server.crt -key /work/.smoke-tls/server.key -www -quiet &
   sleep 1
@@ -126,7 +131,7 @@ out="$(docker run --rm -e AGENTIC_WORKER_MODE=fake -e "AGENTIC_CONFIG_B64=$cfg_b
 step "a start without any project mount clones the repository and finds its config"
 git clone -q --bare "$proj" "$tmp/repo.git"
 out="$(docker run --rm -v "$tmp/repo.git:/repo.git:ro" -e AGENTIC_REPO_URL=file:///repo.git "$IMG" \
-  bash -lc 'test -f /work/.agentic/agentic.yaml && jq -r .project ~/.agentic/config.json && jq -e .mcpServers.playwright ~/.claude.json >/dev/null' 2>/dev/null)"
+  bash -lc 'test -f /work/.agentic/agentic.yaml && jq -r .project ~/.agentic/config.json && jq -e .mcpServers.fake ~/.claude/.claude.json >/dev/null' 2>/dev/null)"
 [ "$out" = smoke-project ] || fail "no-mount start: got '$out'"
 
 step "detached tasks through bin/agentic, with the fake agent"
@@ -233,9 +238,16 @@ unset AGENTIC_TASK_DOCKER_ARGS
 step "doctor passes on the good setup"
 (cd "$proj" && "$A" doctor) >"$tmp/doctor.out" 2>&1 || { cat "$tmp/doctor.out"; fail "doctor on a good setup"; }
 
-step "doctor fails on a broken setup (no rebuild needed: MCP servers are run-time config)"
-printf '  custom:\n    - {name: broken, type: stdio, command: does-not-exist}\n' >> "$proj/.agentic/agentic.yaml"
+step "removing a line removes what it set up; an MCP server added by hand stays"
+in_box 'claude mcp add -s user mine -- true >/dev/null' || fail "could not add an MCP server by hand"
+(cd "$proj" && "$A" remove mcp fake --no-build >/dev/null && "$A" build >/dev/null) || fail "remove and rebuild"
+check "fake gone, mine kept" '! jq -e ".mcpServers.fake" ~/.claude/.claude.json && jq -e ".mcpServers.mine" ~/.claude/.claude.json \
+  && ! jq -e ".mcpServers.fake" ~/.copilot/mcp-config.json'
+
+step "doctor fails on a broken setup (an MCP server added by hand whose command is missing)"
+in_box 'claude mcp add -s user broken -- does-not-exist >/dev/null' || fail "could not add the broken server"
 if (cd "$proj" && "$A" doctor) >"$tmp/doctor.out" 2>&1; then cat "$tmp/doctor.out"; fail "doctor passed a broken setup"; fi
 grep -q "mcp broken: command does-not-exist not found" "$tmp/doctor.out" || { cat "$tmp/doctor.out"; fail "doctor did not name the broken server"; }
 
+docker volume rm agentic-smoke-project-m2 >/dev/null 2>&1 || true
 echo "smoke OK"

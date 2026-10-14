@@ -1,6 +1,7 @@
 FROM agentic-dev-base:local
 USER root
 COPY defaults/agentic.yaml /opt/agentic/defaults/agentic.yaml
+COPY recommended /opt/agentic/defaults/recommended
 COPY tools/ /opt/agentic/tools/
 COPY skills/ /opt/agentic/skills/
 COPY start.d/ /opt/agentic/start.d/
