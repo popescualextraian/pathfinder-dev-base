@@ -19,9 +19,9 @@ and hub adapters are not part of this repository; an [overlay](overlay.md) holds
   | Path | Holds |
   |---|---|
   | `/work` | the project checkout |
-  | `/workspaces` | other clones (`add workspace` lines), task worktrees |
+  | `/workspaces` | other clones (`add workspace` lines) |
   | `/home/dev/.claude`, `/home/dev/.copilot` | logins, sessions, history, harness memory |
-  | `/task` | a detached task's record |
+  | `/task` | a detached task's record (`AGENTIC_TASK_DIR`; `agentic run` uses `/tasks/<id>`) |
 
   Whatever is not on a mount or volume is gone after a recreate. One volume with a subpath per
   path is enough (Docker `volume-subpath`, an EFS access point, an Azure Files share).

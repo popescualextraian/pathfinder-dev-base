@@ -31,7 +31,7 @@ This guide is how to use it. The full contract (states, API, events, files, ever
 | `agentic cancel ID` | Ends the current turn; the task stays and takes the next prompt. |
 | `agentic stop ID` | Ends the task and stops its container. The worktree and files stay. |
 | `agentic resume ID` | Continues an interrupted or failed task. |
-| `agentic logs ID [--transcript\|--bridge\|--start]` | The readable transcript, the bridge's log, or the container start log. |
+| `agentic logs ID [--transcript\|--bridge\|--start]` | The readable transcript, the bridge's log and its own output (`bridge.out`), or the container start log. |
 | `agentic shell ID` | A shell in the running task container, to look around. |
 | `agentic takeover ID` | Stops the task and opens its session interactively, with the same history. |
 | `agentic clean ID [--force]` | Removes the worktree and branch, the container the task created, and the task files. |
@@ -62,7 +62,9 @@ agentic follow T-20261013-a6ec      # watch it work; Ctrl-c whenever you like
 
 4. When a turn ends with nothing open, the task is `idle`. Give it more with `agentic send`.
 5. After 15 minutes `waiting` or `idle` (`AGENTIC_IDLE_TIMEOUT`), the task suspends: the agent ends
-   and the container exits, so it costs nothing. `answer` or `send` wakes it with the same session.
+   and the bridge exits. The container keeps running (it costs memory, not tokens) until
+   `agentic stop` or `agentic clean`. `answer` or `send` starts the bridge again (and the container,
+   if it was stopped) with the same session.
 6. When you are done: `agentic stop ID`, then `agentic clean ID` once its work is pushed.
 
 ## States
@@ -72,7 +74,7 @@ agentic follow T-20261013-a6ec      # watch it work; Ctrl-c whenever you like
 | `starting`, `running` | The agent is working. | `follow`; `cancel` to end the turn. |
 | `waiting` | A question is open. | `status ID`, then `answer`. |
 | `idle` | Turn done, nothing open. | `send` more work, or `stop`. |
-| `suspended` | Idle too long; the container exited. | `answer` or `send` wakes it. |
+| `suspended` | Idle too long; the bridge exited, the container runs on. | `answer` or `send` wakes it. |
 | `interrupted` | The container went away without a stop (reboot, `docker kill`). | `resume`. |
 | `failed` | The agent crashed or refused the prompt. The container stays for inspection. | `logs`, then `resume`. |
 | `stopped` | Ended by you. Final. | `takeover` to continue by hand, or `clean`. |

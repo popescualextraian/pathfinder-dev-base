@@ -38,7 +38,9 @@ creates anything and rolls back what it created on any failure.
   subfolder of the project root); the default is `target:` in `agentic.yaml`. A single-repository
   project refuses it.
 - `--in ID`: run the new task in the container of task `ID`, one task at a time.
-- `--worktree`: the task gets its own worktree and branch, made in the container.
+- `--worktree`: the task gets its own worktree and branch, made in the container. Its git metadata
+  uses container paths (`/work/...`), so host git cannot open `.worktrees/<id>`, and a host
+  `git worktree prune` would drop its metadata; work on it inside the container.
 - `--auto-clean`: when the task ends normally, the bridge removes its worktree, stops, and ends
   the container the task created; the next `run` or `status` removes the leftovers.
 
@@ -94,8 +96,7 @@ or answer (the agent is respawned and the session loaded); `stopped` is final.
   session, applies bypass and sends `prompt.md` (else `AGENTIC_PROMPT`); `starting → running`.
   With a record the bridge starts lazily: it serves the API and spawns nothing until a prompt or
   answer arrives, so a plain `docker start` spends no tokens. If nothing wakes it within
-  `AGENTIC_IDLE_TIMEOUT`, the bridge exits 0 with the state unchanged and the container exits
-  again (also after a refused request, such as an answer to an unknown question). A record in `starting`, `running`,
+  `AGENTIC_IDLE_TIMEOUT`, the bridge exits 0 with the state unchanged (also after a refused request, such as an answer to an unknown question). A record in `starting`, `running`,
   `waiting` or `idle` found at start is an unclean end: the bridge sets `interrupted` and waits.
 - **Turn end.** `session/prompt` returns. With an open question the task is `waiting`, else
   `idle`. The summary is the agent's text after its last tool call in the turn (300 characters at most). If the inbox is
@@ -111,8 +112,10 @@ or answer (the agent is respawned and the session loaded); `stopped` is final.
   <grants>.`) goes into the inbox and is delivered as soon as no prompt is outstanding.
 - **Suspension.** `waiting` or `idle` longer than `AGENTIC_IDLE_TIMEOUT` (default 900 s; any input
   resets it): a pending permission request is answered `cancelled` (its question stays open), the
-  agent ends, `state = suspended`, the bridge exits 0 and the container exits.
-- **Resume.** The host starts the container (`docker start`), waits for `GET /status`, then sends.
+  agent ends, `state = suspended` and the bridge exits 0. The container keeps running (it costs
+  memory, not tokens) until `agentic stop` or `agentic clean`.
+- **Resume.** The host starts the container if it was stopped (`docker start`), starts the bridge
+  with `docker exec`, waits for `GET /status`, then sends.
   The bridge spawns the agent and calls `session/load` with the stored session id; history replayed
   before the load returns is dropped. If the session is missing, the bridge opens a new session
   seeded with `prompt.md`, the questions and answers, and `git log --oneline -20` of `/work`, and
@@ -162,8 +165,9 @@ over the size limit gets 413.
 Threat model: the bridge and the agent run as one user in one container, so the agent could read
 the bridge's environment or edit `state.json`. The tokens keep other host processes and browsers
 (DNS rebinding) out; they do not contain the agent. The gate guards against slips, not a hostile
-agent. Anyone with access to the Docker socket can read the tokens (`docker inspect`) and is root
-on the host anyway.
+agent. The tokens reach the bridge only through `docker exec --env-file` (they are in no container
+configuration, so `docker inspect` does not show them); anyone with access to the Docker socket is
+root on the host anyway.
 
 The checkout and its `.git` are writable by the task, as in dev mode. An agent can change
 `.git/config`, a hook, `.agentic/.env` (tokens and `AGENTIC_GATE`, which reach every task) and
@@ -171,7 +175,8 @@ The checkout and its `.git` are writable by the task, as in dev mode. An agent c
 the next `run` or `build`.
 
 The project's task containers share `/tasks`, so one task's agent can write another task's
-record. The host takes the container and the work directory only from its own files (`container`
+record, and `/tasks` also exposes every task's harness homes (sessions, credential copies,
+settings) to the project's other task containers. The host takes the container and the work directory only from its own files (`container`
 and `env` above), never from a record. Every bind source (the workspace, `tasks/`, `events/`) must
 be its own canonical path, because Docker follows symlinks in bind sources; `run` refuses a
 symlinked one, makes the task directory exclusively, and never reuses a container it did not
