@@ -350,7 +350,7 @@ cmd_run() {
   [ -n "$agent" ] || agent="$(image_label "$img" agentic.harness)"
   agent="${agent:-claude}"
   case "$agent" in claude|copilot) ;; *) die "--agent must be claude or copilot" ;; esac
-  for a in "${allow[@]}"; do [[ "$a" =~ ^(push|open-pr|deploy:[A-Za-z0-9_.-]+)$ ]] || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
+  for a in "${allow[@]}"; do valid_grant "$a" || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
   [ -n "$id" ] || id="$(new_task_id)"
   valid_task_id "$id" || die "the task id must match [A-Za-z0-9._-]+"
   [ ! -e "$(task_dir "$id")" ] || die "task $id exists"
@@ -467,8 +467,7 @@ cmd_send() {
   need_config
   [ $# -eq 2 ] || die 'usage: agentic send ID "text"'
   need_task "$1"; ensure_running "$1"
-  bridge_call "$1" POST /prompt "$(jq -cn --arg t "$2" '{text: $t}')"
-  bridge_result "$1"
+  bridge_post "$1" /prompt "$(jq -cn --arg t "$2" '{text: $t}')"
 }
 
 cmd_answer() {
@@ -487,19 +486,15 @@ cmd_answer() {
     3) id="${pos[0]}"; q="${pos[1]}"; text="${pos[2]}" ;;
     *) die 'usage: agentic answer ID [QID] "text" [--allow A]...' ;;
   esac
-  for g in ${grants[@]+"${grants[@]}"}; do
-    [[ "$g" =~ ^(push|open-pr|deploy:[A-Za-z0-9_.-]+)$ ]] || die "bad grant '$g' (push, open-pr or deploy:TARGET)"
-  done
+  for g in ${grants[@]+"${grants[@]}"}; do valid_grant "$g" || die "bad grant '$g' (push, open-pr or deploy:TARGET)"; done
   need_task "$id"; ensure_running "$id"
-  bridge_call "$id" POST /answer "$(jq -cn --arg q "$q" --arg t "$text" \
+  bridge_post "$id" /answer "$(jq -cn --arg q "$q" --arg t "$text" \
     '{text: $t, grant: $ARGS.positional} + (if $q == "" then {} else {question: $q} end)' --args ${grants[@]+"${grants[@]}"})"
-  bridge_result "$id"
 }
 
 cmd_cancel() {
   need_config; need_task "${1:-}"; need_running "$1"
-  bridge_call "$1" POST /cancel
-  bridge_result "$1"
+  bridge_post "$1" /cancel
 }
 
 cmd_stop() {
@@ -526,8 +521,7 @@ cmd_resume() {
   esac
   ensure_running "$id"
   rm -f "$(task_file "$id" interrupted)"
-  bridge_call "$id" POST /prompt "$(jq -cn '{text: "You were interrupted. Check git status and continue."}')"
-  bridge_result "$id"
+  bridge_post "$id" /prompt "$(jq -cn '{text: "You were interrupted. Check git status and continue."}')"
 }
 
 cmd_logs() {

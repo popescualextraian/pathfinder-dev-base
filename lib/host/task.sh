@@ -138,6 +138,8 @@ task_image() {
   if image_exists "$(project_image)"; then project_image; else base_image_of; fi
 }
 valid_task_id() { [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]; }
+# valid_grant ACTION: an action a task may be allowed (run --allow, answer --allow).
+valid_grant() { [[ "$1" =~ ^(push|open-pr|deploy:[A-Za-z0-9_.-]+)$ ]]; }
 need_task() {
   valid_task_id "${1:-}" || die "usage: a task id ([A-Za-z0-9._-]+)"
   task_readable "$1" state.json || die "no task $1 in $(task_project)"
@@ -181,6 +183,8 @@ bridge_req() {
   BRIDGE_CODE="${out##*$'\n'}"; BRIDGE_BODY="${out%$'\n'*}"
 }
 bridge_call() { bridge_req "$@" || die "task $1 is not reachable (state: $(task_state "$1"))"; }
+# bridge_post ID PATH [BODY]: a POST the task must answer; prints its new state, or dies.
+bridge_post() { bridge_call "$1" POST "$2" "${3:-}"; bridge_result "$1"; }
 
 # wait_bridge ID SECONDS: until the bridge answers with a state other than starting.
 wait_bridge() {
