@@ -7,7 +7,7 @@ steps="${AGENTIC_STEPS_DIR:-$AGENTIC_DIR/start.d}"
 export AGENTIC_DIR AGENTIC_STATE
 # The gate is on by default where nobody watches: the task bridge and worker mode (spec D17).
 if [ -z "${AGENTIC_GATE:-}" ]; then
-  if [ "${1:-}" = agentic-bridge ] || [ -n "${AGENTIC_WORKER_MODE:-}" ]; then AGENTIC_GATE=1; else AGENTIC_GATE=0; fi
+  if [ "${1:-}" = agentic-bridge ] || [ "${1:-}" = agentic-task-hold ] || [ -n "${AGENTIC_WORKER_MODE:-}" ]; then AGENTIC_GATE=1; else AGENTIC_GATE=0; fi
 fi
 export AGENTIC_GATE
 mkdir -p "$AGENTIC_STATE"

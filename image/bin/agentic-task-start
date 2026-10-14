@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Starts a task's bridge in a running task container (docker exec): the start's environment first
+# (harness homes and the rest of ~/.agentic/env), then the bridge with the exec's own variables.
+set -euo pipefail
+state="${AGENTIC_STATE:-$HOME/.agentic}"
+task_dir="${AGENTIC_TASK_DIR:?AGENTIC_TASK_DIR must be set}"
+# shellcheck disable=SC1091
+if [ -f "$state/env" ]; then . "$state/env"; fi
+export AGENTIC_TASK_DIR="$task_dir"
+mkdir -p "$AGENTIC_TASK_DIR"
+exec agentic-bridge >>"$AGENTIC_TASK_DIR/bridge.out" 2>&1

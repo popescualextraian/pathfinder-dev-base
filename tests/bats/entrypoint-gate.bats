@@ -31,3 +31,9 @@ gate() { cat "$BATS_TEST_TMPDIR/gate"; }
   AGENTIC_GATE=0 bash "$REPO_ROOT/image/entrypoint.sh" agentic-bridge </dev/null
   [ "$(gate)" = gate=0 ]
 }
+
+@test "the gate is on by default for a task container's hold command" {
+  install_cmd_stub agentic-task-hold
+  bash "$REPO_ROOT/image/entrypoint.sh" agentic-task-hold </dev/null
+  [ "$(gate)" = gate=1 ]
+}

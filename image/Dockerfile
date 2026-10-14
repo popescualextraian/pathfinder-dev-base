@@ -101,9 +101,9 @@ RUN cd /opt/agentic/bridge && export PATH=/opt/node/${NODE_HARNESS}/bin:$PATH \
 # User dev, mount points and the container marker
 RUN (userdel -r ubuntu 2>/dev/null || true) \
  && groupadd -g 1000 dev && useradd -m -u 1000 -g 1000 -s /bin/bash dev \
- && mkdir -p /etc/agentic /work /workspaces /task /agentic-config /opt/agentic/seed /opt/agentic/defaults \
+ && mkdir -p /etc/agentic /work /workspaces /task /tasks /agentic-config /opt/agentic/seed /opt/agentic/defaults \
  && printf 'agentic\n' > /etc/agentic/container \
- && chown -R dev:dev /work /workspaces /task /opt/agentic/seed /ms-playwright
+ && chown -R dev:dev /work /workspaces /task /tasks /opt/agentic/seed /ms-playwright
 
 # The agentic layer (changes most often, so it comes last)
 COPY image/lib /opt/agentic/lib
