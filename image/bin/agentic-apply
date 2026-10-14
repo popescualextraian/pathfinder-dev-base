@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Applies one build-phase setup line to the seed homes through each target harness's own CLI.
+# render-dockerfile.sh writes one RUN per line, as dev. Usage:
+#   agentic-apply --default-targets T LINE | --baseline | --finish
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+# shellcheck source=../lib/common.sh
+source "$AGENTIC_DIR/lib/common.sh"
+# shellcheck source=../lib/setup-line.sh
+source "$AGENTIC_DIR/lib/setup-line.sh"
+seed="${AGENTIC_SEED:-$AGENTIC_DIR/seed}"
+t="${AGENTIC_NET_TIMEOUT:-300}"
+mkdir -p "$seed/claude" "$seed/copilot"
+
+# on HARNESS ARG...: the harness CLI on its seed home, never waiting for input.
+on() {
+  local h="$1"; shift
+  case "$h" in
+    claude) CLAUDE_CONFIG_DIR="$seed/claude" timeout "$t" claude "$@" </dev/null ;;
+    copilot) COPILOT_HOME="$seed/copilot" timeout "$t" copilot "$@" </dev/null ;;
+  esac
+}
+
+# env_pairs: L_ENV with a bare KEY turned into KEY=${KEY}, a reference the harness expands at run time.
+env_pairs() {
+  local e
+  for e in "${L_ENV[@]}"; do
+    # shellcheck disable=SC2016  # a literal ${KEY}, never expanded here
+    if [[ "$e" == *=* ]]; then printf '%s\n' "$e"; else printf '%s=${%s}\n' "$e" "$e"; fi
+  done
+}
+
+apply_claude() {
+  local e args=()
+  case "$L_KIND" in
+    marketplace) on claude plugin marketplace add "$L_SRC" ;;
+    plugin)
+      if [ "${L_KEY#*@}" = claude-plugins-official ] \
+         && ! jq -e 'has("claude-plugins-official")' "$seed/claude/plugins/known_marketplaces.json" >/dev/null 2>&1; then
+        on claude plugin marketplace add anthropics/claude-plugins-official || return 1
+      fi
+      on claude plugin install -s user "$L_KEY" ;;
+    mcp)
+      if [ -n "$L_TRANSPORT" ]; then on claude mcp add -s user --transport "$L_TRANSPORT" "$L_KEY" "$L_URL"; return; fi
+      while IFS= read -r e; do [ -z "$e" ] || args+=(-e "$e"); done < <(env_pairs)
+      on claude mcp add -s user "$L_KEY" "${args[@]}" -- "${L_CMD[@]}" ;;
+  esac
+}
+
+apply_copilot() {
+  local e args=()
+  case "$L_KIND" in
+    marketplace) on copilot plugin marketplace add "$L_SRC" ;;
+    plugin) on copilot plugin install "$L_KEY" ;;
+    mcp)
+      if [ -n "$L_TRANSPORT" ]; then on copilot mcp add --transport "$L_TRANSPORT" "$L_KEY" "$L_URL"; return; fi
+      while IFS= read -r e; do [ -z "$e" ] || args+=(--env "$e"); done < <(env_pairs)
+      on copilot mcp add "$L_KEY" "${args[@]}" -- "${L_CMD[@]}" ;;
+  esac
+}
+
+baseline() {
+  local h kind p
+  on claude mcp list >/dev/null 2>&1 || true
+  on copilot mcp list >/dev/null 2>&1 || true
+  while IFS=$'\t' read -r h kind p; do
+    case "$h" in ''|'#'*) continue ;; esac
+    [ "$kind" = json ] || continue
+    mkdir -p "$(dirname "$seed/.baseline/$h/$p")"
+    if [ -s "$seed/$h/$p" ]; then cp "$seed/$h/$p" "$seed/.baseline/$h/$p"; else echo '{}' > "$seed/.baseline/$h/$p"; fi
+  done < "$AGENTIC_DIR/lib/seed-map.tsv"
+}
+
+finish() {
+  mkdir -p "$seed/.built"
+  jq -c '.plugins // {} | keys' "$seed/claude/plugins/installed_plugins.json" > "$seed/.built/claude-plugins.json" 2>/dev/null \
+    || echo '[]' > "$seed/.built/claude-plugins.json"
+  on copilot plugin list > "$seed/.built/copilot-plugins.txt" 2>/dev/null || : > "$seed/.built/copilot-plugins.txt"
+}
+
+case "${1:-}" in
+  --baseline) baseline; exit 0 ;;
+  --finish) finish; exit 0 ;;
+  --default-targets) dt="${2:?}"; line="${3:?usage: agentic-apply --default-targets T LINE}" ;;
+  *) say "usage: agentic-apply --default-targets T LINE | --baseline | --finish"; exit 2 ;;
+esac
+parse_line "$line" || { say "invalid line: $L_ERR"; exit 1; }
+case "$L_KIND" in marketplace|plugin|mcp) ;; *) say "$L_KIND lines are not applied at build"; exit 1 ;; esac
+IFS=, read -ra targets <<<"$(norm_targets "${L_TARGETS:-$dt}")"
+for h in "${targets[@]}"; do
+  if ! "apply_$h"; then say "setup line failed for $h: $line"; exit 1; fi
+done

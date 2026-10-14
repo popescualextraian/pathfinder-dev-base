@@ -13,7 +13,8 @@ lines() { yq -o=json '.setup' "$D/agentic.yaml" | jq -r '.[]'; }
 
 @test "add appends a line and keeps comments" {
   run "$E" --dir "$D" add "add mcp x -- run-x"
-  [ "$status" -eq 0 ] && [ "$output" = "added: add mcp x -- run-x" ]
+  [ "$status" -eq 0 ]
+  [ "$output" = "added: add mcp x -- run-x" ]
   [ "$(lines | tail -1)" = "add mcp x -- run-x" ]
   grep -q '# keep me' "$D/agentic.yaml"
 }
@@ -54,10 +55,12 @@ lines() { yq -o=json '.setup' "$D/agentic.yaml" | jq -r '.[]'; }
 
 @test "copy needs its source in .agentic/ and warns about secrets" {
   run "$E" --dir "$D" add "copy files/x /x"
-  [ "$status" -eq 1 ] && [[ "$output" == *"files/x is not in .agentic/"* ]]
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"files/x is not in .agentic/"* ]]
   touch "$D/files/id_rsa"
   run "$E" --dir "$D" add "copy files/id_rsa /home/dev/.ssh/id_rsa"
-  [ "$status" -eq 0 ] && [[ "$output" == *"looks like a secret"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"looks like a secret"* ]]
 }
 
 @test "an asset for the default targets needs no line" {
@@ -74,7 +77,8 @@ lines() { yq -o=json '.setup' "$D/agentic.yaml" | jq -r '.[]'; }
   [ "$output" = "removed: add plugin a@m --target copilot" ]
   [ "$(lines)" = "add plugin a@m   # first" ] || [ "$(lines)" = "add plugin a@m" ]
   run "$E" --dir "$D" remove plugin a@m
-  [ "$status" -eq 0 ] && [ -z "$(lines)" ]
+  [ "$status" -eq 0 ]
+  [ -z "$(lines)" ]
   run "$E" --dir "$D" remove plugin a@m
   [ "$status" -eq 3 ]
 }
