@@ -15,13 +15,14 @@ setup() {
   # a JDK 21 that answers `java -version`
   mkdir -p "$AGENTIC_OPT/java/21/bin"
   printf '#!/bin/sh\necho "openjdk version 21" >&2\n' > "$AGENTIC_OPT/java/21/bin/java"; chmod +x "$AGENTIC_OPT/java/21/bin/java"
-  resolved '{"project":"demo","git":{"host":"github.com"},"tools":{"java":{"versions":[21],"default":21},"apt":[]},"mcp":{"atlassian":{"enabled":false},"playwright":{"enabled":false},"graphify":{"enabled":false},"custom":[]},"docker":{"socket":false}}'
+  resolved '{"version":2,"project":"demo","targets":["claude","copilot"],"tools":{"java":{"versions":[21],"default":21},"apt":[]},"docker":{"socket":false},"setup":[]}'
   echo '{}' > "$HOME/.claude.json"
   export ANTHROPIC_API_KEY=k COPILOT_GITHUB_TOKEN=t
   D="$REPO_ROOT/image/bin/agentic-doctor"
 }
 
 resolved() { printf '%s\n' "$1" > "$AGENTIC_STATE/config.json"; }
+conf_with_setup() { jq --argjson s "$1" '.setup = $s' "$AGENTIC_STATE/config.json" > "$BATS_TEST_TMPDIR/c" && mv "$BATS_TEST_TMPDIR/c" "$AGENTIC_STATE/config.json"; }
 step() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$AGENTIC_STEPS_DIR/$1.sh"; }
 
 @test "a healthy container passes" {
@@ -68,7 +69,7 @@ step() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$AGENTIC_STEPS_DIR/$1.sh"; }
   CURL_RC=60 run bash "$D"
   [ "$status" -eq 1 ]
   [[ "$output" == *"error mcp docs: TLS certificate not trusted"* ]]
-  [[ "$output" == *".agentic/certs"* ]]
+  [[ "$output" == *"agentic copy"* ]]
 }
 
 @test "an unreachable HTTP MCP server is a warning" {
@@ -101,4 +102,29 @@ step() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$AGENTIC_STEPS_DIR/$1.sh"; }
   [ "$(tail -n 1 <<<"$call")" = agentic-doctor ]
   run grep -qx -- '--entrypoint' <<<"$call"
   [ "$status" -ne 0 ]
+}
+
+@test "a mount line that is not mounted is listed as skipped" {
+  conf_with_setup '["mount ~/.aws /home/dev/.aws --readonly", "volume m2 /home/dev/.m2"]'
+  export AGENTIC_MOUNTINFO="$BATS_TEST_TMPDIR/mountinfo"
+  echo '36 25 0:31 / /home/dev/.m2 rw,relatime - ext4 /dev/x rw' > "$AGENTIC_MOUNTINFO"
+  run bash "$D"
+  [[ "$output" == *"warn  mount ~/.aws /home/dev/.aws --readonly: not mounted (started without the agentic CLI?)"* ]]
+  [[ "$output" == *"ok    volume m2 /home/dev/.m2"* ]]
+}
+
+@test "an unset \${VAR} of an MCP server is a warning" {
+  mkdir -p "$HOME/.copilot"
+  echo '{"mcpServers":{"j":{"command":"true","env":{"T":"${JIRA_T}"}}}}' > "$HOME/.copilot/mcp-config.json"
+  run env -u JIRA_T bash "$D"
+  [[ "$output" == *'warn  mcp j uses ${JIRA_T}, which is not set (add it to .agentic/.env)'* ]]
+}
+
+@test "a plugin installed by hand is named with the line that keeps it" {
+  export AGENTIC_SEED="$BATS_TEST_TMPDIR/seed"; mkdir -p "$AGENTIC_SEED/.built" "$HOME/.claude/plugins"
+  echo '["a@m"]' > "$AGENTIC_SEED/.built/claude-plugins.json"
+  echo '{"plugins":{"a@m":[{}],"b@m":[{}]}}' > "$HOME/.claude/plugins/installed_plugins.json"
+  run bash "$D"
+  [[ "$output" == *"warn  plugin b@m was installed by hand and is gone after a recreate; keep it with: agentic add plugin b@m --target claude"* ]]
+  if [[ "$output" == *"plugin a@m was installed by hand"* ]]; then return 1; fi
 }

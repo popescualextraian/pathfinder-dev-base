@@ -45,4 +45,10 @@ while IFS=$'\t' read -r h kind p; do
       write_if_changed "$snap" "$new" ;;
   esac
 done < "$lib/seed-map.tsv"
+
+# variables the MCP servers need at connect time; the harness expands ${VAR} from the environment
+while IFS=$'\t' read -r server var; do
+  [ -n "$server" ] || continue
+  if [ -z "${!var:-}" ]; then say "MCP server $server uses \${$var}, which is not set (add it to .agentic/.env)"; rc=2; fi
+done < <(mcp_env_refs)
 exit "$rc"

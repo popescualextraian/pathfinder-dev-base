@@ -77,3 +77,12 @@ marked_block() {
   if [ -n "$text" ]; then write_if_changed "$f" "$(printf '%s\n%s\n%s\n%s\n' "$own" "$mark" "$text" "$mark" | sed '/./,$!d')"
   elif [ -f "$f" ]; then write_if_changed "$f" "$own"; fi
 }
+
+# mcp_env_refs: SERVER<TAB>VAR for every ${VAR} in the env and headers of both harnesses' MCP servers.
+mcp_env_refs() {
+  local f
+  for f in "$(claude_json)" "$(copilot_dir)/mcp-config.json"; do read_json "$f" 2>/dev/null; done | jq -r '
+    .mcpServers // {} | to_entries[] | .key as $k
+    | [(.value.env // {}), (.value.headers // {})][] | .[]
+    | strings | [scan("\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}")[0]][] | [$k, .] | @tsv' | sort -u
+}

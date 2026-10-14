@@ -97,3 +97,12 @@ m() { jq -c -L "$REPO_ROOT/image/lib" --argjson o "$2" --argjson n "$3" 'include
   [ "$(m '{"s":{"pw":1,"mine":2}}' '{"s":{"pw":1}}' '{}')" = '{"s":{"mine":2}}' ]
   [ "$(m '{"s":{"pw":9}}' '{"s":{"pw":1}}' '{}')" = '{"s":{"pw":9}}' ]
 }
+
+@test "an MCP server whose \${VAR} is unset is a start warning" {
+  echo '{"mcpServers":{"jira":{"command":"x","env":{"T":"${JIRA_T}"}}}}' > "$AGENTIC_SEED/claude/.claude.json"
+  run env -u JIRA_T bash "$S"
+  [ "$status" -eq 2 ]
+  [[ "$output" == *'MCP server jira uses ${JIRA_T}, which is not set (add it to .agentic/.env)'* ]]
+  JIRA_T=x run bash "$S"
+  [ "$status" -eq 0 ]
+}
