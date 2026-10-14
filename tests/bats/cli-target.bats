@@ -101,6 +101,12 @@ ag() { (cd "$M" && bash "$A" "$@" </dev/null); }
   [ "$(ag target | head -n 1)" = "target: api" ]
 }
 
+@test "help lists target after dev's description, not between dev and it" {
+  run bash "$A" help
+  [[ "$(grep -A1 'dev \[stop|recreate|status\]' <<<"$output" | tail -n 1)" == *"persistent dev container"* ]]
+  grep -q 'target \[NAME\].*default repository' <<<"$output"
+}
+
 @test "target refuses an unknown name, a single-repository project and a missing layout" {
   run ag target nope
   [ "$status" -eq 1 ]; [[ "$output" == *"nope is not a repository of the project; choose one of: api web"* ]]

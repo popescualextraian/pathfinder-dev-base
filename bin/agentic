@@ -27,8 +27,8 @@ agentic <command> [options]          run inside a project repository
   shell [CMD...]                     throwaway container (removed on exit)
   doctor                             check the configured container: steps, tools, logins, MCP, certificates
   dev [stop|recreate|status] [--host-profile wsl|none]
-  target [NAME]                      the default repository of a multi-repository project
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
+  target [NAME]                      the default repository of a multi-repository project
   run "prompt" [--agent A] [--allow push|open-pr|deploy:T]... [--repo R]... [--base REF] [--branch B] [--id ID] [--json]
                                      start a detached task; prints its id
   status [ID] [--all] [--json]       list tasks, or one task with its open questions
