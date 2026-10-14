@@ -37,7 +37,7 @@ Success criteria:
 | T4 | The target is the agent's working directory: the bridge opens the ACP session with `cwd=/work/<target>`. | ACP takes the cwd per session; the bridge already reads `AGENTIC_WORK`. |
 | T5 | The task id and the container are separate. A task records its container and whether it created it. | A task can run in a container another task created (`--in`); `clean` removes a container only when its task created it. |
 | T6 | One task at a time per container (`--in` refuses a container whose bridge runs). | The bridge stays one task per container. Several tasks per container is backlog. |
-| T7 | The bridge is started with `docker exec`, not as the container's command. The container runs `sleep infinity`. | A container outlives its first task and can take the next one. |
+| T7 | The bridge is started with `docker exec`, not as the container's command. The container runs `agentic-task-hold`, which sleeps. | A container outlives its first task and can take the next one. |
 | T8 | `--worktree` is an option, off by default. The worktree and branch are made and removed inside the container. | A workflow rule, so it lives in the container (T1). It may become the default later. |
 | T9 | Containers are kept by default. `--auto-clean` removes a task that ended successfully. | Inspecting a finished task is the common case; unattended runs can opt out of the leftovers. |
 | T10 | Task containers keep `--cap-drop ALL` and `--security-opt no-new-privileges`; the dev container keeps neither. | Unattended work stays hardened; dev keeps `sudo`. The environment the agent sees (T2) is the same. |
@@ -122,13 +122,21 @@ recorded container. `stop`, `resume`, `takeover` and `clean` change as described
 
 - `build_run_args` (what the dev container gets: `/work`, `/workspaces/repos`, `/agentic-config`,
   the setup lines' mounts and volumes, `.env`, git identity, proxy), except the harness homes;
-- the task harness homes `<workspace>/tasks/<id>/home/{claude,copilot}`, seeded with the
-  credentials as today, then merged with the image's seed by the start (so setup lines apply);
+- the task harness homes `<workspace>/tasks/<id>/home/{claude,copilot}` of the task that creates
+  the container (`AGENTIC_TASK_DIR=/tasks/<id>` at creation), seeded with the credentials as today,
+  then merged with the image's seed by the start (so setup lines apply); a later task in the same
+  container (`--in`) uses the same homes, with its own session;
 - `-v <workspace>/tasks:/tasks` and `-v <workspace>/events:/events` (replacing the per-task `/task`
   mount, so a later task can run in this container);
 - `-p 127.0.0.1::<bridge port>`, `--cap-drop ALL`, `--security-opt no-new-privileges`, the labels
   `agentic.kind=task` and `agentic.project=<project>`;
-- command `sleep infinity` under `--init`, then the full start (`image/start.d`).
+- command `agentic-task-hold` under `--init`, after the full start (`image/start.d`): it records its
+  pid (so the bridge can end the container for auto-clean), touches `/tasks/<creator>/.ready` (the
+  host waits for it before it starts a bridge) and sleeps.
+
+The container's name and whether the task created it are a host-private file of the task, never
+the record: the record is agent-writable, and the host must not `docker exec` into or remove a
+container an agent named.
 
 The dev container's own `docker run` is not changed.
 
@@ -171,7 +179,9 @@ docker exec -d --env-file <host-private task env> \
 1. With a worktree: `agentic-worktree check` in the task's container (started if stopped) refuses
    uncommitted changes or commits on no remote branch, unless `--force`; then `agentic-worktree
    remove` deletes the worktree and the branch. All git runs in the container.
-2. The container, when `created_container` is true and no other task's bridge runs in it.
+2. The container, when this task created it. While another task's bridge runs in that container,
+   `clean` refuses ("task <other> runs in this container; stop it first"): the container's harness
+   homes live in its creator's task directory.
 3. The task's directory under `<workspace>/tasks/<id>` and its host-private files.
 
 Without a worktree, `clean` does not touch `/work`: the agent's changes in the checkout are the
@@ -179,11 +189,11 @@ user's to keep or discard.
 
 ### 6.3 Auto-clean
 
-With `--auto-clean`, when the task ends successfully (state `done`: no open question, nothing
-pending, no failure), the bridge removes the worktree and branch (`agentic-worktree remove`, no
+With `--auto-clean`, when the task ends successfully (a turn ends normally, not cancelled, and the
+task settles in `idle` with no open question and an empty inbox), the bridge removes the worktree and branch (`agentic-worktree remove`, no
 `--force`; a refusal keeps the task and logs why), marks the record `cleaned`, and stops the
-container's main process. The next `agentic` command of the project removes containers and records
-marked `cleaned`. A failed, waiting or interrupted task is kept.
+container's main process. The next `agentic run` or `agentic status` of the project removes the
+exited containers and the records marked `cleaned`. A failed, waiting or interrupted task is kept.
 
 ## 7. Removed
 
@@ -193,7 +203,7 @@ file, the mirrors under `~/.agentic/projects/<project>/mirrors`, the host-side u
 in `clean`, and the worktree part of `rollback_task`. `task_mounts` shrinks to the mounts of
 section 5.1.
 
-From the bridge: `AGENTIC_BRANCH` (the branch comes from `--worktree`).
+From the bridge: nothing; `AGENTIC_BRANCH` is set only with `--worktree` and names the worktree's branch.
 
 `pgit` stays only for reading the host's git identity (`user.name`, `user.email`), which is
 configuration, not project work.
@@ -207,7 +217,7 @@ configuration, not project work.
 | Unknown target | refused, lists the candidates |
 | `--target` with `single` | refused |
 | `--in ID`: unknown task, missing container, bridge running | refused; nothing created |
-| `--worktree` and the target has no commit | the task fails before the agent starts; kept for `logs` |
+| `--worktree` and the target has no commit | the bridge refuses before the agent starts; `run` shows its reason and rolls back |
 | The bridge does not come up | rollback of what this run created; a container reused through `--in` is kept |
 | `clean` finds unpushed work | refused unless `--force` |
 
