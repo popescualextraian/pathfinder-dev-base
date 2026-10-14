@@ -602,7 +602,7 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   run ag run --id T-Y1 "x"
   [ "$status" -eq 1 ]; [[ "$output" == *"a container agentic-demo-task-T-Y1 already exists; remove it or pick another --id"* ]]
   run ! grep -q -- '--- rm' "$DOCKER_LOG"
-  ! grep -q -- '--- run' "$DOCKER_LOG"
+  run ! grep -q -- '--- run' "$DOCKER_LOG"
   [ ! -e "$T/T-Y1" ] && [ ! -e "$H/T-Y1" ]
 }
 

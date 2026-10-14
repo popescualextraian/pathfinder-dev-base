@@ -273,7 +273,7 @@ $AGENTIC_DATA/projects/<project>/      host only: never mounted into a task or t
 ```
 
 `bin/agentic` creates every directory as the invoking user, so no volume comes up owned by root.
-In the cloud, `/task` is one volume and start step `06-task-home` creates the homes. At creation
+In the cloud (not `agentic run`, which uses `/tasks/<id>`), `/task` is one volume and start step `06-task-home` creates the homes. At creation
 the homes are seeded from the project login (credentials and config, mode 600); tokens in
 `.agentic/.env` work as in dev mode. The repository's `.env` tokens reach the container through
 `--env-file`, never on a command line.
@@ -357,7 +357,7 @@ Read by the bridge (`bridge/src/config.ts`):
 | `AGENTIC_PROJECT` | `project` | project name |
 | `AGENTIC_BRANCH` | none | the worktree's branch name (only with `AGENTIC_WORKTREE`) |
 | `AGENTIC_PROMPT` | none | first prompt when `prompt.md` is absent (cloud) |
-| `AGENTIC_TASK_DIR` | `/task` | the task's state directory |
+| `AGENTIC_TASK_DIR` | `/task` | the task's state directory (`agentic run` sets `/tasks/<id>`; `/task` is for a hub or cloud flow with one task volume) |
 | `AGENTIC_WORK` | `/work` | the repository the agent works in (`/work/<target>` in a multi-repository project) |
 | `AGENTIC_TARGET` | none | the target's name, recorded |
 | `AGENTIC_WORKTREE` | none | `1`: the bridge makes a worktree and branch before the session |
