@@ -46,9 +46,8 @@ Java, Node, Python and Chromium trust it too:
      login. Or put `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`) in `.agentic/.env`.
    - `agentic login copilot` → device code, `/exit`. Or put `COPILOT_GITHUB_TOKEN` in
      `.agentic/.env`.
-5. **Extend.** `agentic add plugin ...`, `agentic add mcp ...`, `agentic copy ...`,
-   `agentic mount ...`: one line each, see [docs/setup.md](docs/setup.md). Or `agentic setup` →
-   the `/agentic-setup` skill reviews your repository and proposes the lines.
+5. **Setup.** `agentic setup` → the `/agentic-setup` skill reviews your repository and proposes
+   the setup lines.
 6. **Work.**
    - `agentic dev` → a persistent container with a tmux session in `/work`; run `claude` or
      `copilot`. Detach with `Ctrl-b d`; `agentic dev` again re-attaches. `agentic dev stop`,
@@ -57,6 +56,9 @@ Java, Node, Python and Chromium trust it too:
    More in [Dev mode](#dev-mode).
 7. **Check.** `agentic doctor` → start steps, tools, logins, MCP servers and setup lines, each
    with `ok` or what is wrong (for example `ok claude`).
+8. **Extend.** `agentic add plugin ...`, `agentic add mcp ...`, `agentic copy ...`,
+   `agentic mount ...`: one line each, see [docs/setup.md](docs/setup.md) and
+   [Extending](#extending).
 
 ## The `.agentic/` folder
 
