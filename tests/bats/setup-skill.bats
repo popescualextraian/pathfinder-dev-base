@@ -16,3 +16,8 @@ load helpers
   grep -q 'Prefer `copy` for plain files' "$s"
   grep -q 'tasks receive mounts too' "$s"
 }
+
+@test "the setup skill asks for a default target when a multi-repository project has none" {
+  grep -q 'layout: multi' "$REPO_ROOT/skills/agentic-setup/SKILL.md"
+  grep -q 'agentic target NAME' "$REPO_ROOT/skills/agentic-setup/SKILL.md"
+}

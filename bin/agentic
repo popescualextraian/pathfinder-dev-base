@@ -27,6 +27,7 @@ agentic <command> [options]          run inside a project repository
   shell [CMD...]                     throwaway container (removed on exit)
   doctor                             check the configured container: steps, tools, logins, MCP, certificates
   dev [stop|recreate|status] [--host-profile wsl|none]
+  target [NAME]                      the default repository of a multi-repository project
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
   run "prompt" [--agent A] [--allow push|open-pr|deploy:T]... [--repo R]... [--base REF] [--branch B] [--id ID] [--json]
                                      start a detached task; prints its id
@@ -649,6 +650,26 @@ cmd_clean() {
   echo "$id: removed (remote branches stay)"
 }
 
+cmd_target() {
+  need_config
+  local root cfgf layout cur
+  root="$(project_root)"; cfgf="$(cfg_dir)/agentic.yaml"
+  layout="$(yaml_top "$cfgf" layout)"
+  [ -n "$layout" ] || die "no layout in .agentic/agentic.yaml; re-run agentic init"
+  [ $# -le 1 ] || die "usage: agentic target [NAME]"
+  if [ $# -eq 0 ]; then
+    if [ "$layout" = single ]; then echo "single repository: the agent starts in the project root"; return 0; fi
+    cur="$(yaml_top "$cfgf" target)"
+    echo "target: ${cur:-(none)}"
+    echo "repositories: $(repo_dirs "$root" | paste -sd' ' -)"
+    return 0
+  fi
+  [ "$layout" = multi ] || die "a single-repository project has no target to set"
+  valid_target "$root" "$1" || die "$1 is not a repository of the project; choose one of: $(repo_dirs "$root" | paste -sd' ' -)"
+  yaml_set_top "$cfgf" target "$1"
+  echo "target: $1"
+}
+
 main() {
   local cmd="${1:-help}"
   if [ "$#" -gt 0 ]; then shift; fi
@@ -657,7 +678,7 @@ main() {
     shell) if [ "$#" -eq 1 ] && valid_task_id "$1" && [ -f "$(task_dir "$1" 2>/dev/null)/state.json" ]; then cmd_task_shell "$1"; else cmd_shell "$@"; fi ;;
     build-base) cmd_build_base "$@" ;;
     # each of these is handled by cmd_<command>
-    init|remove|list|build|login|setup|doctor|dev|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean)
+    init|remove|list|build|login|setup|doctor|dev|target|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean)
       "cmd_$cmd" "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;

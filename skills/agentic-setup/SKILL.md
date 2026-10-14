@@ -109,6 +109,10 @@ every process in the container. Never add a start step, hook or script for git.
    (`.gitlab-ci.yml`, `.github/workflows/*`), Dockerfiles and compose files, the README, and
    any existing agent instruction files. For an empty repository, skip to step 3 and ask for
    the stack.
+   If `agentic.yaml` has `layout: multi` and no `target:`, ask the user which repository under
+   `/work` the agent should start in by default, then set it with
+   `yq -i '.target = "NAME"' /work/.agentic/agentic.yaml` (on the host the same is
+   `agentic target NAME`).
 2. **Adopt what the repository already has**: skills in `.claude/skills/`, agents in
    `.claude/agents/` or `.github/agents/`, MCP servers in `.mcp.json`. Offer to copy assets into
    `/work/.agentic/skills|agents|commands/` (they are then installed for every user of the

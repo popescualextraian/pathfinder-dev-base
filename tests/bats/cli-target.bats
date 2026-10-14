@@ -46,6 +46,14 @@ lib() { bash -c "source '$REPO_ROOT/lib/host/common.sh'; $1"; }
   [ -z "$(ls "$BATS_TEST_TMPDIR" | grep '^y\.yaml\.' || true)" ]
 }
 
+@test "yaml_set_top writes through a symlinked agentic.yaml and keeps the symlink" {
+  real="$BATS_TEST_TMPDIR/real.yaml"; f="$BATS_TEST_TMPDIR/link.yaml"
+  printf 'version: 2\n' > "$real"; ln -s "$real" "$f"
+  lib "yaml_set_top '$f' target api"
+  [ -L "$f" ]
+  grep -qx 'target: api' "$real"
+}
+
 # shellcheck source=../../lib/host/layout.sh
 lay() { bash -c "source '$REPO_ROOT/lib/host/common.sh'; source '$REPO_ROOT/lib/host/layout.sh'; $1"; }
 
@@ -77,4 +85,30 @@ lay() { bash -c "source '$REPO_ROOT/lib/host/common.sh'; source '$REPO_ROOT/lib/
   run lib "yaml_set_top '$f' target api"
   [ "$status" -ne 0 ]
   [ -z "$(ls "$BATS_TEST_TMPDIR" | grep '^y\.yaml\.' || true)" ]
+}
+
+ag() { (cd "$M" && bash "$A" "$@" </dev/null); }
+
+@test "target NAME writes the default; target prints it and the candidates" {
+  run ag target
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(printf 'target: (none)\nrepositories: api web')" ]
+  run ag target web
+  [ "$status" -eq 0 ]; [ "$output" = "target: web" ]
+  grep -qx 'target: web' "$M/.agentic/agentic.yaml"
+  run ag target api
+  [ "$(grep -c '^target:' "$M/.agentic/agentic.yaml")" = 1 ]
+  [ "$(ag target | head -n 1)" = "target: api" ]
+}
+
+@test "target refuses an unknown name, a single-repository project and a missing layout" {
+  run ag target nope
+  [ "$status" -eq 1 ]; [[ "$output" == *"nope is not a repository of the project; choose one of: api web"* ]]
+  ! grep -q '^target:' "$M/.agentic/agentic.yaml"
+  S="$M/api"; mkdir -p "$S/.agentic"; printf 'version: 2\nproject: one\nlayout: single\n' > "$S/.agentic/agentic.yaml"
+  run bash -c "cd '$S' && bash '$A' target x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"a single-repository project has no target to set"* ]]
+  printf 'version: 2\nproject: demo\n' > "$M/.agentic/agentic.yaml"
+  run ag target api
+  [ "$status" -eq 1 ]; [[ "$output" == *"no layout in .agentic/agentic.yaml; re-run agentic init"* ]]
 }
