@@ -126,4 +126,4 @@ cmd_remove() {
   after_change "$BUILD" "$YES"
 }
 
-cmd_list() { need_config; setup_edit list; }
+cmd_list(){ need_config; setup_edit list; }

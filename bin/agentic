@@ -625,28 +625,12 @@ main() {
   local cmd="${1:-help}"
   if [ "$#" -gt 0 ]; then shift; fi
   case "$cmd" in
-    init) cmd_init "$@" ;;
     add|copy|mount|volume) cmd_setup_line "$cmd" "$@" ;;
-    remove) cmd_remove "$@" ;;
-    list) cmd_list ;;
-    build) cmd_build "$@" ;;
-    build-base) cmd_build_base "$@" ;;
     shell) if [ "$#" -eq 1 ] && valid_task_id "$1" && [ -f "$(task_dir "$1" 2>/dev/null)/state.json" ]; then cmd_task_shell "$1"; else cmd_shell "$@"; fi ;;
-    login) cmd_login "$@" ;;
-    setup) cmd_setup "$@" ;;
-    doctor) cmd_doctor "$@" ;;
-    dev) cmd_dev "$@" ;;
-    run) cmd_run "$@" ;;
-    status) cmd_status "$@" ;;
-    send) cmd_send "$@" ;;
-    answer) cmd_answer "$@" ;;
-    cancel) cmd_cancel "$@" ;;
-    stop) cmd_stop "$@" ;;
-    resume) cmd_resume "$@" ;;
-    logs) cmd_logs "$@" ;;
-    follow) cmd_follow "$@" ;;
-    takeover) cmd_takeover "$@" ;;
-    clean) cmd_clean "$@" ;;
+    build-base) cmd_build_base "$@" ;;
+    # each of these is handled by cmd_<command>
+    init|remove|list|build|login|setup|doctor|dev|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean)
+      "cmd_$cmd" "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
   esac
