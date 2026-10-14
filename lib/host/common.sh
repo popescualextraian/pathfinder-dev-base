@@ -90,7 +90,7 @@ build_run_args() {
 }
 
 # shared_run_args IMAGE: appends what every container of the project gets to RUN_ARGS: the .env
-# file, git identity, proxy and the opt-in Docker socket.
+# file, git identity, proxy, the opt-in Docker socket and the setup lines' mounts and volumes.
 shared_run_args() {
   local img="$1" root cfg v name email sock
   root="$(project_root)"; cfg="$root/.agentic"
@@ -107,4 +107,31 @@ shared_run_args() {
   if [ "$(image_label "$img" agentic.docker_socket)" = true ] && [ -S "$sock" ]; then
     RUN_ARGS+=(-v "$sock:/var/run/docker.sock" --group-add "$(stat -c %g "$sock")")
   fi
+  setup_run_args "$img"
+}
+
+# setup_run_args IMAGE: -v arguments for the image's mount, volume and path-workspace lines (the
+# agentic.run label written by agentic build), appended to RUN_ARGS. ~ is the host home; a relative
+# source is relative to the project root.
+setup_run_args() {
+  local data row kind src dest opt line root p t=$'\t'
+  data="$(image_label "$1" agentic.run)"
+  [ -n "$data" ] || return 0
+  root="$(project_root)"; p="$(project_name)"
+  # fields are split by hand: read with IFS=tab would merge an empty field into the next
+  while IFS= read -r row; do
+    kind="${row%%"$t"*}"; row="${row#*"$t"}"
+    src="${row%%"$t"*}"; row="${row#*"$t"}"
+    dest="${row%%"$t"*}"; row="${row#*"$t"}"
+    opt="${row%%"$t"*}"; line="${row#*"$t"}"
+    case "$kind" in
+      mount|bind)
+        # shellcheck disable=SC2088  # a literal ~ in the line, expanded here by hand
+        case "$src" in "~") src="$HOME" ;; "~/"*) src="$HOME/${src#\~/}" ;; /*) ;; *) src="$root/$src" ;; esac
+        src="$(realpath -m -- "$src")"
+        [ -e "$src" ] || die "setup line '$line': $src does not exist on this host"
+        RUN_ARGS+=(-v "$src:$dest${opt:+:$opt}") ;;
+      volume) RUN_ARGS+=(-v "agentic-$p-$src:$dest") ;;
+    esac
+  done < <(base64 -d <<<"$data")
 }

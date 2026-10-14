@@ -328,7 +328,7 @@ cmd_run() {
   [ -n "$branch" ] || branch="${AGENTIC_BRANCH_PREFIX:-agentic/}$id-$(task_slug "$prompt")"
   check_cap
 
-  # Everything that can refuse (the .env file, the AWS directory) runs before anything is created.
+  # Everything that can refuse (the .env file, a missing mount source) runs before anything is created.
   local p ws dir c own r data port
   p="$(task_project)"; ws="$(task_ws)"; dir="$(task_dir "$id")"; c="$(task_container "$id")"
   RUN_ARGS=()

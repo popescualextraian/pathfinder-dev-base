@@ -820,3 +820,12 @@ MIRRORS_REL=projects/demo/mirrors
   run grep -E -- "args: -C " "$log"
   [ "$status" -ne 0 ]
 }
+
+@test "a task container gets the project's volume lines" {
+  DOCKER_LABEL="$(printf 'volume\tm2\t/home/dev/.m2\t\tvolume m2 /home/dev/.m2\n' | base64 -w0)"
+  export DOCKER_LABEL
+  run ag run --id T-9 --agent claude "Do it"
+  [ "$status" -eq 0 ]
+  call="$(docker_run_with agentic-bridge)"
+  grep -qx 'agentic-demo-m2:/home/dev/.m2' <<<"$call"
+}

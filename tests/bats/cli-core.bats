@@ -191,3 +191,30 @@ write_aws() {
   echo '{}' > "$HOME/.aws/sso/cache/token.json"
 }
 
+
+label() { printf '%s' "$1" | base64 -w0; }
+
+@test "mount, volume and path workspace lines become -v arguments" {
+  mkdir -p "$HOME/.aws" "$BATS_TEST_TMPDIR/lib"
+  DOCKER_LABEL="$(label $'mount\t~/.aws\t/home/dev/.aws\tro\tmount ~/.aws /home/dev/.aws --readonly\nvolume\tm2\t/home/dev/.m2\t\tvolume m2 /home/dev/.m2\nbind\t../lib\t/workspaces/repos/lib\t\tadd workspace ../lib\n')"
+  export DOCKER_LABEL
+  run in_project 'RUN_ARGS=(); setup_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
+  [ "$status" -eq 0 ]
+  grep -qx -- "$HOME/.aws:/home/dev/.aws:ro" <<<"$output"
+  grep -qx -- "agentic-demo-m2:/home/dev/.m2" <<<"$output"
+  grep -qx -- "$BATS_TEST_TMPDIR/lib:/workspaces/repos/lib" <<<"$output"
+}
+
+@test "a missing mount source refuses the start and names the line" {
+  DOCKER_LABEL="$(label $'mount\t~/.nope\t/x\t\tmount ~/.nope /x\n')"
+  export DOCKER_LABEL
+  run in_project 'RUN_ARGS=(); setup_run_args img'
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"setup line 'mount ~/.nope /x': $HOME/.nope does not exist on this host"* ]]
+}
+
+@test "an image without the run label adds nothing" {
+  export DOCKER_LABEL=""
+  run in_project 'RUN_ARGS=(); setup_run_args img; echo "${#RUN_ARGS[@]}"'
+  [ "$output" = 0 ]
+}
