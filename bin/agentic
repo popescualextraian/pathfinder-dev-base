@@ -94,6 +94,12 @@ cmd_build() {
   echo "built $img"
 }
 
+# yaml_str TEXT: TEXT as a YAML scalar, single-quoted unless it is plainly safe.
+yaml_str() {
+  if [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9\ _@%+=,./~:-]*$ && "$1" != *": "* && "$1" != *: ]]; then printf '%s\n' "$1"
+  else printf "'%s'\n" "${1//\'/\'\'}"; fi
+}
+
 # recommended_lines [IMAGE]: the recommended setup lines, from IMAGE (an overlay's, else the base's
 # file in it) or from this checkout; comments and blank lines dropped.
 recommended_lines() {
@@ -144,7 +150,7 @@ cmd_init() {
         if [ -z "$rec" ]; then echo 'setup: []'
         else
           echo 'setup:'; echo '  # recommended (delete a line to drop it)'
-          while IFS= read -r r; do printf '  - %s\n' "$r"; done <<<"$rec"
+          while IFS= read -r r; do printf '  - %s\n' "$(yaml_str "$r")"; done <<<"$rec"
         fi ;;
       *) printf '%s\n' "${line//@PROJECT@/$name}" ;;
     esac

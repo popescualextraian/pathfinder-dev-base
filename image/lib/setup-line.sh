@@ -117,6 +117,7 @@ parse_line() {
       if [ -n "$L_TRANSPORT" ]; then
         case "$L_TRANSPORT" in http|sse) ;; *) _fail "--transport takes http or sse" || return 1 ;; esac
         [ "${#pos[@]}" -eq 2 ] && [ "$dashdash" = 0 ] || _fail "usage: add mcp NAME --transport http|sse URL" || return 1
+        [ "${#L_ENV[@]}" -eq 0 ] || _fail "--env applies to a stdio server; a remote server gets no environment" || return 1
         L_URL="${pos[1]}"
       else
         [ "${#pos[@]}" -eq 1 ] && [ "${#L_CMD[@]}" -gt 0 ] || _fail "usage: add mcp NAME [--env K]... -- COMMAND [ARGS...]" || return 1

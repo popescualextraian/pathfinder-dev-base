@@ -144,3 +144,11 @@ ini() { (cd "$PROJ" && bash "$A" init "$@"); }
   for v in GIT_COMMITTER_NAME GH_HOST ANTHROPIC_MODEL COPILOT_MODEL AWS_PROFILE; do grep -q "$v" "$PROJ/.agentic/.env.example"; done
   if grep -q JIRA_PERSONAL_TOKEN "$PROJ/.agentic/.env.example"; then return 1; fi
 }
+
+@test "init keeps a recommended line with ': ' and ' #' as one literal YAML string" {
+  export DOCKER_RUN_OUT=$'add mcp docs --env \'NOTE=a: b #c\' -- run it\nadd plugin team@corp-market'
+  ini --base team-x:1
+  [ "$(yq -r '.setup[0]' "$PROJ/.agentic/agentic.yaml")" = "add mcp docs --env 'NOTE=a: b #c' -- run it" ]
+  [ "$(yq -r '.setup[1]' "$PROJ/.agentic/agentic.yaml")" = "add plugin team@corp-market" ]
+  grep -qF -- '  - add plugin team@corp-market' "$PROJ/.agentic/agentic.yaml"
+}

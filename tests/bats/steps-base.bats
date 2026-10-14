@@ -183,3 +183,11 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ ! -f "$HOME/.claude.json" ]
 }
 
+
+@test "onboarding leaves a config the update cannot handle alone, not emptied" {
+  mkdir -p "$HOME/.copilot"
+  echo '[1]' > "$HOME/.copilot/config.json"
+  run bash "$REPO_ROOT/image/start.d/20-onboarding.sh"
+  [ "$status" -eq 2 ]
+  [ "$(cat "$HOME/.copilot/config.json")" = '[1]' ]
+}

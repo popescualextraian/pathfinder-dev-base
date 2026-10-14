@@ -170,3 +170,8 @@ setup() {
   parse_line "add workspace https://example.com/x.git"
   parse_line "add workspace git@example.com:team/x.git"
 }
+
+@test "add mcp refuses --env on a remote server, which would drop it" {
+  if parse_line "add mcp docs --env K --transport http https://mcp.example.com/mcp"; then return 1; fi
+  [[ "$L_ERR" == *"--env"* ]]
+}

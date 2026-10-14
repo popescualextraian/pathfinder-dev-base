@@ -117,3 +117,23 @@ m() { jq -c -L "$REPO_ROOT/image/lib" --argjson o "$2" --argjson n "$3" 'include
   if [ -L "$HOME/.claude/plugins" ]; then return 1; fi
   [ -d "$HOME/.copilot/installed-plugins" ]
 }
+
+@test "a home JSON the merge cannot handle is left alone, not emptied" {
+  echo '{"mcpServers":{"pw":{"command":"x"}}}' > "$AGENTIC_SEED/claude/.claude.json"
+  echo '{}' > "$AGENTIC_SEED/.baseline/claude/.claude.json"
+  echo '[1]' > "$HOME/.claude.json"
+  run bash "$S"
+  [ "$status" -eq 2 ]
+  [ "$(cat "$HOME/.claude.json")" = '[1]' ]
+}
+
+@test "a real folder that cannot be moved aside is left alone, with no link inside it" {
+  mkdir -p "$HOME/.copilot/installed-plugins/old"
+  chmod 555 "$HOME/.copilot"
+  run bash "$S"
+  chmod 755 "$HOME/.copilot"
+  [ "$status" -eq 2 ]
+  [ ! -L "$HOME/.copilot/installed-plugins" ]
+  [ ! -e "$HOME/.copilot/installed-plugins/installed-plugins" ]
+  [[ "$output" == *"could not move"* ]]
+}

@@ -30,7 +30,7 @@ while IFS=$'\t' read -r h kind p; do
       fi
       if [ -e "$dst" ] && [ ! -L "$dst" ]; then
         if [ "$check" = 1 ]; then say "$dst is a real folder; the image's $p is not linked"; rc=2; continue; fi
-        mv "$dst" "$dst.pre-seed.$(date +%s)"
+        mv "$dst" "$dst.pre-seed.$(date +%s)" || { say "could not move $dst aside; the image's $p is not linked"; rc=2; continue; }
         say "moved $dst aside to link the image's $p"; rc=2
       fi
       if [ "$(readlink "$dst" 2>/dev/null)" != "$src" ]; then
@@ -38,18 +38,20 @@ while IFS=$'\t' read -r h kind p; do
         else mkdir -p "$(dirname "$dst")"; ln -sfn "$src" "$dst"; fi
       fi ;;
     json)
-      cur="$(read_json "$dst")" || { say "$dst is not valid JSON; left alone"; rc=2; continue; }
+      if ! cur="$(read_json "$dst")" || ! jq -e 'type == "object"' <<<"$cur" >/dev/null; then
+        say "$dst is not a JSON object; left alone"; rc=2; continue
+      fi
       snap="$(home_of "$h")/.agentic-seed/$p"
       new="$(read_json "$src" | jq -c -L "$lib" --argjson base "$(read_json "$seed/.baseline/$h/$p" || echo '{}')" \
                --argjson ign "$(read_json "$lib/seed-ignore.json")" --arg k "$h/$p" \
                'include "seed"; delta($base) | drop($ign[$k] // [])')" || { say "could not read the seed's $p"; rc=2; continue; }
-      next="$(jq -L "$lib" --argjson o "$(read_json "$snap" || echo '{}')" --argjson n "$new" 'include "seed"; seedmerge($o; $n)' <<<"$cur")"
+      next="$(jq -L "$lib" --argjson o "$(read_json "$snap" || echo '{}')" --argjson n "$new" 'include "seed"; seedmerge($o; $n)' <<<"$cur")" \
+        || { say "could not merge the seed into $dst; left alone"; rc=2; continue; }
       if [ "$check" = 1 ]; then
         [ "$(jq -S . <<<"$cur")" = "$(jq -S . <<<"$next")" ] || { say "$dst lacks what the setup lines set up"; rc=2; }
         continue
       fi
-      write_if_changed "$dst" "$next"
-      write_if_changed "$snap" "$new" ;;
+      if ! { write_if_changed "$dst" "$next" && write_if_changed "$snap" "$new"; }; then rc=2; fi ;;
   esac
 done < "$lib/seed-map.tsv"
 

@@ -40,7 +40,7 @@ order on every build.
 | `add marketplace SOURCE` | build | yes | adds a plugin marketplace: `owner/repo`, a git URL, or a path inside the image |
 | `add plugin NAME@MARKETPLACE` | build | yes | installs a plugin; a harness's default marketplace (`claude-plugins-official`) is added first when it is missing |
 | `add mcp NAME [--env KEY]... [--env KEY=VALUE]... -- COMMAND [ARGS...]` | build | yes | adds a stdio MCP server; `--env KEY` is written as `${KEY}` and filled from `.env` when the server starts |
-| `add mcp NAME --transport http\|sse URL` | build | yes | adds a remote MCP server |
+| `add mcp NAME --transport http\|sse URL` | build | yes | adds a remote MCP server; it takes no `--env` |
 | `add skill PATH` | build | yes | copies a skill folder into `.agentic/skills/` |
 | `add agent PATH` | build | yes | copies an agent file into `.agentic/agents/` |
 | `add command PATH` | build | yes | copies a slash command into `.agentic/commands/` (Claude only) |
