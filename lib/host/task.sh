@@ -10,6 +10,7 @@ task_ws() { printf '%s/%s\n' "$(realpath -m -- "$AGENTIC_WORKSPACES")" "$(task_p
 task_dir() { printf '%s/tasks/%s\n' "$(task_ws)" "$1"; }
 # The host's own files of a task (tokens, mounts, repos, the interrupted marker) live outside the
 # workspace, which task and dev containers can write: task_hdir is never mounted.
+TASK_HOST_FILES=(env mounts repos interrupted)
 task_hdir() { printf '%s/projects/%s/tasks/%s\n' "$AGENTIC_DATA" "$(task_project)" "$1"; }
 task_file() { printf '%s/%s\n' "$(task_hdir "$1")" "$2"; }
 # canon_in ROOT PATH: PATH is strictly inside ROOT, without . or .. components, and no component is
@@ -28,7 +29,7 @@ read_agent_file() { dd if="$1" iflag=nofollow,nonblock status=none 2>/dev/null; 
 task_migrate() {
   local f old
   [ ! -L "$(task_ws)/tasks" ] || return 0
-  for f in env mounts repos interrupted; do
+  for f in "${TASK_HOST_FILES[@]}"; do
     old="$(task_ws)/tasks/$1.$f"
     if [ -f "$old" ] && [ ! -L "$old" ] && [ ! -e "$(task_file "$1" "$f")" ]; then
       (umask 077; mkdir -p "$(task_hdir "$1")")
@@ -244,7 +245,7 @@ rollback_task() {
     done < "$(task_file "$id" repos)"
   fi
   safe_rm "$ws/tasks" "$(task_dir "$id")"
-  for f in env mounts repos interrupted; do safe_rm "$ws/tasks" "$ws/tasks/$id.$f"; done
+  for f in "${TASK_HOST_FILES[@]}"; do safe_rm "$ws/tasks" "$ws/tasks/$id.$f"; done
   safe_rm "$AGENTIC_DATA/projects/$(task_project)/tasks" "$(task_hdir "$id")"
 }
 

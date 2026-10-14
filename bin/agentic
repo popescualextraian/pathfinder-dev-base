@@ -375,7 +375,7 @@ cmd_run() {
   trap run_cleanup EXIT; trap 'exit 130' INT; trap 'exit 143' TERM
   mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
   (umask 077; mkdir -p "$(task_hdir "$id")")
-  for v in env mounts repos interrupted; do rm -f -- "$(task_file "$id" "$v")"; done
+  for v in "${TASK_HOST_FILES[@]}"; do rm -f -- "$(task_file "$id" "$v")"; done
   own="$(project_clone)" || die "could not clone the project's repository into $ws/repos"
   [ "${#repos[@]}" -gt 0 ] || repos=("$own")
   for r in "${repos[@]}"; do add_worktree "$r" "$id" "$branch" "$base" "$img" || die "could not create the worktree of $r"; done
