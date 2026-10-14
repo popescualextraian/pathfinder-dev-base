@@ -86,7 +86,7 @@ once the split is done.
   6. `add workspace`: kept for repositories outside the folder; to be revisited once the
      workspace folder works (a URL line could clone into `/work/<name>` so a teammate or a remote
      host gets the same set).
-- **Generated `agentic.yaml` comments**: what `targets` (where setup lines install) and
+- **Generated `agentic.yaml` comments** (done: the template and `agentic list`): what `targets` (where setup lines install) and
   `harness.default` (which agent runs) each mean, and above `setup:` the built-in mounts (the
   repository at `/work`, a task's own worktree there instead; `.agentic/` read-only at
   `/agentic-config`). `agentic list` shows the built-in mounts as fixed entries.

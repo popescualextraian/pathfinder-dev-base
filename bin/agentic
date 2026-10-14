@@ -44,7 +44,7 @@ agentic <command> [options]          run inside a project repository
   copy SRC DEST | mount SRC DEST [--readonly] | volume NAME DEST
                                      add a setup line (docs/setup.md), then build
   remove KIND KEY [--target T]       delete setup lines, then build
-  list                               the setup lines with their phase
+  list                               the built-in mounts, then the setup lines with their phase
   build-base [--force]               build agentic-dev-base:local (make build)
 EOF
 }

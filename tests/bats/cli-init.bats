@@ -201,3 +201,16 @@ ini() { (cd "$PROJ" && bash "$A" init "$@"); }
   [ "$(yq -r '.setup[1]' "$PROJ/.agentic/agentic.yaml")" = "add plugin team@corp-market" ]
   grep -qF -- '  - add plugin team@corp-market' "$PROJ/.agentic/agentic.yaml"
 }
+
+@test "init explains targets, harness and the built-in mounts in agentic.yaml, and it stays valid" {
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  y="$PROJ/.agentic/agentic.yaml"
+  grep -B3 '^targets:' "$y" | grep -q 'where setup lines install'
+  grep -B3 '^harness:' "$y" | grep -q 'which agent runs'
+  grep -B8 '^setup:' "$y" | grep -q '/work'
+  grep -B8 '^setup:' "$y" | grep -q '/agentic-config'
+  grep -B8 '^setup:' "$y" | grep -q 'agentic list'
+  make_agentic_dir
+  run "$REPO_ROOT/image/bin/agentic-config" validate "$PROJ/.agentic"
+  [ "$status" -eq 0 ]
+}

@@ -86,7 +86,7 @@ Rules the commands enforce:
 | Shell command | What it does |
 |---|---|
 | `agentic remove KIND KEY [--target T]` | deletes the matching lines, then builds. Keys: the plugin id, the marketplace source, the MCP name, the copy `DEST`, the asset path, the workspace name, the mount `DEST`, the volume name |
-| `agentic list` | prints every line with its phase |
+| `agentic list` | prints the built-in mounts (`built-in`: the repository, `.agentic/`, the harness homes, the clones; see [Where things live](#where-things-live)), then every line with its phase |
 | `--no-build` | on any add or remove: change the file only |
 | `--yes` | recreate a running dev container without asking |
 | `agentic build --refresh` | rebuild the setup lines without the cache, to pull newer plugins and marketplaces |

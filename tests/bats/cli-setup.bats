@@ -164,3 +164,14 @@ edit_call() { docker_sub run | tail -n +2; }
     [[ "$output" == "agentic: usage: agentic "* ]]
   done
 }
+
+@test "list shows the built-in mounts first, then the setup lines" {
+  DOCKER_RUN_OUT=$'build\tadd plugin a@m' run in_project 'main list'
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = $'built-in\t'"$PROJ"' -> /work (a task: its own worktree)' ]
+  [[ "$output" == *$'built-in\t'"$PROJ/.agentic"' -> /agentic-config (read-only)'* ]]
+  [[ "$output" == *$'built-in\t'"$AGENTIC_DATA/projects/demo/harness/claude"' -> /home/dev/.claude'* ]]
+  [[ "$output" == *$'built-in\t'"$AGENTIC_DATA/projects/demo/harness/copilot"' -> /home/dev/.copilot'* ]]
+  [[ "$output" == *$'built-in\t'"$AGENTIC_WORKSPACES/demo/repos"' -> /workspaces/repos'* ]]
+  [ "${lines[-1]}" = $'build\tadd plugin a@m' ]
+}

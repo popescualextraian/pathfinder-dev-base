@@ -140,4 +140,15 @@ cmd_remove() {
   after_change "$BUILD" "$YES"
 }
 
-cmd_list(){ need_config; setup_edit list; }
+# cmd_list: the built-in mounts every container of the project gets (build_run_args), then the lines.
+cmd_list(){
+  need_config
+  local root p t=$'\t'
+  root="$(project_root)"; p="$(project_name)"
+  echo "built-in${t}$root -> /work (a task: its own worktree)"
+  echo "built-in${t}$root/.agentic -> /agentic-config (read-only)"
+  echo "built-in${t}$AGENTIC_DATA/projects/$p/harness/claude -> /home/dev/.claude"
+  echo "built-in${t}$AGENTIC_DATA/projects/$p/harness/copilot -> /home/dev/.copilot"
+  echo "built-in${t}$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/repos -> /workspaces/repos"
+  setup_edit list
+}
