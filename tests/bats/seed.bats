@@ -106,3 +106,14 @@ m() { jq -c -L "$REPO_ROOT/image/lib" --argjson o "$2" --argjson n "$3" 'include
   JIRA_T=x run bash "$S"
   [ "$status" -eq 0 ]
 }
+
+@test "a link to a plugin folder the seed no longer has is removed; a user's own folder stays" {
+  bash "$S"
+  [ -L "$HOME/.claude/plugins" ]
+  rm -rf "$AGENTIC_SEED/claude/plugins" "$AGENTIC_SEED/copilot/installed-plugins"
+  mkdir -p "$HOME/.copilot"; rm -f "$HOME/.copilot/installed-plugins"; mkdir "$HOME/.copilot/installed-plugins"
+  run bash "$S"
+  [ ! -e "$HOME/.claude/plugins" ]
+  if [ -L "$HOME/.claude/plugins" ]; then return 1; fi
+  [ -d "$HOME/.copilot/installed-plugins" ]
+}

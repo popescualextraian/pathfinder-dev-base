@@ -29,8 +29,12 @@ localise() {
 # host_path PATH: a mount source as it is written in the file: ~/... under the home, relative under
 # the project root, otherwise absolute. The shell has usually expanded ~ already.
 host_path() {
-  local p root; root="$(project_root)"
-  p="$(realpath -m -- "$1")"
+  local p="$1" root; root="$(project_root)"
+  # a ~ the shell did not expand (quoted) is the home; symlinks stay as typed (-s)
+  # shellcheck disable=SC2088  # a literal ~ from the user, expanded here by hand
+  case "$p" in "~") p="$HOME" ;; "~/"*) p="$HOME/${p#\~/}" ;; esac
+  p="$(realpath -ms -- "$p")"
+  case "$p" in "$(realpath -ms -- "$HOME")"/*) p="$HOME/${p#"$(realpath -ms -- "$HOME")"/}" ;; esac
   # shellcheck disable=SC2088  # the file keeps a literal ~
   case "$p/" in
     "$root/"?*) printf '%s\n' "${p#"$root"/}" ;;
@@ -96,12 +100,22 @@ cmd_remove() {
   split_flags "$@"
   local kind="${WORDS[0]:?usage: agentic remove KIND KEY [--target T]}" key="${WORDS[1]:?usage: agentic remove KIND KEY}" out rc=0 cfg
   cfg="$(cfg_dir)"
+  case "$kind" in
+    skill|agent|command)
+      # the key names one asset under its own folder, nothing else in .agentic/ or outside it
+      key="${key%/}"
+      [[ "$key" == "${kind}s/"?* && "/$key/" != */../* && "$key" != */./* ]] \
+        || die "agentic remove $kind takes a path under ${kind}s/, for example ${kind}s/NAME" ;;
+  esac
   out="$(setup_edit remove "${WORDS[@]}")" || rc=$?
   [ -z "$out" ] || printf '%s\n' "$out"
   case "$kind" in
     skill|agent|command)
       [ "$rc" = 0 ] || [ "$rc" = 3 ] || exit "$rc"
-      [ -e "$cfg/${key%/}" ] && rm -rf -- "${cfg:?}/${key%/}" && echo "deleted .agentic/${key%/}" ;;
+      # --target only narrows: the asset stays for the other harness
+      if [[ " ${WORDS[*]} " != *" --target "* ]] && [ -e "$cfg/$key" ]; then
+        rm -rf -- "${cfg:?}/$key" && echo "deleted .agentic/$key"
+      fi ;;
     *) [ "$rc" = 0 ] || exit "$rc" ;;
   esac
   case "$kind" in

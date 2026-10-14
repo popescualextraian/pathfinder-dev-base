@@ -94,3 +94,33 @@ edit_call() { docker_sub run | tail -n +2; }
   grep -q -- '--- rm' "$DOCKER_LOG"
   if grep -q -- '--- exec' "$DOCKER_LOG"; then return 1; fi
 }
+
+@test "remove of an asset deletes only a path under its own folder" {
+  mkdir -p "$PROJ/src" "$PROJ/.agentic/skills/a" "$PROJ/.agentic/files"
+  echo keep > "$PROJ/src/f"
+  for k in "skill ../src" "skill skills" "command files" "agent instructions.md" "skill skills/../files"; do
+    DOCKER_RUN_RC=3 run in_project "main remove $k --no-build"
+    [ "$status" -ne 0 ]
+  done
+  [ -f "$PROJ/src/f" ]
+  [ -d "$PROJ/.agentic/skills/a" ]
+  [ -d "$PROJ/.agentic/files" ]
+}
+
+@test "remove of an asset with --target narrows and keeps the folder" {
+  mkdir -p "$PROJ/.agentic/skills/x"
+  DOCKER_RUN_RC=3 run in_project 'main remove skill skills/x --target copilot --no-build'
+  [ -d "$PROJ/.agentic/skills/x" ]
+}
+
+@test "a symlinked dotfile in mount is written as the path typed, under ~" {
+  mkdir -p "$HOME/dot"; echo x > "$HOME/dot/gitconfig"; ln -s "$HOME/dot/gitconfig" "$HOME/.gitconfig"
+  in_project "main mount '$HOME/.gitconfig' /home/dev/.gitconfig --no-build"
+  [ "$(edit_call | tail -1)" = "mount ~/.gitconfig /home/dev/.gitconfig" ]
+}
+
+@test "a quoted ~ in mount stays ~ from a subdirectory" {
+  mkdir -p "$PROJ/sub"
+  (cd "$PROJ/sub" && bash -c "source '$A'; main mount '~/.aws' /home/dev/.aws --no-build")
+  [ "$(edit_call | tail -1)" = "mount ~/.aws /home/dev/.aws" ]
+}

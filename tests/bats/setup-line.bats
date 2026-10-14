@@ -153,3 +153,20 @@ setup() {
   parse_line "add mcp docs --env API_TOKEN -- run"
   parse_line "add mcp docs --env DB_URL=https://db.example.com -- run"
 }
+
+@test "literal --env values under common secret names are refused; ordinary names pass" {
+  for e in OPENAI_API_KEY=sk-1 JIRA_PAT=x AUTH=x GH_CREDENTIALS=x DB_PASS=x APIKEY=x; do
+    if parse_line "add mcp x --env $e -- run"; then echo "accepted: $e"; return 1; fi
+  done
+  parse_line "add mcp x --env PATH=/usr/bin --env KEYBOARD=us --env JIRA_URL=https://jira.example.com -- run"
+}
+
+@test "credentials in a URL are refused anywhere in the line" {
+  for l in "add workspace https://user:tok@example.com/x.git" "add marketplace https://u:p@example.com/m.git" \
+           "add mcp x --transport http https://h.example.com/mcp?token=abc" "add mcp x -- run --url https://u:p@h.example.com"; do
+    if parse_line "$l"; then echo "accepted: $l"; return 1; fi
+    [[ "$L_ERR" == *"credentials in a URL"* ]]
+  done
+  parse_line "add workspace https://example.com/x.git"
+  parse_line "add workspace git@example.com:team/x.git"
+}

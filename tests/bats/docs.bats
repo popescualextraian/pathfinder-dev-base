@@ -79,3 +79,7 @@ load helpers
   f="$REPO_ROOT/docs/remote.md"
   for w in '/work' '/workspaces' 'volume' 'DOCKER_HOST' 'docker push' 'one user'; do grep -q -- "$w" "$f" || { echo "missing: $w"; return 1; }; done
 }
+
+@test "the task threat model names path workspaces as live checkouts in every task" {
+  grep -q 'add workspace PATH' "$REPO_ROOT/docs/tasks.md"
+}

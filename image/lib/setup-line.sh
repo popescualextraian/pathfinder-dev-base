@@ -22,6 +22,21 @@ print(base64.b64encode(b"".join(w.encode() + b"\0" for w in words)).decode())' "
 _rel_ok() { [ -n "$1" ] && [[ "$1" != /* ]] && [[ "/$1/" != */../* ]]; }
 _abs_ok() { [[ "$1" == /* ]] && [[ "$1/" != */../* ]] && [[ "$1" != *[:,]* ]]; }
 _fail() { L_ERR="$1"; return 1; }
+# _secret_name NAME: NAME has a part (split at _) that names a credential, such as API_KEY or JIRA_PAT.
+_secret_name() {
+  local part
+  for part in ${1//_/ }; do
+    case "$(tr '[:lower:]' '[:upper:]' <<<"$part")" in
+      TOKEN|TOKENS|PASSWORD|PASSWD|PASS|SECRET|SECRETS|KEY|APIKEY|PAT|AUTH|CREDENTIAL|CREDENTIALS) return 0 ;;
+    esac
+  done
+  return 1
+}
+# _url_secret WORD: WORD holds a URL with user:password@ or a token-like query parameter.
+_url_secret() {
+  [[ "$1" =~ [a-z+]+://[^/@[:space:]]*:[^/@[:space:]]*@ ]] && return 0
+  [[ "$1" =~ [a-z+]+://[^[:space:]]*[?\&]([A-Za-z_]*([Tt]oken|[Kk]ey|[Ss]ecret|[Pp]assword|[Aa]uth|[Ss]ig)[A-Za-z_]*)= ]]
+}
 
 # norm_targets T: the targets in a fixed order, comma-joined; fails on an unknown one.
 norm_targets() {
@@ -43,6 +58,9 @@ parse_line() {
   [[ "$1" != *$'\n'* ]] || _fail "a line cannot span lines" || return 1
   line_words "$1" || _fail "unbalanced quotes" || return 1
   local w=("${WORDS[@]}") pos=() i=0 a name="" readonly=0 dashdash=0
+  for a in "${w[@]}"; do
+    if _url_secret "$a"; then _fail "credentials in a URL end up in the image or the repository; put them in .agentic/.env"; return 1; fi
+  done
   while [ "$i" -lt "${#w[@]}" ]; do
     a="${w[i]}"
     case "$a" in
@@ -92,7 +110,7 @@ parse_line() {
       L_KIND=mcp; L_PHASE=build; L_KEY="${pos[0]}"
       for a in "${L_ENV[@]}"; do
         [[ "$a" =~ ^[A-Za-z_][A-Za-z0-9_]*(=.*)?$ ]] || _fail "--env takes KEY or KEY=VALUE, not '$a'" || return 1
-        if [[ "$a" == *=* ]] && [[ "$(tr '[:upper:]' '[:lower:]' <<<"${a%%=*}")" =~ token|password|secret ]]; then
+        if [[ "$a" == *=* ]] && _secret_name "${a%%=*}"; then
           _fail "--env ${a%%=*}: literal secret; write --env ${a%%=*} and put the value in .agentic/.env"; return 1
         fi
       done

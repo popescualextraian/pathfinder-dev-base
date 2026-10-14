@@ -20,7 +20,14 @@ while IFS=$'\t' read -r h kind p; do
   src="$seed/$h/$p"; dst="$(home_file "$h" "$p")"
   case "$kind" in
     link)
-      [ -e "$src" ] || continue
+      if [ ! -e "$src" ]; then
+        # the setup lines that filled it are gone: drop our link, never a folder of the user's
+        if [ -L "$dst" ] && [[ "$(readlink "$dst")" == "$seed/"* ]]; then
+          if [ "$check" = 1 ]; then say "$dst links to the image's $p, which no setup line fills any more"; rc=2
+          else rm -f "$dst"; fi
+        fi
+        continue
+      fi
       if [ -e "$dst" ] && [ ! -L "$dst" ]; then
         if [ "$check" = 1 ]; then say "$dst is a real folder; the image's $p is not linked"; rc=2; continue; fi
         mv "$dst" "$dst.pre-seed.$(date +%s)"
