@@ -57,3 +57,14 @@ write_if_changed() {
   mkdir -p "$(dirname "$f")"
   (umask 077; printf '%s\n' "$new" > "$f")
 }
+
+# read_json FILE: FILE's JSON, {} when it is missing or empty. Leading // comment lines are
+# dropped (Copilot writes them into config.json). Fails, printing nothing, when FILE is not JSON:
+# a caller must then leave the file alone, never rewrite it from {}.
+read_json() {
+  local body
+  [ -s "$1" ] || { echo '{}'; return 0; }
+  body="$(sed '/^[[:space:]]*\/\//d' "$1")"
+  jq -e . <<<"$body" >/dev/null 2>&1 || return 1
+  printf '%s\n' "$body"
+}

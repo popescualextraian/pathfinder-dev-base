@@ -159,6 +159,23 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ "$(jq -r .hasCompletedOnboarding "$CLAUDE_CONFIG_DIR/.claude.json")" = true ]
 }
 
+@test "20 keeps Copilot's commented config.json and its login" {
+  mkdir -p "$HOME/.copilot"
+  printf '// This file is managed automatically.\n{"logged_in_users":[{"login":"me"}],"installedPlugins":[]}\n' > "$HOME/.copilot/config.json"
+  config $'version: 2\nproject: demo'; bash "$S/10-validate.sh"
+  bash "$S/20-onboarding.sh"
+  [ "$(jq -r '.logged_in_users[0].login' "$HOME/.copilot/config.json")" = me ]
+  jq -e --arg d "$AGENTIC_WORK" '.trusted_folders | index($d)' "$HOME/.copilot/config.json"
+}
+
+@test "20 leaves an unreadable config.json alone and warns" {
+  mkdir -p "$HOME/.copilot"; echo 'not json' > "$HOME/.copilot/config.json"
+  config $'version: 2\nproject: demo'; bash "$S/10-validate.sh"
+  run bash "$S/20-onboarding.sh"
+  [ "$status" -eq 2 ]
+  [ "$(cat "$HOME/.copilot/config.json")" = 'not json' ]
+}
+
 @test "20 --check warns about missing onboarding and changes nothing" {
   config $'version: 2\nproject: demo'; bash "$S/10-validate.sh"
   run bash "$S/20-onboarding.sh" --check
