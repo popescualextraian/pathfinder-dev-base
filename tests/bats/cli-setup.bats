@@ -1,0 +1,96 @@
+#!/usr/bin/env bats
+load helpers
+load docker-stub
+
+setup() {
+  make_tmp_home
+  install_docker_stub
+  export AGENTIC_DATA="$BATS_TEST_TMPDIR/data" AGENTIC_WORKSPACES="$BATS_TEST_TMPDIR/ws"
+  PROJ="$BATS_TEST_TMPDIR/proj"; mkdir -p "$PROJ/.agentic"; git init -q "$PROJ"
+  printf 'version: 2\nproject: demo\n' > "$PROJ/.agentic/agentic.yaml"
+  A="$REPO_ROOT/bin/agentic"
+}
+in_project() { (cd "$PROJ" && bash -c "source '$A'; $1"); }
+edit_call() { docker_sub run | tail -n +2; }
+
+@test "add plugin passes one line to the edit, in a throwaway container from the base image" {
+  run in_project 'main add plugin r@m --target claude --no-build'
+  [ "$status" -eq 0 ]
+  run edit_call
+  [[ "$output" == *"/opt/agentic/bin/agentic-setup-edit"* ]]
+  [[ "$output" == *"$PROJ/.agentic:/agentic-config"* ]]
+  [ "$(tail -1 <<<"$output")" = "add plugin r@m --target claude" ]
+}
+
+@test "a word with spaces is quoted in the line" {
+  in_project 'main add mcp x --no-build -- run "a b"'
+  [ "$(edit_call | tail -1)" = "add mcp x -- run 'a b'" ]
+}
+
+@test "--no-build and --yes after -- belong to the command" {
+  in_project 'main add mcp x --no-build -- run --yes'
+  [ "$(edit_call | tail -1)" = "add mcp x -- run --yes" ]
+}
+
+@test "copy brings an outside file into .agentic/files and records the local path" {
+  echo s > "$BATS_TEST_TMPDIR/settings.xml"
+  in_project "main copy '$BATS_TEST_TMPDIR/settings.xml' /home/dev/.m2/settings.xml --no-build"
+  [ -f "$PROJ/.agentic/files/settings.xml" ]
+  [ "$(edit_call | tail -1)" = "copy files/settings.xml /home/dev/.m2/settings.xml" ]
+}
+
+@test "copy refuses a different file under the same name" {
+  mkdir -p "$PROJ/.agentic/files"; echo a > "$PROJ/.agentic/files/x"; echo b > "$BATS_TEST_TMPDIR/x"
+  run in_project "main copy '$BATS_TEST_TMPDIR/x' /x --no-build"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"exists and differs"* ]]
+}
+
+@test "home path written as ~: a shell-expanded home in mount is stored as ~" {
+  mkdir -p "$HOME/.aws"
+  in_project "main mount '$HOME/.aws' /home/dev/.aws --readonly --no-build"
+  [ "$(edit_call | tail -1)" = "mount ~/.aws /home/dev/.aws --readonly" ]
+}
+
+@test "a mount source inside the project is stored relative to the root" {
+  mkdir -p "$PROJ/data"
+  in_project "main mount '$PROJ/data' /data --no-build"
+  [ "$(edit_call | tail -1)" = "mount data /data" ]
+}
+
+@test "add skill copies an outside folder into .agentic/skills" {
+  mkdir -p "$BATS_TEST_TMPDIR/review"; echo x > "$BATS_TEST_TMPDIR/review/SKILL.md"
+  in_project "main add skill '$BATS_TEST_TMPDIR/review' --no-build"
+  [ -f "$PROJ/.agentic/skills/review/SKILL.md" ]
+  [ "$(edit_call | tail -1)" = "add skill skills/review" ]
+}
+
+@test "remove workspace keeps clone and says where it is" {
+  mkdir -p "$AGENTIC_WORKSPACES/demo/repos/api"
+  DOCKER_RUN_OUT="removed: add workspace https://example.com/api.git" run in_project 'main remove workspace api --no-build'
+  [ "$status" -eq 0 ]
+  [ -d "$AGENTIC_WORKSPACES/demo/repos/api" ]
+  [[ "$output" == *"the clone stays in $AGENTIC_WORKSPACES/demo/repos/api"* ]]
+}
+
+@test "remove skill deletes its folder in .agentic" {
+  mkdir -p "$PROJ/.agentic/skills/review"
+  DOCKER_RUN_RC=3 run in_project 'main remove skill skills/review --no-build'
+  [ "$status" -eq 0 ]
+  [ ! -e "$PROJ/.agentic/skills/review" ]
+}
+
+@test "after a change the build runs, and a running dev container is not recreated without --yes" {
+  export DOCKER_RUNNING=true DOCKER_LABEL=current
+  run in_project 'main add plugin r@m </dev/null'
+  docker_sub build >/dev/null
+  [[ "$output" == *"run agentic dev recreate to use it"* ]]
+  if grep -q -- '--- rm' "$DOCKER_LOG"; then return 1; fi
+}
+
+@test "--yes recreates the running dev container without attaching" {
+  export DOCKER_RUNNING=true DOCKER_LABEL=current
+  run in_project 'main add plugin r@m --yes'
+  grep -q -- '--- rm' "$DOCKER_LOG"
+  if grep -q -- '--- exec' "$DOCKER_LOG"; then return 1; fi
+}

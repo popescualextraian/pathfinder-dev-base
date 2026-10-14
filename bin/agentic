@@ -8,13 +8,15 @@ source "$AGENTIC_ROOT/lib/host/common.sh"
 source "$AGENTIC_ROOT/lib/host/detect.sh"
 # shellcheck source=../lib/host/task.sh
 source "$AGENTIC_ROOT/lib/host/task.sh"
+# shellcheck source=../lib/host/setup.sh
+source "$AGENTIC_ROOT/lib/host/setup.sh"
 
 usage() {
   cat <<'EOF'
 agentic <command> [options]          run inside a project repository
   init [--force | --env-example]     write .agentic/ for this repository, with detected tools;
                                      --env-example restores a missing .env.example template
-  build [--refresh-plugins] [--no-cache]
+  build [--refresh] [--no-cache]
                                      build the base if needed, then agentic-<project>:local
   login [claude|copilot]             log a harness in for this project (once)
   setup                              refine .agentic/ with the /agentic-setup skill
@@ -34,6 +36,11 @@ agentic <command> [options]          run inside a project repository
   shell ID                           a shell in the running task container
   takeover ID                        stop the task and continue its session interactively
   clean ID [--force]                 remove the task's container, worktrees, branch and files
+  add marketplace|plugin|mcp|skill|agent|command|workspace ... [--target T] [--no-build] [--yes]
+  copy SRC DEST | mount SRC DEST [--readonly] | volume NAME DEST
+                                     add a setup line (docs/setup.md), then build
+  remove KIND KEY [--target T]       delete setup lines, then build
+  list                               the setup lines with their phase
   build-base [--force]               build agentic-dev-base:local (make build)
 EOF
 }
@@ -60,7 +67,7 @@ cmd_build() {
   local refresh=0 nocache=() cfg base img
   while [ $# -gt 0 ]; do
     case "$1" in
-      --refresh-plugins) refresh=1 ;;
+      --refresh) refresh=1 ;;
       --no-cache) nocache=(--no-cache) ;;
       *) die "unknown option $1" ;;
     esac
@@ -79,7 +86,7 @@ cmd_build() {
   # BuildKit reads <Dockerfile>.dockerignore next to the -f file: secrets never reach the context.
   printf '%s\n' .env '.env.*' '!.env.example' .build/ > "$cfg/.build/Dockerfile.derived.dockerignore"
   local args=(-f "$cfg/.build/Dockerfile.derived" --build-arg "UID=$(id -u)" --build-arg "GID=$(id -g)" -t "$img")
-  if [ "$refresh" = 1 ]; then args+=(--build-arg "AGENTIC_PLUGINS_REFRESH=$(date +%s)"); fi
+  if [ "$refresh" = 1 ]; then args+=(--build-arg "AGENTIC_SETUP_REFRESH=$(date +%s)"); fi
   proxy_build_args
   docker build "${nocache[@]}" "${PROXY_BUILD_ARGS[@]}" "${args[@]}" "$cfg"
   echo "built $img"
@@ -597,6 +604,9 @@ main() {
   if [ "$#" -gt 0 ]; then shift; fi
   case "$cmd" in
     init) cmd_init "$@" ;;
+    add|copy|mount|volume) cmd_setup_line "$cmd" "$@" ;;
+    remove) cmd_remove "$@" ;;
+    list) cmd_list ;;
     build) cmd_build "$@" ;;
     build-base) cmd_build_base "$@" ;;
     shell) if [ "$#" -eq 1 ] && valid_task_id "$1" && [ -f "$(task_dir "$1" 2>/dev/null)/state.json" ]; then cmd_task_shell "$1"; else cmd_shell "$@"; fi ;;

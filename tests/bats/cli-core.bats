@@ -155,9 +155,9 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
   [[ "$output" == *"built agentic-demo:local"* ]]
 }
 
-@test "build --refresh-plugins busts the plugin layer" {
-  DOCKER_LABEL=current run in_project 'main build --refresh-plugins'
-  grep -q '^AGENTIC_PLUGINS_REFRESH=' "$DOCKER_LOG"
+@test "build --refresh busts the setup layers" {
+  DOCKER_LABEL=current run in_project 'main build --refresh'
+  grep -q '^AGENTIC_SETUP_REFRESH=' "$DOCKER_LOG"
 }
 
 @test "build passes proxy variables as build arguments" {
