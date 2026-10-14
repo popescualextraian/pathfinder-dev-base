@@ -166,4 +166,3 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ ! -f "$HOME/.claude.json" ]
 }
 
-# --- 30-git

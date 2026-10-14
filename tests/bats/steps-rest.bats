@@ -18,7 +18,6 @@ setup() {
 stub() { printf '#!/bin/sh\necho "%s $*" >> "$LOG"\n%s\n' "$1" "${2:-exit 0}" > "$BATS_TEST_TMPDIR/bin/$1"; chmod +x "$BATS_TEST_TMPDIR/bin/$1"; }
 config() { printf '%s\n' "$1" > "$AGENTIC_CONFIG_MOUNT/agentic.yaml"; bash "$S/10-validate.sh" >/dev/null; }
 
-# --- 50-plugins
 # --- 25-harness: Claude credentials
 @test "25 moves an OAuth token found in ANTHROPIC_API_KEY to CLAUDE_CODE_OAUTH_TOKEN, without writing it" {
   config $'version: 2\nproject: demo'
@@ -93,8 +92,6 @@ config() { printf '%s\n' "$1" > "$AGENTIC_CONFIG_MOUNT/agentic.yaml"; bash "$S/1
   diff -q "$REPO_ROOT/skills/agentic-setup/SKILL.md" "$HOME/.claude/skills/agentic-setup/SKILL.md"
 }
 
-# --- 70-graphify
-# --- 80-display
 # --- 90-project-hook
 @test "90 runs the on-start hook in /work with the environment" {
   mkdir -p "$AGENTIC_CONFIG_MOUNT/hooks"
