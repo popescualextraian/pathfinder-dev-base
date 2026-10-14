@@ -3,6 +3,9 @@
 # DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output),
 # DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PS (docker ps ids, space-separated),
 # DOCKER_MOUNTS (inspect .Mounts output, printed as is),
+# DOCKER_BRIDGE_RC (exit code of the `pgrep` that tells whether a bridge runs; default 0, running),
+# DOCKER_WT_ERR (makes a worktree.sh exec fail with this message), DOCKER_EXEC_RC (exit code of any other
+# `docker exec`), DOCKER_NO_READY (the hold command never marks its start done).
 # `docker start` makes later status inspects say running. DOCKER_DOWN (inspect .State.Status fails like an unreachable daemon).
 # A throwaway git container (`run ... --entrypoint git IMAGE ARG...`, the image right after the entrypoint)
 # runs git here on ARG... with its -e variables and DOCKER_STUB_CONTAINER=1, so a planted command can
@@ -25,10 +28,24 @@ case "$1" in
     fi
     [ -n "${DOCKER_RUNNING:-}" ] && echo "$DOCKER_RUNNING" || exit 1 ;;
   stop) [ -z "${DOCKER_STOP_FAIL:-}" ] || exit 1 ;;
-  start) echo running > "$BATS_TEST_TMPDIR/docker.status" ;;
+  start) echo running > "$BATS_TEST_TMPDIR/docker.status"
+    if [ -z "${DOCKER_NO_READY:-}" ] && [ -f "$BATS_TEST_TMPDIR/docker.ready" ]; then : > "$(cat "$BATS_TEST_TMPDIR/docker.ready")"; fi ;;
+  exec)
+    if [[ " $* " == *" pgrep "* ]]; then exit "${DOCKER_BRIDGE_RC:-0}"; fi
+    if [[ " $* " == *" /opt/agentic/task/worktree.sh "* ]] && [ -n "${DOCKER_WT_ERR:-}" ]; then echo "$DOCKER_WT_ERR" >&2; exit 1; fi
+    exit "${DOCKER_EXEC_RC:-0}" ;;
   port) [ -n "${DOCKER_PORT:-}" ] && echo "127.0.0.1:$DOCKER_PORT" ;;
   ps) [ -z "${DOCKER_PS:-}" ] || printf '%s\n' $DOCKER_PS ;;
   run)
+    if [[ " $* " == *" agentic-task-hold "* ]] && [ -z "${DOCKER_NO_READY:-}" ]; then
+      src="" dir="" prev=""
+      for a in "$@"; do
+        if [ "$prev" = -v ] && [[ "$a" == *:/tasks ]]; then src="${a%:/tasks}"; fi
+        if [ "$prev" = -e ] && [[ "$a" == AGENTIC_TASK_DIR=/tasks/* ]]; then dir="${a#AGENTIC_TASK_DIR=/tasks/}"; fi
+        prev="$a"
+      done
+      if [ -n "$src" ] && [ -n "$dir" ]; then mkdir -p "$src/$dir"; : > "$src/$dir/.ready"; echo "$src/$dir/.ready" > "$BATS_TEST_TMPDIR/docker.ready"; fi
+    fi
     if [[ " $* " == *" --entrypoint git "* ]]; then
       envs=()
       while [ "$1" != --entrypoint ]; do
@@ -51,13 +68,14 @@ docker_sub() {
   awk -v s="$1" -v n="${2:-1}" '/^--- /{ if ($2 == s) k++; on = ($2 == s && k == n); next } on' "$DOCKER_LOG"
 }
 
-# docker_run_with LINE: the arguments (run first) of the first docker run call with the argument LINE.
-docker_run_with() {
-  awk -v l="$1" 'function out() { if (on && hit && !done) { printf "%s", buf; done = 1 } }
-    /^--- /{ out(); on = ($2 == "run"); hit = 0; buf = ""; next }
+# docker_call_with SUB LINE: the arguments (SUB first) of the first docker SUB call with the argument LINE.
+docker_call_with() {
+  awk -v s="$1" -v l="$2" 'function out() { if (on && hit && !done) { printf "%s", buf; done = 1 } }
+    /^--- /{ out(); on = ($2 == s); hit = 0; buf = ""; next }
     on { buf = buf $0 "\n"; if ($0 == l) hit = 1 }
     END { out() }' "$DOCKER_LOG"
 }
+docker_run_with() { docker_call_with run "$1"; }
 
 # install_git_log: a git in front of the real one that logs each host call (not the stub's container
 # calls) to $BATS_TEST_TMPDIR/hostgit.log as "pwd=... git_dir=... args: ...".

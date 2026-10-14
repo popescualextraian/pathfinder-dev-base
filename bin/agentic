@@ -29,8 +29,8 @@ agentic <command> [options]          run inside a project repository
   dev [stop|recreate|status] [--host-profile wsl|none]
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
   target [NAME]                      the default repository of a multi-repository project
-  run "prompt" [--agent A] [--allow push|open-pr|deploy:T]... [--repo R]... [--base REF] [--branch B] [--id ID] [--json]
-                                     start a detached task; prints its id
+  run "prompt" [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--allow push|open-pr|deploy:T]... [--id ID] [--json]
+                                     start a detached task in a new container (or in task ID's); prints its id
   status [ID] [--all] [--json]       list tasks, or one task with its open questions
   follow ID [--since N] [--raw]      stream a running task's events until it waits, idles or ends
   send ID "text"                     a new prompt (starts a suspended task)
@@ -358,15 +358,16 @@ run_cleanup() {
 
 cmd_run() {
   need_config
-  local prompt="" pfile="" agent="" model="" base="" branch="" id="" keep=0 json=0 repos=() allow=() a
+  local prompt="" pfile="" agent="" model="" target="" in="" worktree=0 autoclean=0 id="" keep=0 json=0 allow=() a
   while [ $# -gt 0 ]; do
     case "$1" in
       --prompt-file) optval "$@"; pfile="$2"; shift 2 ;;
       --agent) optval "$@"; agent="$2"; shift 2 ;;
       --model) optval "$@"; model="$2"; shift 2 ;;
-      --repo) optval "$@"; repos+=("$2"); shift 2 ;;
-      --base) optval "$@"; base="$2"; shift 2 ;;
-      --branch) optval "$@"; branch="$2"; shift 2 ;;
+      --target) optval "$@"; target="$2"; shift 2 ;;
+      --in) optval "$@"; in="$2"; shift 2 ;;
+      --worktree) worktree=1; shift ;;
+      --auto-clean) autoclean=1; shift ;;
       --allow) optval "$@"; allow+=("$2"); shift 2 ;;
       --id) optval "$@"; id="$2"; shift 2 ;;
       --keep-on-failure) keep=1; shift ;;
@@ -375,33 +376,45 @@ cmd_run() {
       *) [ -z "$prompt" ] || die "one prompt; quote it"; prompt="$1"; shift ;;
     esac
   done
+  sweep_cleaned
   if [ -n "$pfile" ]; then
     [ -z "$prompt" ] || die "give either a prompt or --prompt-file"
     [ -f "$pfile" ] || die "no file $pfile"
     prompt="$(cat "$pfile")"
   fi
   [ -n "$prompt" ] || die 'run needs a prompt: agentic run "..." or --prompt-file F'
+  [[ "$model" != *[[:cntrl:]]* ]] || die "--model must be one line without control characters"
   local img; img="$(run_image)"
   [ -n "$agent" ] || agent="$(image_label "$img" agentic.harness)"
   agent="${agent:-claude}"
   case "$agent" in claude|copilot) ;; *) die "--agent must be claude or copilot" ;; esac
-  for a in "${allow[@]}"; do valid_grant "$a" || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
+  for a in ${allow[@]+"${allow[@]}"}; do valid_grant "$a" || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
   [ -n "$id" ] || id="$(new_task_id)"
   valid_task_id "$id" || die "the task id must match [A-Za-z0-9._-]+"
   [ ! -e "$(task_dir "$id")" ] || die "task $id exists"
-  [ -n "$branch" ] || branch="${AGENTIC_BRANCH_PREFIX:-agentic/}$id-$(task_slug "$prompt")"
+  local work tname branch=""
+  work="$(task_work "$target")" || exit 1
+  tname="${work#/work}"; tname="${tname#/}"
+  if [ "$worktree" = 1 ]; then branch="${AGENTIC_BRANCH_PREFIX:-agentic/}$id-$(task_slug "$prompt")"; fi
+  local c created=1 creator="$id"
+  if [ -n "$in" ]; then
+    need_task "$in"
+    c="$(task_container "$in")"; creator="$(task_creator "$in")" || die "task $in has no container record"; created=0
+    case "$(container_status "$in")" in
+      missing) die "task $in has no container" ;;
+      unknown) die "docker did not answer for task $in" ;;
+      running) ! bridge_running "$c" || die "a task runs in the container of $in; one task at a time per container (stop it first)" ;;
+    esac
+  else
+    c="$(task_container "$id")"
+  fi
   check_cap
 
   # Everything that can refuse (the .env file, a missing mount source) runs before anything is created.
-  local p ws dir c own r data port
-  p="$(task_project)"; ws="$(task_ws)"; dir="$(task_dir "$id")"; c="$(task_container "$id")"
+  local p ws dir data port v extra=()
+  p="$(task_project)"; ws="$(task_ws)"; dir="$(task_dir "$id")"
   RUN_ARGS=()
-  shared_run_args "$img"
-  local v
-  for v in AGENTIC_IDLE_TIMEOUT AGENTIC_NOTIFY_WEBHOOK AGENTIC_GATE_PROTECTED; do
-    if [ -n "${!v:-}" ]; then RUN_ARGS+=(-e "$v"); fi
-  done
-  # The .env reaches every task; a gate value there wins over the bridge's default of on.
+  if [ "$created" = 1 ]; then project_run_args "$img"; fi
   v="$(dotenv_value "$(project_root)/.agentic/.env" AGENTIC_GATE)"
   if [ -n "$v" ] && [ "$v" != 1 ]; then say "warning: .agentic/.env sets AGENTIC_GATE=$(printf '%s' "$v" | plain): the gate is off for every task"; fi
 
@@ -411,37 +424,49 @@ cmd_run() {
   mkdir -p "$dir/home/claude" "$dir/home/copilot" "$ws/events"
   (umask 077; mkdir -p "$(task_hdir "$id")")
   for v in "${TASK_HOST_FILES[@]}"; do rm -f -- "$(task_file "$id" "$v")"; done
-  own="$(project_clone)" || die "could not clone the project's repository into $ws/repos"
-  [ "${#repos[@]}" -gt 0 ] || repos=("$own")
-  for r in "${repos[@]}"; do add_worktree "$r" "$id" "$branch" "$base" "$img" || die "could not create the worktree of $r"; done
   printf '%s\n' "$prompt" > "$dir/prompt.md"
-  (umask 077; printf 'AGENTIC_TASK_TOKEN=%s\nAGENTIC_AGENT_TOKEN=%s\n' "$(new_token)" "$(new_token)" > "$(task_file "$id" env)")
-  data="$AGENTIC_DATA/projects/$p/harness"
-  for v in claude/.credentials.json copilot/config.json; do
-    if [ -f "$data/$v" ] && [ ! -L "$data/$v" ]; then (umask 077; read_agent_file "$data/$v" > "$dir/home/$v"); fi
-  done
-  task_mounts "$id" "${repos[@]}"
-
-  local extra=()
-  read_mounts "$id"
+  (umask 077; printf '%s\n%s\n%s\n' "$c" "$created" "$creator" > "$(task_file "$id" container)")
+  (umask 077; {
+    printf 'AGENTIC_TASK_TOKEN=%s\nAGENTIC_AGENT_TOKEN=%s\n' "$(new_token)" "$(new_token)"
+    printf 'AGENTIC_TASK_ID=%s\nAGENTIC_TASK_DIR=/tasks/%s\nAGENTIC_PROJECT=%s\nAGENTIC_AGENT=%s\nAGENTIC_MODEL=%s\n' "$id" "$id" "$p" "$agent" "$model"
+    printf 'AGENTIC_WORK=%s\nAGENTIC_TARGET=%s\nAGENTIC_CONTAINER=%s\nAGENTIC_CREATED_CONTAINER=%s\n' "$work" "$tname" "$c" "$created"
+    printf 'AGENTIC_ALLOWED_ACTIONS=%s\nAGENTIC_WORKTREE=%s\nAGENTIC_BRANCH=%s\nAGENTIC_AUTO_CLEAN=%s\n' \
+      "$(IFS=,; echo "${allow[*]+"${allow[*]}"}")" "$worktree" "$branch" "$autoclean"
+    for v in AGENTIC_IDLE_TIMEOUT AGENTIC_NOTIFY_WEBHOOK AGENTIC_GATE_PROTECTED; do
+      if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}"; fi
+    done
+  } > "$(task_file "$id" env)")
   host_file "$id" env >/dev/null || die "the env file of $id is not a regular file"
-  read -ra extra <<<"${AGENTIC_TASK_DOCKER_ARGS:-}"
-  docker run -d --name "$c" --cap-drop ALL --security-opt no-new-privileges --label agentic.kind=task --label "agentic.task=$id" --label "agentic.project=$p" \
-    --label "agentic.agent=$agent" --label "agentic.branch=$branch" -p "127.0.0.1::$TASK_PORT" \
-    "${TASK_MOUNTS[@]}" "${RUN_ARGS[@]}" --env-file "$(task_file "$id" env)" \
-    -e "AGENTIC_TASK_ID=$id" -e "AGENTIC_PROJECT=$p" -e "AGENTIC_AGENT=$agent" -e "AGENTIC_MODEL=$model" \
-    -e "AGENTIC_BRANCH=$branch" -e "AGENTIC_ALLOWED_ACTIONS=$(IFS=,; echo "${allow[*]}")" \
-    "${extra[@]}" "$img" agentic-bridge >/dev/null || die "docker run failed for $id"
+  if [ "$created" = 1 ]; then
+    data="$AGENTIC_DATA/projects/$p/harness"
+    for v in claude/.credentials.json copilot/config.json; do
+      if [ -f "$data/$v" ] && [ ! -L "$data/$v" ]; then (umask 077; read_agent_file "$data/$v" > "$dir/home/$v"); fi
+    done
+    read -ra extra <<<"${AGENTIC_TASK_DOCKER_ARGS:-}"
+    rm -f "$dir/.ready"
+    docker run -d --init --name "$c" --cap-drop ALL --security-opt no-new-privileges --label agentic.kind=task --label "agentic.task=$id" \
+      -p "127.0.0.1::$TASK_PORT" "${RUN_ARGS[@]}" -v "$ws/tasks:/tasks" -v "$ws/events:/events" -e "AGENTIC_TASK_DIR=/tasks/$id" \
+      ${extra[@]+"${extra[@]}"} "$img" agentic-task-hold >/dev/null || die "docker run failed for $id"
+    wait_ready "$id" "${AGENTIC_START_TIMEOUT:-120}" || {
+      docker logs --tail 20 "$c" 2>&1 | plain >&2 || true
+      die "the container of $id did not finish its start; see agentic logs $id --start"
+    }
+  elif [ "$(container_status "$id")" != running ]; then
+    start_container "$id"
+  fi
+  start_bridge "$id"
   if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}"; then
-    docker logs --tail 20 "$c" 2>&1 | plain >&2 || true
     # the bridge's own reason, before the rollback removes the task directory
-    if task_readable "$id" bridge.log && [ -s "$dir/bridge.log" ]; then { echo "bridge.log:"; task_read "$id" bridge.log | tail -n 20 | plain; } >&2; fi
+    for v in bridge.log bridge.out; do
+      if task_readable "$id" "$v" && [ -s "$dir/$v" ]; then { echo "$v:"; task_read "$id" "$v" | tail -n 20 | plain; } >&2; fi
+    done
     die "the bridge of $id did not come up"
   fi
   RUN_ROLLBACK_ID=""; trap - EXIT INT TERM
   port="$(task_port "$id")"
   if [ "$json" = 1 ]; then
-    jq -cn --arg t "$id" --arg c "$c" --arg p "$port" --arg b "$branch" '{task: $t, container: $c, port: $p, branch: $b}'
+    jq -cn --arg t "$id" --arg c "$c" --arg p "$port" --arg tg "$tname" --arg b "$branch" \
+      '{task: $t, container: $c, port: $p, target: (if $tg == "" then null else $tg end), branch: (if $b == "" then null else $b end)}'
   else
     echo "$id"
   fi

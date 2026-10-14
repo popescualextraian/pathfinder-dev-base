@@ -94,18 +94,24 @@ proxy_build_args() {
   done
 }
 
-# build_run_args IMAGE: docker run arguments for this project, in the global array RUN_ARGS. Of the
-# workspace only repos/ (the clones) is mounted, canonical: its tasks/ and events/ hold what the
-# host trusts or writes, and stay out of interactive containers.
-build_run_args() {
-  local root cfg p data repos
+# project_run_args IMAGE: what the dev container and every task container get, in RUN_ARGS: the
+# checkout at /work, the workspace clones, the config, and shared_run_args.
+project_run_args() {
+  local root cfg p repos
   root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"
-  data="$AGENTIC_DATA/projects/$p"; repos="$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/repos"
-  mkdir -p "$data/harness/claude" "$data/harness/copilot" "$repos"
-  RUN_ARGS=(--label "agentic.project=$p"
-    -v "$root:/work" -v "$repos:/workspaces/repos" -v "$cfg:/agentic-config:ro"
-    -v "$data/harness/claude:/home/dev/.claude" -v "$data/harness/copilot:/home/dev/.copilot")
+  repos="$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/repos"
+  mkdir -p "$repos"
+  RUN_ARGS=(--label "agentic.project=$p" -v "$root:/work" -v "$repos:/workspaces/repos" -v "$cfg:/agentic-config:ro")
   shared_run_args "$1"
+}
+
+# build_run_args IMAGE: project_run_args plus the project's harness homes (dev, shell, setup, doctor).
+# The workspace's tasks/ and events/ stay out of interactive containers.
+build_run_args() {
+  local data; data="$AGENTIC_DATA/projects/$(project_name)"
+  mkdir -p "$data/harness/claude" "$data/harness/copilot"
+  project_run_args "$1"
+  RUN_ARGS+=(-v "$data/harness/claude:/home/dev/.claude" -v "$data/harness/copilot:/home/dev/.copilot")
 }
 
 # shared_run_args IMAGE: appends what every container of the project gets to RUN_ARGS: the .env
