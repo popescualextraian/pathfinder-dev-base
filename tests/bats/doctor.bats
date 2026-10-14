@@ -128,3 +128,31 @@ step() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$AGENTIC_STEPS_DIR/$1.sh"; }
   [[ "$output" == *"warn  plugin b@m was installed by hand and is gone after a recreate; keep it with: agentic add plugin b@m --target claude"* ]]
   if [[ "$output" == *"plugin a@m was installed by hand"* ]]; then return 1; fi
 }
+
+@test "git: an origin without credentials for its host warns with agentic login git" {
+  export AGENTIC_WORK="$BATS_TEST_TMPDIR/work"; git init -q "$AGENTIC_WORK"
+  git -C "$AGENTIC_WORK" remote add origin https://github.com/example/api.git
+  GIT_AUTHOR_NAME=J GIT_AUTHOR_EMAIL=j@example.com run bash "$D"
+  [[ "$output" == *"warn  git: no credentials for github.com (agentic login git)"* ]]
+}
+
+@test "git: credentials and an identity for the origin's host pass" {
+  export AGENTIC_WORK="$BATS_TEST_TMPDIR/work"; git init -q "$AGENTIC_WORK"
+  git -C "$AGENTIC_WORK" remote add origin git@github.com:example/api.git
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0='!true'
+  GIT_AUTHOR_NAME=J GIT_AUTHOR_EMAIL=j@example.com run bash "$D"
+  [[ "$output" == *"ok    git (github.com)"* ]]
+  [[ "$output" != *"identity"* ]]
+}
+
+@test "git: no commit identity warns" {
+  export AGENTIC_WORK="$BATS_TEST_TMPDIR/work"; git init -q "$AGENTIC_WORK"
+  git -C "$AGENTIC_WORK" remote add origin https://github.com/example/api.git
+  run env -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL bash "$D"
+  [[ "$output" == *"warn  git: no commit identity"* ]]
+}
+
+@test "git: a project without an origin is not checked" {
+  run bash "$D"
+  [[ "$output" != *"git:"* ]]
+}

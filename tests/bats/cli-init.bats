@@ -49,6 +49,20 @@ setup() {
   [[ "$output" == *"next:"* ]]
 }
 
+@test "init says that an earlier project of the same name leaves its logins and sessions to be reused" {
+  mkdir -p "$HOME/.agentic/projects/orders-service/harness/claude"
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$HOME/.agentic/projects/orders-service"* ]]
+  [[ "$output" == *"logins, sessions and history"*"reused"* ]]
+}
+
+@test "init of a new project name says nothing about earlier data" {
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"reused"* ]]
+}
+
 # held_mkdir: a mkdir that fails like Windows does for a deleted folder a process still holds open.
 held_mkdir() {
   printf '#!/usr/bin/env bash\nfor a; do case "$a" in */.agentic) echo "mkdir: cannot create directory %s: File exists" "$a" >&2; exit 1 ;; esac; done\nexec %q "$@"\n' \

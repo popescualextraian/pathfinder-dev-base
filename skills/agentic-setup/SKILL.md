@@ -68,35 +68,38 @@ base image, so project tools and setup lines from `agentic.yaml` are not in it y
 State these facts; do not guess. Other files in `.agentic/` are the user's own; mention them only if
 they look like a mistaken copy of one of the files above.
 
+## Where the harness data lives
+
+`/home/dev/.claude` and `/home/dev/.copilot` (logins, sessions, history, memory, settings) are
+mounts of `~/.agentic/projects/<project>/harness/<claude|copilot>/` on the host, keyed by
+`project:` in `agentic.yaml`, not by `.agentic/`. Deleting `.agentic/` and running `agentic init`
+again reuses them; changing `project:` starts with empty homes (and a new login). Clones are in
+`~/agentic-workspaces/<project>/repos/` (`/workspaces/repos`). The full table, and what to delete
+to start fresh, is "Where things live" in docs/setup.md. Never delete these homes yourself: tell
+the user which folder to delete on the host.
+
 ## Git
 
-Git is configured through `.env` only, the way git itself reads it: everything in `.env` reaches
-every process in the container. Never add a start step, hook or script for git.
+Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_*`,
+`GIT_AUTHOR_*`, `GIT_COMMITTER_*`). `agentic-git login` writes those keys; never write them with
+`agentic-env`, and never add a start step, hook or script for git.
 
-- **Identity**: `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
-  `GIT_COMMITTER_EMAIL`. Ask the user for name and email; never guess them.
-- **Push over https** (no SSH keys are mounted): per host, a username and a helper that names the
-  token variable. Take the hosts from the remotes; ask which token variable to use. The username
-  is `oauth2` for GitLab and `x-access-token` for GitHub. Add the keys in order, numbering from 0
-  (one host shown; a second host continues with 2 and 3, and the count becomes 4):
-
-  ```
-  agentic-env add GITLAB_TOKEN --comment "GitLab personal access token, scope write_repository"
-  agentic-env add GIT_CONFIG_COUNT 2 --comment "git config entries below (git reads them natively)"
-  agentic-env add GIT_CONFIG_KEY_0 credential.https://gitlab.example.com.username
-  agentic-env add GIT_CONFIG_VALUE_0 oauth2
-  agentic-env add GIT_CONFIG_KEY_1 credential.https://gitlab.example.com.helper
-  agentic-env add GIT_CONFIG_VALUE_1 '!f() { echo "password=$GITLAB_TOKEN"; }; f'
-  ```
-
-  The helper is literal text: `$GITLAB_TOKEN` is expanded by git when it runs, so the token is
-  stored once. `agentic-env` never changes an existing key, so if `GIT_CONFIG_COUNT` is already
-  set, show the user the lines to add and the new count instead.
-- **Check** after the container restarts (`.env` is read at start): `git ls-remote <remote> HEAD`
-  must succeed. `Authentication failed` means a wrong username or token, a missing entry, or a
-  count that does not match the entries; check them with
-  `git config --get-regexp '^credential'` (it shows the helper, never the token).
-- `GH_TOKEN` is gh's GitHub token; it never works for a GitLab host.
+- **Push over https** (no SSH keys are mounted): run `agentic-git login` in `/work`. It reads the
+  origin's host and uses `x-access-token` with `GH_TOKEN` for github.com and `oauth2` with
+  `GITLAB_TOKEN` for a GitLab host; for another host ask the user which token variable and user
+  name, then pass `--token-var VAR --user NAME`. Another repository: pass its URL. It replaces only
+  that host's entries and keeps the others, an ssh origin is rewritten to https, and the token
+  stays in its variable: the helper reads it when git runs.
+- **Token missing**: it adds an empty placeholder and exits 1; tell the user to fill it in
+  `.agentic/.env` (the token needs write access), then run it again. `GH_TOKEN` never works for a
+  GitLab host.
+- **Identity**: agentic passes the identity from the host (`git config user.name` and
+  `user.email` there) into the container, and `agentic-git login` says which one is in use. Ask
+  for name and email only when it reports none, then pass `--name "..." --email ...`; never guess.
+- **Check**: it runs `git ls-remote` against the remote with the new entries, so a pass needs no
+  restart; the container itself reads `.env` at the next start (`agentic dev recreate`).
+  Read access is checked, push rights are not. The user can run the same thing from the host:
+  `agentic login git`.
 
 ## Procedure
 

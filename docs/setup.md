@@ -154,6 +154,60 @@ accept that.
 | Anything installed by hand, files outside the mounts | no | — |
 | Build caches | only with a `volume` line | named volume |
 
+## Git: push credentials and identity
+
+No SSH keys reach the container; git pushes over https with a token from `.env`. One command sets
+it up, on the host or (as the setup skill does) inside the container:
+
+```
+agentic login git                                   # the origin of the repository
+agentic login git https://git.example.com/team/docs.git --token-var FORGE_TOKEN --user bot
+```
+
+It writes, into `.agentic/.env`, the `GIT_CONFIG_*` entries git reads natively: for the URL's host,
+a credential helper that reads the token variable when git runs (github.com: `x-access-token` and
+`GH_TOKEN`; a GitLab host: `oauth2` and `GITLAB_TOKEN`; any other host needs `--token-var` and
+`--user`), and for an ssh remote a rewrite to https. Entries for other hosts are kept. A missing
+token gets an empty placeholder in `.env` to fill in. Then it checks read access with
+`git ls-remote`; pushing needs a token with write access. The container reads `.env` at start:
+`agentic dev recreate` afterwards.
+
+The commit identity comes from your host's `git config user.name` and `user.email`. Without one,
+pass `--name "Your Name" --email you@example.com`; that writes `GIT_AUTHOR_*` and
+`GIT_COMMITTER_*` into `.env`. `agentic doctor` warns when the origin's host has no credentials or
+there is no identity.
+
+## Where things live
+
+Only the configuration lives in the repository. Everything a harness remembers lives on your
+machine, under the project name (`project:` in `agentic.yaml`), not under `.agentic/`:
+
+| What | On the host | In the container |
+|---|---|---|
+| Configuration and secrets | `<repository>/.agentic/` (`.env` git-ignored) | `/agentic-config` (read-only) |
+| Claude: logins, sessions, history, memory, settings | `~/.agentic/projects/<project>/harness/claude/` | `/home/dev/.claude` |
+| Copilot: the same | `~/.agentic/projects/<project>/harness/copilot/` | `/home/dev/.copilot` |
+| Clones of workspaces and tasks | `~/agentic-workspaces/<project>/repos/` | `/workspaces/repos` |
+| Task records | `~/agentic-workspaces/<project>/tasks/`, `~/.agentic/projects/<project>/tasks/` | `/task` (a task's own) |
+| Git mirrors of tasks | `~/.agentic/projects/<project>/mirrors/` | not mounted |
+| `volume` lines | Docker volumes `agentic-<project>-<name>` | the line's path |
+
+`AGENTIC_DATA` and `AGENTIC_WORKSPACES` move `~/.agentic` and `~/agentic-workspaces`
+([tasks.md](tasks.md#files) has the full layout).
+
+So deleting `.agentic/` and running `agentic init` again finds the same project name and reuses
+its logins, sessions and history; `init` says so. To start fresh:
+
+| To drop | Delete |
+|---|---|
+| one harness's logins, sessions and history | `~/.agentic/projects/<project>/harness/<claude\|copilot>/` |
+| clones | `~/agentic-workspaces/<project>/repos/<name>/`, after checking for unpushed work |
+| a volume | `docker volume rm agentic-<project>-<name>` |
+| one task | `agentic clean ID` |
+
+Two repositories with the same project name share these homes and see each other's sessions and
+logins; give one of them another `project:` before its first `agentic build`.
+
 ## Recommended lines
 
 `agentic init` writes the recommended lines into `setup:` under a `# recommended` comment:

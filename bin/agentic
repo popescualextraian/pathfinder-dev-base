@@ -21,6 +21,8 @@ agentic <command> [options]          run inside a project repository
   build [--refresh] [--no-cache]
                                      build the base if needed, then agentic-<project>:local
   login [claude|copilot]             log a harness in for this project (once)
+  login git [URL] [--token-var VAR] [--user U] [--name N --email E]
+                                     git push credentials and identity in .agentic/.env, then a check
   setup                              refine .agentic/ with the /agentic-setup skill
   shell [CMD...]                     throwaway container (removed on exit)
   doctor                             check the configured container: steps, tools, logins, MCP, certificates
@@ -187,6 +189,12 @@ cmd_init() {
     echo "Notes:"; grep '^note=' <<<"$det" | sed 's/^note=/- /' || true
   } > "$cfg/detect-report.md"
   echo "wrote $cfg/agentic.yaml"
+  # the harness homes belong to the project name, not to .agentic/: a re-init finds them again
+  if [ -d "$AGENTIC_DATA/projects/$name/harness" ]; then
+    echo "note: $AGENTIC_DATA/projects/$name holds the data of an earlier project named $name;"
+    echo "  its logins, sessions and history are reused. To start fresh, delete its harness/ folder"
+    echo "  (docs/setup.md, \"Where things live\")."
+  fi
   echo "next: review it, then run: agentic build && agentic login && agentic dev"
 }
 
@@ -241,9 +249,17 @@ EOF
 
 cmd_login() {
   need_config
-  local h="${1:-claude}" img
-  case "$h" in claude|copilot) ;; *) die "usage: agentic login [claude|copilot]" ;; esac
+  local h="${1:-claude}" img tty=(-i)
+  case "$h" in claude|copilot|git) ;; *) die "usage: agentic login [claude|copilot|git]" ;; esac
   img="$(run_image)"
+  if [ "$h" = git ]; then
+    # push credentials and identity into .env, written by the image's agentic-git
+    shift
+    if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
+    build_run_args "$img"
+    docker run --rm "${tty[@]}" "${RUN_ARGS[@]}" "$img" agentic-git login "$@"
+    return
+  fi
   if harness_authenticated "$h"; then say "$h already has a login or token for $(project_name); starting it anyway"; fi
   echo "Starting $h. Run /login, follow the instructions, then /exit. The login is kept for this project."
   build_run_args "$img"
