@@ -1,23 +1,29 @@
 ---
 name: agentic-setup
-description: Use when the user wants to configure, review or extend agentic-dev-base for this repository — the .agentic/ folder, agentic.yaml, which tools, JDKs, MCP servers, plugins or certificates the container needs, or "help me set up this project for agentic work".
+description: Use when the user wants to configure, review or extend agentic-dev-base for this repository — the .agentic/ folder, agentic.yaml and its setup lines, which tools, JDKs, MCP servers, plugins, marketplaces, skills, agents or certificates the container needs, or "help me set up this project for agentic work".
 ---
 
 # Configure agentic-dev-base for this project
 
-You refine `.agentic/agentic.yaml` with the user. `agentic init` already wrote a first version
-from a deterministic scan; you add judgement. You work in `/work` (the repository). Reference for
-every field: `/opt/agentic/schema/agentic.schema.json` (descriptions included).
+You refine `.agentic/` with the user. `agentic init` already wrote a first version from a
+deterministic scan; you add judgement. You work in `/work` (the repository). The container is
+extended three ways: `.env` for secrets and settings tools read natively, `setup:` lines in
+`agentic.yaml` (read `reference/setup-lines.md` for every command), and plain Docker in
+`.agentic/Dockerfile.extra`. Reference for the other fields:
+`/opt/agentic/schema/agentic.schema.json` (descriptions included).
 
 ## Rules
 
 - Work autonomously. Make the changes inside `/work/.agentic/` yourself; do not ask permission
   for each edit. Ask only for facts you cannot find (hosts, URLs, tokens, preferences), one
   question at a time, multiple choice when the options are clear.
-- Add and adjust; never take away. Never delete a file, never remove or shorten existing lines,
-  values or comments the user wrote. If something existing is wrong, fix that line and say so
-  in the hand-over. Leave the user's own files alone; mention a file only if it looks like a
-  mistaken copy of one of ours.
+- Add and adjust; never take away. Never delete a file, never remove a setup line, never remove
+  or shorten existing lines, values or comments the user wrote. If something existing is wrong,
+  fix that line and say so in the hand-over. Leave the user's own files alone; mention a file
+  only if it looks like a mistaken copy of one of ours.
+- Change `setup:` only through `agentic-setup-edit --dir /work/.agentic add 'LINE'`; it validates
+  the line, keeps comments and never adds a line twice. Edit the other fields of `agentic.yaml`
+  directly.
 - Write only inside `/work/.agentic/`. Never touch `CLAUDE.md`, `AGENTS.md` or `.claude/`; if
   project rules would help, show the text and let the user add it.
 - Secrets: never read `.agentic/.env` and never print a value from it. Touch it only through
@@ -25,35 +31,38 @@ every field: `/opt/agentic/schema/agentic.schema.json` (descriptions included).
   --comment "where it comes from"` appends a missing key and never changes an existing one.
   Add values you created yourself (for example the user and password of a local database you set
   up in `hooks/on-start.sh`); add real tokens with an empty value and a comment saying where the
-  user gets them. Reference secrets in `agentic.yaml` as `${NAME}`.
+  user gets them. A setup line names a secret as `--env NAME`, never with its value.
+- Prefer `copy` for plain files and `.env` (through `agentic-env`) for secrets and settings.
+  Propose `mount` only for what must stay in sync with the host, and say that
+  tasks receive mounts too: an unattended agent then holds whatever the mount brings in.
 - `.env.example` is the full template plus project additions. Never rewrite it; add a project name
   with `agentic-env add --example KEY --comment "..."`. If it is missing, tell the user to run
   `agentic init --env-example` on the host, which restores the full template.
-- Never guess company hosts or URLs (Jira, Confluence, git host, MCP servers). Ask.
+- Never guess company hosts or URLs (Jira, Confluence, git host, MCP servers, marketplaces). Ask.
 - Never commit, never run `agentic build` (you are inside the container; the build runs on the
   host).
 
 ## What the image already has
 
 `/opt/agentic/inventory.txt` lists every command already installed (with its version), the tool
-presets and the versions installed side by side, the baked plugins and the skills. Read it before
-you suggest or ask about any tool, and check a single command with `command -v <name>`. Never ask
-whether to install something that is listed there (git, gh, AWS and Azure CLI, Docker CLI, Java 21,
-Maven, Node 22, Python 3.12, Claude, Copilot and Playwright are always there). The inventory
-describes the image you run in: before `agentic build`, that is the base image, so project tools
-from `agentic.yaml` are not in it yet.
+presets and the versions installed side by side, the plugins the setup lines installed and the
+skills. Read it before you suggest or ask about any tool, and check a single command with
+`command -v <name>`. Never ask whether to install something that is listed there (git, gh, AWS and
+Azure CLI, Docker CLI, Java 21, Maven, Node 22, Python 3.12, Claude, Copilot and Playwright are
+always there). The inventory describes the image you run in: before `agentic build`, that is the
+base image, so project tools and setup lines from `agentic.yaml` are not in it yet.
 
 ## Files in `.agentic/`
 
 | File | What it is | Read by |
 |---|---|---|
-| `agentic.yaml` | the project config | build and every container start |
+| `agentic.yaml` | the project config and its `setup:` lines | build and every container start |
 | `.env` | secrets and personal settings (git-ignored); never read it, change it only with `agentic-env` | `docker run --env-file` |
 | `.env.example` | full template from `agentic init` plus project names; never values | nobody (documentation for teammates) |
 | `Dockerfile.extra` | extra Dockerfile lines, run as root at build | build |
-| `hooks/on-build.sh`, `hooks/on-start.sh` | user-level installs at build; tasks at every start | build; start |
-| `certs/*.crt` | CA certificates (PEM), trusted everywhere in the image | build |
-| `skills/<name>/SKILL.md` | project skills | every start |
+| `files/` | sources of `copy` lines (settings files, CA certificates) | build |
+| `skills/<name>/SKILL.md`, `agents/<name>.md`, `commands/<name>.md`, `instructions.md` | assets copied into the harnesses (`targets:`) | build, then every start |
+| `hooks/on-start.sh` | runs at every start, with `.env` | start |
 | `detect-report.md`, `.build/` | generated by `init` and `build`; git-ignored | nobody |
 
 State these facts; do not guess. Other files in `.agentic/` are the user's own; mention them only if
@@ -65,8 +74,7 @@ Git is configured through `.env` only, the way git itself reads it: everything i
 every process in the container. Never add a start step, hook or script for git.
 
 - **Identity**: `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
-  `GIT_COMMITTER_EMAIL`. Ask the user for name and email; never guess them. `git.user_name` and
-  `git.user_email` in `agentic.yaml` are only for a shared project identity, such as a bot.
+  `GIT_COMMITTER_EMAIL`. Ask the user for name and email; never guess them.
 - **Push over https** (no SSH keys are mounted): per host, a username and a helper that names the
   token variable. Take the hosts from the remotes; ask which token variable to use. The username
   is `oauth2` for GitLab and `x-access-token` for GitHub. Add the keys in order, numbering from 0
@@ -101,39 +109,48 @@ every process in the container. Never add a start step, hook or script for git.
    (`.gitlab-ci.yml`, `.github/workflows/*`), Dockerfiles and compose files, the README, and
    any existing agent instruction files. For an empty repository, skip to step 3 and ask for
    the stack.
-2. **Find gaps you can see** and fix them, noting each reason for the hand-over. Typical ones:
+2. **Adopt what the repository already has**: skills in `.claude/skills/`, agents in
+   `.claude/agents/` or `.github/agents/`, MCP servers in `.mcp.json`. Offer to copy assets into
+   `/work/.agentic/skills|agents|commands/` (they are then installed for every user of the
+   container) and to add an `add mcp` line per server.
+3. **Find gaps you can see** and fix them, noting each reason for the hand-over. Typical ones:
    - a module targets a JDK that `tools.java.versions` lacks;
    - the Maven wrapper pins a different Maven than `tools.maven`;
    - tests use a compose file or Testcontainers while `docker.socket` is false (explain that
      the socket is host root before suggesting it);
-   - Jira keys appear in commit messages or branch names but `mcp.atlassian` is disabled;
+   - Jira keys appear in commit messages or branch names but no Jira MCP server is set up;
    - Terraform has no exact version;
    - a git remote (`git -C /work remote -v`, submodules, a repository the user pushes to) has no
-     credential entry (`agentic-env names` shows no `GIT_CONFIG_COUNT`): see **Git** below.
-3. **Ask for what you cannot see** (after checking the inventory): tools used day to day that are not in the repository or the image, deploy
-   targets and their CLIs, the Atlassian URLs, extra MCP servers, the preferred harness,
-   headless or headed browser, corporate CA certificates (they go into `.agentic/certs/*.crt`).
-4. **Handle specific needs with the lowest rung that works**:
+     credential entry (`agentic-env names` shows no `GIT_CONFIG_COUNT`): see **Git** above;
+   - the build would download through a TLS-intercepting proxy but no CA certificate is copied.
+4. **Ask for what you cannot see** (after checking the inventory): tools used day to day that are
+   not in the repository or the image, deploy targets and their CLIs, issue tracker and wiki URLs,
+   extra MCP servers, plugins and marketplaces the team uses, other repositories to work on
+   (`add workspace`), the preferred harness, corporate CA certificates (copy them with
+   `copy files/NAME.crt /usr/local/share/ca-certificates/NAME.crt`).
+5. **Handle specific needs with the lowest rung that works**:
 
    | Need | Use |
    |---|---|
-   | system package | `tools.apt` |
-   | known tool, other version | the preset's version |
-   | unknown tool | `.agentic/Dockerfile.extra` (root, `COPY` from `.agentic/`) |
-   | user-level install | `.agentic/hooks/on-build.sh` |
+   | known tool, other version | the preset's version under `tools:` |
+   | system package | `tools.apt` in `agentic.yaml` |
+   | unknown tool, MCP server binary | `.agentic/Dockerfile.extra` (root, `COPY` from `.agentic/`) |
    | something at every start | `.agentic/hooks/on-start.sh` (sees `.env`) |
-   | MCP server | `mcp.custom` |
-   | plugin | `plugins` |
-   | project skill | `.agentic/skills/<name>/SKILL.md` |
+   | MCP server | `add mcp` line |
+   | plugin, marketplace | `add plugin`, `add marketplace` lines |
+   | skill, agent, command, instructions | a file in `.agentic/`; an `add` line only to narrow the target |
+   | a file in the image | `copy` line (never a secret) |
+   | git, cloud, model settings | `.env` (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`, `GIT_CONFIG_*`, `GH_HOST`, `AWS_PROFILE`, `ANTHROPIC_MODEL`, `COPILOT_MODEL`) |
+   | a cache that should survive a recreate | `volume` line |
 
-5. **Write and validate**: edit the files, then run `agentic-config validate /work/.agentic` and
-   fix every error it prints before you continue. It runs the same checks as `agentic build`
-   (schema, presets present in this image, build paths inside `.agentic/`); only a clean result
+6. **Write and validate**: add setup lines with `agentic-setup-edit --dir /work/.agentic add`,
+   edit the other files, then run `agentic-config validate /work/.agentic` and fix every error it
+   prints before you continue. It runs the same checks as `agentic build`; only a clean result
    means the build will accept the config.
-6. **Hand over**: summarise what changed; say whether a rebuild is needed (tools, certs,
-   plugins, `Dockerfile.extra`, `on-build.sh`, `docker.socket` need one; MCP servers, skills,
-   `.env` and `on-start.sh` do not; `.env` needs a container restart); list every key you added with `agentic-env` and which ones still
-   need a value from the user (never the values); and tell the user
-   to run, on the host, `agentic build` (if needed) and `agentic doctor`.
+7. **Hand over**: list the setup lines you added and every other change with its reason; list
+   every key you added with `agentic-env` and which ones still need a value from the user (never
+   the values); and tell the user to run, on the host, `agentic build`, then
+   `agentic dev recreate` (or restart their container) and `agentic doctor`. `.env` changes need
+   only a container restart.
    If the project has no `docs/wiki/`, suggest running `/wiki seed` next, which writes the wiki,
    a lean CLAUDE.md and path rules.
