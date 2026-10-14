@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 load helpers
 load docker-stub
 
@@ -240,7 +241,7 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   [ "$status" -eq 0 ]
   wt="$(docker_call_with exec /opt/agentic/task/worktree.sh)"
   for l in agentic-demo-task-T-1 remove /work T-1 agentic/T-1-x; do grep -qx -- "$l" <<<"$wt"; done
-  ! grep -qx -- --force <<<"$wt"
+  run ! grep -qx -- --force <<<"$wt"
   grep -qx agentic-demo-task-T-1 <<<"$(docker_sub rm)"
   [ ! -e "$T/T-1" ] && [ ! -e "$H/T-1" ]
 }

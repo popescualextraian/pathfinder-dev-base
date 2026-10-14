@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 load helpers
 load docker-stub
 
@@ -122,7 +123,7 @@ held_mkdir() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"next:"* ]]
   [ "$(grep -c '^- \./' "$PROJ/.agentic/detect-report.md")" -le 50 ]
-  ! grep -q '\.terraform' "$PROJ/.agentic/detect-report.md"
+  run ! grep -q '^- \./\.terraform' "$PROJ/.agentic/detect-report.md"
   grep -q '^Notes:' "$PROJ/.agentic/detect-report.md"
 }
 

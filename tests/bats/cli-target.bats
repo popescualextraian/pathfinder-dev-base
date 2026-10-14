@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 load helpers
 
 setup() {
@@ -110,7 +111,7 @@ ag() { (cd "$M" && bash "$A" "$@" </dev/null); }
 @test "target refuses an unknown name, a single-repository project and a missing layout" {
   run ag target nope
   [ "$status" -eq 1 ]; [[ "$output" == *"nope is not a repository of the project; choose one of: api web"* ]]
-  ! grep -q '^target:' "$M/.agentic/agentic.yaml"
+  run ! grep -q '^target:' "$M/.agentic/agentic.yaml"
   S="$M/api"; mkdir -p "$S/.agentic"; printf 'version: 2\nproject: one\nlayout: single\n' > "$S/.agentic/agentic.yaml"
   run bash -c "cd '$S' && bash '$A' target x"
   [ "$status" -eq 1 ]; [[ "$output" == *"a single-repository project has no target to set"* ]]

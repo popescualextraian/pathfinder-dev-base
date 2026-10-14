@@ -53,7 +53,7 @@ record() {
     grep -qx -- "$l" <<<"$call"
   done
   [ "$(tail -n 1 <<<"$call")" = agentic-task-hold ]
-  ! grep -q '/home/dev/.claude' <<<"$call"
+  run ! grep -q '/home/dev/.claude' <<<"$call"
   ex="$(docker_call_with exec agentic-task-start)"
   for l in -d --env-file "$H/T-1/env" agentic-demo-task-T-1; do grep -qx -- "$l" <<<"$ex"; done
   [ "$(tail -n 1 <<<"$ex")" = agentic-task-start ]
@@ -120,7 +120,7 @@ am() { (cd "$M" && bash "$A" "$@" </dev/null); }
   DOCKER_BRIDGE_RC=1 run ag run --id T-2 --in T-1 "second"
   [ "$status" -eq 0 ]
   [ "$(cat "$H/T-2/container")" = "$(printf 'agentic-demo-task-T-1\n0\nT-1')" ]
-  ! grep -q -- '--- run' "$DOCKER_LOG"
+  run ! grep -q -- '--- run' "$DOCKER_LOG"
   grep -qx AGENTIC_TASK_DIR=/tasks/T-2 "$H/T-2/env"
   grep -qx AGENTIC_CREATED_CONTAINER=0 "$H/T-2/env"
   grep -qx agentic-demo-task-T-1 <<<"$(docker_call_with exec agentic-task-start)"
@@ -580,7 +580,7 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   echo agentic-demo-task-T-Y1 >> "$BATS_TEST_TMPDIR/docker.known"
   run ag run --id T-Y1 "x"
   [ "$status" -eq 1 ]; [[ "$output" == *"a container agentic-demo-task-T-Y1 already exists; remove it or pick another --id"* ]]
-  ! grep -q -- '--- rm' "$DOCKER_LOG"
+  run ! grep -q -- '--- rm' "$DOCKER_LOG"
   ! grep -q -- '--- run' "$DOCKER_LOG"
   [ ! -e "$T/T-Y1" ] && [ ! -e "$H/T-Y1" ]
 }
