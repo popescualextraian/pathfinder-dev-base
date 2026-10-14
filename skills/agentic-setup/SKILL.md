@@ -88,8 +88,9 @@ Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_
 
 - **Push over https** (no SSH keys are mounted): run `agentic-git login` in `/work`. It reads the
   origin's host and uses `x-access-token` with `GH_TOKEN` for github.com and `oauth2` with
-  `GITLAB_TOKEN` for a GitLab host; for another host ask the user which token variable and user
-  name, then pass `--token-var VAR --user NAME`. Another repository: pass its URL. It replaces only
+  `GITLAB_TOKEN` for a GitLab host; for another host `GIT_TOKEN`: ask the user which user name the
+  host expects with a token and pass `--user NAME` (`--token-var VAR` only for another variable:
+  its name, never the token). Another repository: pass its URL. It replaces only
   that host's entries and keeps the others, an ssh origin is rewritten to https, and the token
   stays in its variable: the helper reads it when git runs.
 - **Token missing**: it adds an empty placeholder and exits 1; tell the user to fill it in

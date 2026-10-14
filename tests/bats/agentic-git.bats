@@ -52,16 +52,29 @@ envval() { sed -n "s/^$1=//p" "$E"; }
   [[ "$(envval GIT_CONFIG_VALUE_1)" == *'username=oauth2'*'$GITLAB_TOKEN'* ]]
 }
 
-@test "login for another host needs --token-var and --user" {
+@test "login for another host needs --user and reads GIT_TOKEN unless --token-var names another" {
   origin https://git.example.com/team/api.git
   run "$AG" login
   [ "$status" -eq 2 ]
-  [[ "$output" == *"--token-var"*"--user"* ]]
+  [[ "$output" == *"--user"* ]]
   [ ! -e "$E" ] || ! grep -q GIT_CONFIG "$E"
+  printf 'GIT_TOKEN=t\n' > "$E"
+  run "$AG" login --user bot
+  [ "$status" -eq 0 ]
+  [[ "$(envval GIT_CONFIG_VALUE_1)" == *'username=bot'*'$GIT_TOKEN'* ]]
   printf 'FORGE_TOKEN=t\n' > "$E"
   run "$AG" login --token-var FORGE_TOKEN --user bot
   [ "$status" -eq 0 ]
   [[ "$(envval GIT_CONFIG_VALUE_1)" == *'username=bot'*'$FORGE_TOKEN'* ]]
+}
+
+@test "login refuses a token passed as --token-var and never shows or stores it" {
+  origin https://git.example.com/team/api.git
+  run "$AG" login --token-var ghp_AbCdEf0123456789xyz --user bot
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"--token-var"*"name"* ]]
+  [[ "$output" != *ghp_AbCdEf0123456789xyz* ]]
+  [ ! -e "$E" ] || ! grep -q ghp_AbCdEf0123456789xyz "$E"
 }
 
 @test "login takes a URL instead of the origin" {

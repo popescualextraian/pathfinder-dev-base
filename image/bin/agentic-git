@@ -3,7 +3,8 @@
 # reads them natively (GIT_CONFIG_* and GIT_AUTHOR_*/GIT_COMMITTER_*). Values are never shown.
 # Usage: agentic-git login [URL] [--token-var VAR] [--user NAME] [--name N] [--email E] [--no-check]
 # URL defaults to the origin of /work. The GIT_CONFIG_* entries for the URL's host are replaced;
-# other entries are kept and renumbered. The token stays in VAR: the helper reads it when git runs.
+# other entries are kept and renumbered. The token stays in VAR (default GH_TOKEN, GITLAB_TOKEN or
+# GIT_TOKEN by host): the helper reads it when git runs.
 set -euo pipefail
 here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
@@ -45,11 +46,14 @@ host="$(url_host "$url")"
 case "$host" in
   github.com) : "${var:=GH_TOKEN}" "${user:=x-access-token}" ;;
   *gitlab*) : "${var:=GITLAB_TOKEN}" "${user:=oauth2}" ;;
+  *) : "${var:=GIT_TOKEN}" ;;
 esac
-if [ -z "$var" ] || [ -z "$user" ]; then
-  fail2 "$host is neither github.com nor a GitLab host: pass --token-var VAR (the .env key holding the token) and --user NAME (the user name the host expects with a token)"
+if [ -z "$user" ]; then
+  fail2 "$host is neither github.com nor a GitLab host: pass --user NAME (the user name the host expects with a token); the token goes in GIT_TOKEN in .agentic/.env, or in the variable --token-var names"
 fi
-[[ "$var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || fail2 "--token-var must be a variable name"
+# an upper-case name only: a token passed here by mistake (ghp_..., glpat-...) is refused, not shown
+[[ "$var" =~ ^[A-Z_][A-Z0-9_]*$ ]] \
+  || fail2 "--token-var takes the name of the .env variable holding the token (like FORGE_TOKEN), not the token; put the token in .agentic/.env under that name"
 [[ "$user" =~ ^[A-Za-z0-9._@-]+$ ]] || fail2 "--user may hold only letters, digits and . _ @ -"
 
 # the entries for this host: reset any inherited helper, then ours; ssh is rewritten to https

@@ -161,13 +161,14 @@ it up, on the host or (as the setup skill does) inside the container:
 
 ```
 agentic login git                                   # the origin of the repository
-agentic login git https://git.example.com/team/docs.git --token-var FORGE_TOKEN --user bot
+agentic login git https://git.example.com/team/docs.git --user bot  # token in GIT_TOKEN
 ```
 
 It writes, into `.agentic/.env`, the `GIT_CONFIG_*` entries git reads natively: for the URL's host,
 a credential helper that reads the token variable when git runs (github.com: `x-access-token` and
-`GH_TOKEN`; a GitLab host: `oauth2` and `GITLAB_TOKEN`; any other host needs `--token-var` and
-`--user`), and for an ssh remote a rewrite to https. Entries for other hosts are kept. A missing
+`GH_TOKEN`; a GitLab host: `oauth2` and `GITLAB_TOKEN`; any other host: `GIT_TOKEN`, and
+`--user` is required; `--token-var NAME` reads another variable, and takes its upper-case name,
+never the token), and for an ssh remote a rewrite to https. Entries for other hosts are kept. A missing
 token gets an empty placeholder in `.env` to fill in. Then it checks read access with
 `git ls-remote`; pushing needs a token with write access. The container reads `.env` at start:
 `agentic dev recreate` afterwards.
