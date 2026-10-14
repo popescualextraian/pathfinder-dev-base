@@ -468,7 +468,8 @@ cmd_run() {
     start_container "$id"
   fi
   start_bridge "$id"
-  if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}"; then
+  # with --auto-clean a quick task can end, and its container exit, before the host looks
+  if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}" && ! { [ "$autoclean" = 1 ] && [ "$(record_get "$id" .cleaned)" = true ]; }; then
     # the bridge's own reason, before the rollback removes the task directory
     for v in bridge.log bridge.out; do
       if task_readable "$id" "$v" && [ -s "$dir/$v" ]; then { echo "$v:"; task_read "$id" "$v" | tail -n 20 | plain; } >&2; fi
@@ -476,7 +477,7 @@ cmd_run() {
     die "the bridge of $id did not come up"
   fi
   RUN_ROLLBACK_ID=""; trap - EXIT INT TERM
-  port="$(task_port "$id")"
+  port="$(task_port "$id" || true)"   # none when the container already exited (auto-clean)
   if [ "$json" = 1 ]; then
     jq -cn --arg t "$id" --arg c "$c" --arg p "$port" --arg tg "$tname" --arg b "$branch" \
       '{task: $t, container: $c, port: $p, target: (if $tg == "" then null else $tg end), branch: (if $b == "" then null else $b end)}'

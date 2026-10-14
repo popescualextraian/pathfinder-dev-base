@@ -126,6 +126,27 @@ am() { (cd "$M" && bash "$A" "$@" </dev/null); }
   grep -qx agentic-demo-task-T-1 <<<"$(docker_call_with exec agentic-task-start)"
 }
 
+@test "run --auto-clean succeeds when the task ends and its container exits before the host looks" {
+  cat > "$BATS_TEST_TMPDIR/hook.sh" <<HOOK
+echo exited > "$BATS_TEST_TMPDIR/docker.status"
+echo '{"state":"idle","cleaned":true}' > "$T/T-1/state.json"
+HOOK
+  DOCKER_PORT="" DOCKER_START_HOOK="$BATS_TEST_TMPDIR/hook.sh" run --separate-stderr ag run --id T-1 --auto-clean "quick"
+  [ "$status" -eq 0 ]; [ "$output" = T-1 ]
+}
+
+@test "run --auto-clean still fails when the container exits and the task was not cleaned" {
+  printf 'echo exited > "%s/docker.status"\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/hook.sh"
+  DOCKER_START_HOOK="$BATS_TEST_TMPDIR/hook.sh" run ag run --id T-1 --auto-clean "quick"
+  [ "$status" -ne 0 ]; [[ "$output" == *"did not come up"* ]]
+}
+
+@test "a missing container is recognised in the wording of newer Docker versions" {
+  record T-1 idle
+  DOCKER_NO_SUCH="error: no such object" DOCKER_STATUS="" run ag run --id T-3 --in T-1 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"task T-1 has no container"* ]]
+}
+
 @test "run --in refuses an unknown task and a container that is gone" {
   run ag run --in T-9 "x"; [ "$status" -eq 1 ]; [[ "$output" == *"no task T-9"* ]]
   record T-1 idle

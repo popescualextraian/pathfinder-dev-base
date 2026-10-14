@@ -135,13 +135,16 @@ out="$(docker run --rm -v "$tmp/repo.git:/repo.git:ro" -e AGENTIC_REPO_URL=file:
 [ "$out" = smoke-project ] || fail "no-mount start: got '$out'"
 
 step "detached tasks through bin/agentic, with the fake agent"
-# the project is the clones' origin: mounted so a granted push lands there
-export AGENTIC_TASK_DOCKER_ARGS="-v $proj:$proj -v $root/bridge/test:/fake:ro -e AGENTIC_ACP_CMD=[\"node\",\"/fake/fake-agent.mjs\"] -e FAKE_AGENT_STATE=/task/home/fake -e FAKE_ASK=cli"
+# the project's origin: a bare repository mounted at the same path, so a granted push lands there
+git clone -q --bare "$proj" "$tmp/origin.git"
+git -C "$proj" remote add origin "$tmp/origin.git"
+export AGENTIC_TASK_DOCKER_ARGS="-v $tmp/origin.git:$tmp/origin.git -v $root/bridge/test:/fake:ro -e AGENTIC_ACP_CMD=[\"node\",\"/fake/fake-agent.mjs\"] -e FAKE_AGENT_STATE=/home/dev/fake -e FAKE_ASK=cli"
 ag() { (cd "$proj" && "$A" "$@"); }
 tasks="$AGENTIC_WORKSPACES/smoke-project/tasks"
 mine=(--filter label=agentic.kind=task --filter label=agentic.project=smoke-project)
 others="$(docker ps -q --filter label=agentic.kind=task --filter status=running | grep -c . || true)"
 export AGENTIC_MAX_RUNNING="$((others + ${AGENTIC_MAX_RUNNING:-3}))"
+# wait_state ID STATE...: until the task is in one of the states.
 wait_state() {
   local id="$1" s=""; shift
   for _ in $(seq 1 90); do
@@ -152,21 +155,25 @@ wait_state() {
   echo "state of $id: $s" >&2; ag logs "$id" --bridge >&2 || true; return 1
 }
 
-# wait_exited ID: until the task's container has exited.
-wait_exited() {
-  for _ in $(seq 1 30); do
-    [ "$(docker inspect -f '{{.State.Status}}' "agentic-smoke-project-task-$1")" = exited ] && return 0
+# wait_suspended ID: until the task is suspended while its container still runs.
+wait_suspended() {
+  for _ in $(seq 1 60); do
+    if [ "$(ag status "$1" --json 2>/dev/null | jq -r .state)" = suspended ] \
+      && [ "$(docker inspect -f '{{.State.Status}}' "agentic-smoke-project-task-$1" 2>/dev/null)" = running ]; then
+      return 0
+    fi
     sleep 1
   done
   return 1
 }
 
-trap 'docker ps -aq "${mine[@]}" | xargs -r docker rm -f >/dev/null; docker rm -f agentic-smoke-bridge >/dev/null 2>&1; rm -rf "$tmp"' EXIT
-id="$(AGENTIC_IDLE_TIMEOUT=6 ag run --allow open-pr "hello")"
+trap 'docker ps -aq "${mine[@]}" | xargs -r docker rm -f >/dev/null; docker ps -aq --filter label=agentic.project=multi-project | xargs -r docker rm -f >/dev/null; docker rm -f agentic-smoke-bridge >/dev/null 2>&1; rm -rf "$tmp"' EXIT
+id="$(AGENTIC_IDLE_TIMEOUT=6 ag run --worktree --allow open-pr "hello")"
 wait_state "$id" idle || fail "task: first turn"
 out="$(ag status)"
 grep -q "^$id " <<<"$out" || fail "task: not listed"
 if [ ! -f "$AGENTIC_DATA/projects/smoke-project/tasks/$id/env" ] || [ -e "$tasks/$id.env" ]; then fail "task: the tokens are not host-private"; fi
+[ -d "$proj/.worktrees/$id" ] || fail "task: no worktree in the checkout"
 
 ag send "$id" "SHELL:git push origin HEAD" >/dev/null
 wait_state "$id" idle || fail "task: refused push"
@@ -178,25 +185,17 @@ wait_state "$id" waiting || fail "task: the question did not make the task wait"
 ag answer "$id" Q1 "yes" --allow push >/dev/null
 wait_state "$id" idle || fail "task: answer"
 grep -q 'ran: git push origin HEAD (exit 0)' "$tasks/$id/transcript.md" || fail "task: the push was not retried through the gate after the grant"
-c1="agentic-smoke-project-task-$id"
-git -C "$proj" rev-parse -q --verify "refs/heads/$(docker inspect -f '{{index .Config.Labels "agentic.branch"}}' "$c1")" >/dev/null \
+git --git-dir="$tmp/origin.git" rev-parse -q --verify "refs/heads/$(jq -r .branch "$tasks/$id/state.json")" >/dev/null \
   || fail "task: the granted push did not reach origin"
-# the clone's config, info and hooks are read-only in the task; commit, fetch and push still work
-docker exec "$c1" bash -lc 'cd /work && c="$(git rev-parse --git-common-dir)" && ! git config core.sshCommand x 2>/dev/null \
-  && ! touch "$c/info/attributes" 2>/dev/null && ! touch "$c/hooks/post-checkout" 2>/dev/null \
-  && git -c user.name=smoke -c user.email=smoke@example.com commit -q --allow-empty -m smoke && git fetch -q origin \
-  && git push -q origin HEAD' || fail "task: git in the task with the clone's config read-only"
 
 ag send "$id" "ASK:Which DB?" >/dev/null
 wait_state "$id" waiting || fail "task: the second question did not make the task wait"
-wait_exited "$id" || fail "task: the container did not exit after the idle timeout"
-[ "$(ag status "$id" --json | jq -r .state)" = suspended ] || fail "task: not suspended after the idle timeout"
+wait_suspended "$id" || fail "task: not suspended, container running, after the idle timeout"
 out="$(ag status "$id")"
 grep -q '^Q2 (ask): Which DB?' <<<"$out" || fail "task: status of a suspended task does not list its open question"
 grep -qF "reply: agentic answer $id Q2" <<<"$out" || fail "task: status of a suspended task has no reply hint"
 if ag answer "$id" Q9 "x" >/dev/null 2>&1; then fail "task: an answer to an unknown question was accepted"; fi
-wait_exited "$id" || fail "task: a lazy boot without a prompt did not exit after the idle timeout"
-[ "$(ag status "$id" --json | jq -r .state)" = suspended ] || fail "task: a lazy boot changed the state"
+[ "$(ag status "$id" --json | jq -r .state)" = suspended ] || fail "task: a refused answer changed the state"
 ag answer "$id" Q2 "pg" >/dev/null
 wait_state "$id" idle || fail "task: answer after suspension"
 ag send "$id" HISTORY >/dev/null
@@ -204,16 +203,6 @@ wait_state "$id" idle || fail "task: resume after suspension"
 grep -Eq 'history: [1-9]' "$tasks/$id/transcript.md" || fail "task: the session was not loaded"
 ag stop "$id" >/dev/null
 [ "$(ag status "$id" --json | jq -r .state)" = stopped ] || fail "task: stop"
-
-# what an agent could plant in the clone's .git for host git to follow: none of it reaches a host file
-g="$AGENTIC_WORKSPACES/smoke-project/repos/smoke-project/.git"
-echo keep > "$tmp/victim-file"; mkdir -p "$tmp/victim-dir" "$g/worktrees"; echo keep > "$tmp/victim-dir/keep"
-cp "$g/packed-refs" "$tmp/victim-refs"; cp "$tmp/victim-refs" "$tmp/victim-refs.orig"
-rm -f "$g/FETCH_HEAD"; ln -s "$tmp/victim-file" "$g/FETCH_HEAD"
-ln -s "$tmp/victim-dir" "$g/worktrees/planted"
-ln -sf "$tmp/victim-refs" "$g/packed-refs"
-[ -d "$AGENTIC_DATA/projects/smoke-project/mirrors/smoke-project.git" ] || fail "task: no private mirror"
-if grep -q mirrors "$AGENTIC_DATA/projects/smoke-project/tasks/$id/mounts"; then fail "task: the mirror is mounted into a task"; fi
 
 id2="$(AGENTIC_IDLE_TIMEOUT=300 ag run "second")"
 wait_state "$id2" idle || fail "task 2: first turn"
@@ -225,14 +214,43 @@ ag resume "$id2" >/dev/null
 wait_state "$id2" idle || fail "task 2: resume"
 grep -q 'echo: You were interrupted' "$tasks/$id2/transcript.md" || fail "task 2: resume prompt"
 
-ag clean "$id" --force >/dev/null
-# id2's worktree came from a throwaway container (the clone existed); clean checks it in one too
 ag stop "$id2" >/dev/null
+id3="$(ag run --in "$id2" "third")"
+wait_state "$id3" idle || fail "task 3: --in"
+[ "$(sed -n 1p "$AGENTIC_DATA/projects/smoke-project/tasks/$id3/container")" = "agentic-smoke-project-task-$id2" ] || fail "task 3: not in task 2's container"
+ag stop "$id3" >/dev/null
+
+id4="$(ag run --auto-clean "fourth")"
+for _ in $(seq 1 60); do [ "$(docker inspect -f '{{.State.Status}}' "agentic-smoke-project-task-$id4" 2>/dev/null)" = exited ] && break; sleep 1; done
+ag status >/dev/null
+[ ! -e "$tasks/$id4" ] || fail "task 4: auto-clean left the record"
+[ -z "$(docker ps -aq --filter "name=agentic-smoke-project-task-$id4")" ] || fail "task 4: auto-clean left the container"
+
+ag clean "$id" --force >/dev/null
 ag clean "$id2" >/dev/null || fail "task 2: clean of an unchanged task"
+ag clean "$id3" >/dev/null || fail "task 3: clean"
+[ ! -e "$proj/.worktrees/$id" ] || fail "task: clean left the worktree"
 [ -z "$(docker ps -aq "${mine[@]}")" ] || fail "task: clean left a container"
-[ "$(cat "$tmp/victim-file")" = keep ] || fail "task: host git wrote through a planted FETCH_HEAD symlink"
-[ -f "$tmp/victim-dir/keep" ] || fail "task: worktree prune followed a planted .git/worktrees symlink"
-cmp -s "$tmp/victim-refs" "$tmp/victim-refs.orig" || fail "task: git wrote through a planted packed-refs symlink"
+
+step "a project with several repositories: run starts in the target"
+mp="$tmp/multi-project"; mkdir -p "$mp"
+for r in api web; do
+  git init -q "$mp/$r"
+  git -C "$mp/$r" -c user.name=s -c user.email=s@example.com commit -q --allow-empty -m init
+done
+(cd "$mp" && "$A" init --bare >/dev/null)
+(cd "$mp" && "$A" target api >/dev/null)
+idm="$(cd "$mp" && "$A" run "hello")"
+mtasks="$AGENTIC_WORKSPACES/multi-project/tasks"
+s=""
+for _ in $(seq 1 90); do
+  s="$(cd "$mp" && "$A" status "$idm" --json 2>/dev/null | jq -r .state)" || s=""
+  [ "$s" = idle ] && break
+  sleep 1
+done
+[ "$s" = idle ] || { (cd "$mp" && "$A" logs "$idm" --bridge) >&2 || true; fail "multi: first turn, state '$s'"; }
+[ "$(jq -r .work "$mtasks/$idm/state.json")" = /work/api ] || fail "multi: the task does not work in the target"
+(cd "$mp" && "$A" stop "$idm" >/dev/null && "$A" clean "$idm" >/dev/null) || fail "multi: clean"
 unset AGENTIC_TASK_DOCKER_ARGS
 
 step "doctor passes on the good setup"

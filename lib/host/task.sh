@@ -76,7 +76,7 @@ need_task() {
 container_status() {
   local out
   if out="$(docker inspect -f '{{.State.Status}}' "$(task_container "$1")" 2>&1)"; then printf '%s\n' "$out"
-  elif [[ "$out" == *"No such object"* || "$out" == *"No such container"* ]]; then echo missing
+  elif [[ "${out,,}" == *"no such object"* || "${out,,}" == *"no such container"* ]]; then echo missing
   else echo unknown; fi
 }
 task_port() { docker port "$(task_container "$1")" "$TASK_PORT/tcp" 2>/dev/null | head -n 1 | sed 's/.*://'; }

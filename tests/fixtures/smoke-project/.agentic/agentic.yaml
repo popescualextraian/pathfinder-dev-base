@@ -1,5 +1,6 @@
 version: 2
 project: smoke-project
+layout: single
 base_image: agentic-smoke-overlay:local
 tools:
   java: {versions: [17, 8], default: 17}

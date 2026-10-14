@@ -29,7 +29,7 @@ case "$1" in
       fi
       if [ -f "$BATS_TEST_TMPDIR/docker.status" ]; then cat "$BATS_TEST_TMPDIR/docker.status"; exit 0; fi
       if [ -n "${DOCKER_DOWN:-}" ]; then echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock" >&2; exit 1; fi
-      [ -n "${DOCKER_STATUS:-}" ] || { echo "Error: No such object: stub" >&2; exit 1; }
+      [ -n "${DOCKER_STATUS:-}" ] || { echo "${DOCKER_NO_SUCH:-Error: No such object}: stub" >&2; exit 1; }
       echo "$DOCKER_STATUS"; exit 0
     fi
     [ -n "${DOCKER_RUNNING:-}" ] && echo "$DOCKER_RUNNING" || exit 1 ;;
@@ -38,9 +38,10 @@ case "$1" in
     if [ -z "${DOCKER_NO_READY:-}" ] && [ -f "$BATS_TEST_TMPDIR/docker.ready" ]; then : > "$(cat "$BATS_TEST_TMPDIR/docker.ready")"; fi ;;
   exec)
     if [[ " $* " == *" pgrep "* ]]; then exit "${DOCKER_BRIDGE_RC:-0}"; fi
+    if [[ " $* " == *" agentic-task-start "* ]] && [ -n "${DOCKER_START_HOOK:-}" ]; then bash "$DOCKER_START_HOOK"; fi
     if [[ " $* " == *" /opt/agentic/task/worktree.sh "* ]] && [ -n "${DOCKER_WT_ERR:-}" ]; then echo "$DOCKER_WT_ERR" >&2; exit 1; fi
     exit "${DOCKER_EXEC_RC:-0}" ;;
-  port) [ -n "${DOCKER_PORT:-}" ] && echo "127.0.0.1:$DOCKER_PORT" ;;
+  port) [ -n "${DOCKER_PORT:-}" ] || exit 1; echo "127.0.0.1:$DOCKER_PORT" ;;
   ps) [ -z "${DOCKER_PS:-}" ] || printf '%s\n' $DOCKER_PS ;;
   run)
     if [[ " $* " == *" agentic-task-hold "* ]] && [ -z "${DOCKER_NO_READY:-}" ]; then
