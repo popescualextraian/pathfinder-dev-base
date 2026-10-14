@@ -157,8 +157,22 @@ rollback_task() {
   safe_rm "$AGENTIC_DATA/projects/$(task_project)/tasks" "$(task_hdir "$id")"
 }
 
-# sweep_cleaned: removes the task directories of auto-cleaned tasks (Task 7 fills this in).
-sweep_cleaned() { :; }
+# sweep_cleaned: removes the project's auto-cleaned tasks (the bridge marked the record cleaned).
+# The record is agent-writable: a task whose created container still runs (or whose state docker
+# cannot tell) is kept, and rollback_task takes the container from the host file only.
+sweep_cleaned() {
+  local f id
+  for f in "$(task_ws)"/tasks/*/state.json; do
+    { [ -f "$f" ] && [ ! -L "$f" ]; } || continue
+    id="$(basename "$(dirname "$f")")"
+    valid_task_id "$id" || continue
+    [ "$(record_get "$id" .cleaned)" = true ] || continue
+    if task_created "$id"; then
+      case "$(container_status "$id")" in running|unknown) continue ;; esac
+    fi
+    rollback_task "$id"
+  done
+}
 
 # age ISO: minutes, hours or days since ISO.
 age() {

@@ -40,7 +40,7 @@ agentic <command> [options]          run inside a project repository
   logs ID [--transcript|--bridge|--start]
   shell ID                           a shell in the running task container
   takeover ID                        stop the task and continue its session interactively
-  clean ID [--force]                 remove the task's container, worktrees, branch and files
+  clean ID [--force]                 remove what the task created: worktree and branch, its container, its files
   add marketplace|plugin|mcp|skill|agent|command|workspace ... [--target T] [--no-build] [--yes]
   copy SRC DEST | mount SRC DEST [--readonly] | volume NAME DEST
                                      add a setup line (docs/setup.md), then build
@@ -516,6 +516,7 @@ cmd_status() {
     files=("$AGENTIC_WORKSPACES"/*/tasks/*/state.json)
   else
     need_config
+    sweep_cleaned
     files=("$(task_ws)"/tasks/*/state.json)
   fi
   for f in "${files[@]}"; do
@@ -577,11 +578,11 @@ cmd_stop() {
   ensure_running "$id"
   if bridge_req "$id" POST /stop; then
     [[ "$BRIDGE_CODE" == 2* ]] || bridge_result "$id"
-    timeout 30 docker wait "$c" >/dev/null 2>&1 || docker stop "$c" >/dev/null || die "could not stop the container of $id"
+    wait_bridge_gone "$c" "${AGENTIC_STOP_TIMEOUT:-30}" || say "the bridge of $id did not end; stopping its container"
   else
     say "the bridge of $id did not answer; stopping its container (the task will show interrupted)"
-    docker stop "$c" >/dev/null || die "could not stop the container of $id"
   fi
+  docker stop "$c" >/dev/null || die "could not stop the container of $id"
   echo "$id: $(task_state "$id" | plain)"
 }
 
@@ -617,12 +618,13 @@ cmd_logs() {
 
 cmd_follow() {
   need_config
-  local id="${1:-}"; [ -n "$id" ] || die "usage: agentic follow ID [--since N] [--raw] [--forever]"
+  local id="${1:-}" envf; [ -n "$id" ] || die "usage: agentic follow ID [--since N] [--raw] [--forever]"
   shift; need_task "$id"
   [ "$(container_status "$id")" = running ] || die "task $id is $(task_state "$id" | plain); agentic logs $id shows its transcript"
-  # The container's own environment carries the task token; none goes on a command line.
+  envf="$(host_file "$id" env)" || die "the env file of $id is not a regular file"
+  # The token reaches the client through the host env file; none goes on a command line.
   local tty=(-i); if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
-  docker exec "${tty[@]}" "$(task_container "$id")" agentic-bridge follow "$@"
+  docker exec "${tty[@]}" --env-file "$envf" "$(task_container "$id")" agentic-bridge follow "$@"
 }
 
 cmd_task_shell() {
@@ -632,57 +634,61 @@ cmd_task_shell() {
 
 cmd_takeover() {
   need_config; need_task "${1:-}"
-  local id="$1" agent session img c argv=() tty=(-i)
+  local id="$1" agent session c envf work argv=() tty=(-i)
   agent="$(record_get "$id" .agent)"; session="$(record_get "$id" .session)"; c="$(task_container "$id")"
+  envf="$(host_file "$id" env)" || die "the env file of $id is not a regular file"
   [ -n "$session" ] || die "task $id has no session yet"
   case "$agent" in
     claude) argv=(claude --dangerously-skip-permissions --resume "$session") ;;
     copilot) argv=(copilot --allow-all "--resume=$session") ;;
     *) die "task $id has an unknown agent '$agent'" ;;
   esac
-  if [ "$(task_state "$id")" != stopped ]; then
-    ensure_running "$id"
-    bridge_req "$id" POST /stop || true
-    timeout 30 docker wait "$c" >/dev/null 2>&1 || docker stop "$c" >/dev/null 2>&1 || true
-  fi
-  img="$(docker inspect -f '{{.Config.Image}}' "$c" 2>/dev/null || run_image)"
-  read_mounts "$id"
-  RUN_ARGS=(); shared_run_args "$img"
+  # the directory from the host's own file, never from the record
+  work="$(dotenv_value "$envf" AGENTIC_WORK)"
+  if task_has_worktree "$id"; then work="$work/.worktrees/$id"; fi
+  case "$(container_status "$id")" in
+    running)
+      if bridge_running "$c"; then
+        bridge_req "$id" POST /stop >/dev/null 2>&1 || true
+        wait_bridge_gone "$c" "${AGENTIC_STOP_TIMEOUT:-30}" || docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
+      fi ;;
+    missing) die "task $id has no container" ;;
+    *) start_container "$id" ;;
+  esac
   if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
   echo "Taking over $id with $agent; the task stays stopped afterwards." >&2
-  # A plain docker run skips the interactive shell's profile, so load the harness homes first.
-  docker run --rm --cap-drop ALL --security-opt no-new-privileges "${tty[@]}" "${TASK_MOUNTS[@]}" "${RUN_ARGS[@]}" -e AGENTIC_GATE=1 "$img" \
+  # docker exec skips the start's environment, so load the harness homes first.
+  docker exec "${tty[@]}" -w "$work" -e "AGENTIC_TASK_DIR=/tasks/$id" "$c" \
     bash -c '[ ! -f "$HOME/.agentic/env" ] || . "$HOME/.agentic/env"; exec "$@"' bash "${argv[@]}"
 }
 
 cmd_clean() {
   need_config
-  local id="" force=0 a clone wt branch why img gd
+  local id="" force=0 a c out
   for a in "$@"; do case "$a" in --force) force=1 ;; -*) die "unknown option $a" ;; *) id="$a" ;; esac; done
   need_task "$id"
-  if [ "$(container_status "$id")" = running ]; then
+  c="$(task_container "$id")"
+  if [[ " $TASK_ACTIVE " == *" $(task_state "$id") "* ]]; then
     [ "$force" = 1 ] || die "task $id is running; run agentic stop $id first, or --force"
-    docker stop "$(task_container "$id")" >/dev/null || die "could not stop the container of $id"
+    bridge_req "$id" POST /stop >/dev/null 2>&1 || true
+    wait_bridge_gone "$c" "${AGENTIC_STOP_TIMEOUT:-30}" || docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
   fi
-  if [ "$force" = 0 ]; then
-    host_file "$id" repos >/dev/null || die "task $id has no repos file, so unpushed work cannot be checked; run agentic clean $id --force"
-    # the worktrees are the agent's: git checks them in a throwaway container of the task's image
-    img="$(task_image "$id")"
-    while IFS=$'\t' read -r clone wt branch; do
-      if ! { canon_in "$(task_ws)/repos" "$clone" && canon_in "$clone/.worktrees" "$wt"; }; then
-        die "cannot check $wt (not a worktree path under $(task_ws)/repos); run agentic clean $id --force"
+  if task_created "$id" && [ "$(container_status "$id")" = running ] && bridge_running "$c"; then
+    die "another task runs in the container of $id; stop it first"
+  fi
+  if task_has_worktree "$id"; then
+    case "$(container_status "$id")" in
+      running) ;;
+      missing)
+        [ "$force" = 1 ] || die "the container of $id is gone, so its worktree cannot be checked; run agentic clean $id --force"
+        say "the container of $id is gone: remove .worktrees/$id and its branch in the checkout by hand" ;;
+      *) start_container "$id" ;;
+    esac
+    if [ "$(container_status "$id")" = running ]; then
+      if [ "$force" = 1 ]; then out="$(worktree_cmd "$id" remove --force 2>&1)" || die "$(printf '%s' "$out" | plain | tail -n 1)"
+      else out="$(worktree_cmd "$id" remove 2>&1)" || die "$(printf '%s' "$out" | plain | tail -n 1 | sed 's/^agentic-worktree: //')"
       fi
-      [ -d "$wt" ] || continue
-      if ! { clone_ok "$clone" && [ ! -L "$wt" ] && gd="$(wt_gitdir "$clone" "$wt")"; }; then
-        die "cannot check $wt (its .git does not name a worktree of $clone); run agentic clean $id --force"
-      fi
-      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- status --porcelain 2>&1)" \
-        || die "cannot check $wt ($(printf '%s' "$why" | plain)); run agentic clean $id --force"
-      [ -z "$why" ] || die "$wt has uncommitted changes; commit and push them, or run agentic clean $id --force"
-      why="$(cgit "$img" "$clone" "$gd" -v "$wt:$wt" -e "GIT_WORK_TREE=$wt" -- log --oneline --not --remotes --not --end-of-options "$branch" 2>&1)" \
-        || die "cannot check $wt ($(printf '%s' "$why" | plain)); run agentic clean $id --force"
-      [ -z "$why" ] || die "$wt has commits on no remote branch ($branch); push them, or run agentic clean $id --force"
-    done < "$(task_file "$id" repos)"
+    fi
   fi
   rollback_task "$id"
   echo "$id: removed (remote branches stay)"

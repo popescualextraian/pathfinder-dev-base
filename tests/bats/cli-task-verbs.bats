@@ -9,7 +9,7 @@ setup() {
   export AGENTIC_DATA="$BATS_TEST_TMPDIR/data" AGENTIC_WORKSPACES="$BATS_TEST_TMPDIR/ws"
   PROJ="$BATS_TEST_TMPDIR/proj"
   mkdir -p "$PROJ/.agentic"; git init -q -b main "$PROJ"
-  printf 'version: 2\nproject: demo\n' > "$PROJ/.agentic/agentic.yaml"
+  printf 'version: 2\nproject: demo\nlayout: single\n' > "$PROJ/.agentic/agentic.yaml"
   git -C "$PROJ" add -A; git -C "$PROJ" -c user.name=t -c user.email=t@example.com commit -qm init
   A="$REPO_ROOT/bin/agentic"
   export DOCKER_STATUS=running DOCKER_PORT=49153 AGENTIC_WSLG_DIR="$BATS_TEST_TMPDIR/no-wslg"
@@ -80,18 +80,6 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   [ "$status" -eq 1 ]; [[ "$output" == *"not running"* ]]
 }
 
-@test "stop asks the bridge, then waits for the container; without an answer it stops the container" {
-  record T-7 idle
-  ag stop T-7
-  [[ "$(posted)" == *"/stop"* ]]
-  grep -qx -- '--- wait' "$DOCKER_LOG"
-  : > "$DOCKER_LOG"
-  CURL_RC=7 run ag stop T-7
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"did not answer"* ]]
-  grep -qx -- '--- stop' "$DOCKER_LOG"
-}
-
 @test "resume is for interrupted or failed tasks and sends the resume prompt" {
   record T-8 idle
   run ag resume T-8
@@ -126,35 +114,6 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   [ "$(docker_sub exec | tail -n 3 | tr '\n' ' ')" = "agentic-demo-task-T-12 bash -l " ]
 }
 
-@test "takeover stops the task and resumes its session interactively, gate on" {
-  skip "rewritten in Task 7"
-  record T-13 idle
-  ag takeover T-13
-  [[ "$(posted)" == *"/stop"* ]]
-  call="$(docker_sub run)"
-  grep -qx -- '--rm' <<<"$call"
-  grep -qx 'AGENTIC_GATE=1' <<<"$call"
-  grep -qx "$T/T-13:/task" <<<"$call"
-  [ "$(tail -n 4 <<<"$call" | tr '\n' ' ')" = "claude --dangerously-skip-permissions --resume s1 " ]
-}
-
-@test "clean refuses unpushed commits unless forced, then removes everything but remote branches" {
-  skip "rewritten in Task 7"
-  ag run --id T-14 "x" >/dev/null 2>&1
-  record T-14 idle   # the bridge, absent here, writes state.json
-  wt="$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/T-14"
-  git -C "$wt" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m work
-  export DOCKER_STATUS=exited
-  run ag clean T-14
-  [ "$status" -eq 1 ]; [[ "$output" == *"commits on no remote branch"* ]]
-  run ag clean T-14 --force
-  [ "$status" -eq 0 ]
-  [ ! -e "$wt" ] && [ ! -e "$T/T-14" ] && [ ! -e "$H/T-14/env" ]
-  run git -C "$AGENTIC_WORKSPACES/demo/repos/proj" rev-parse --verify -q agentic/T-14-x
-  [ "$status" -ne 0 ]
-  grep -qx -- '--- rm' "$DOCKER_LOG"
-}
-
 @test "resume clears the interrupted marker" {
   record T-15 running
   : > "$H/T-15/interrupted"
@@ -183,58 +142,6 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
 @test "clean refuses a task id that is not a task" {
   run ag clean ../x
   [ "$status" -eq 1 ]
-}
-
-mkclean() {   # a task with a worktree, as run leaves it, container exited
-  ag run --id "$1" "x" >/dev/null 2>&1
-  record "$1" idle
-  export DOCKER_STATUS=exited
-  wt="$AGENTIC_WORKSPACES/demo/repos/proj/.worktrees/$1"
-}
-
-@test "clean refuses uncommitted changes, a git error and a missing repos file; --force proceeds" {
-  skip "rewritten in Task 7"
-  mkclean T-20
-  echo x > "$wt/new.txt"
-  run ag clean T-20
-  [ "$status" -eq 1 ]; [[ "$output" == *"uncommitted changes"* ]]
-  rm "$wt/new.txt"
-  echo "gitdir: /nonexistent" > "$wt/.git"
-  run ag clean T-20
-  [ "$status" -eq 1 ]; [[ "$output" == *"cannot check"* ]]
-  rm "$H/T-20/repos"
-  run ag clean T-20
-  [ "$status" -eq 1 ]; [[ "$output" == *"no repos file"* ]]
-  run ag clean T-20 --force
-  [ "$status" -eq 0 ]; [ ! -e "$T/T-20" ]
-}
-
-@test "clean takes the branch from the repos file as a revision, never as an option" {
-  skip "rewritten in Task 7"
-  mkclean T-24
-  f="$H/T-24/repos"
-  awk -v o="--output=$BATS_TEST_TMPDIR/written" 'BEGIN { FS = OFS = "\t" } { $3 = o; print }' "$f" > "$f.new"; mv "$f.new" "$f"
-  run ag clean T-24
-  [ "$status" -eq 1 ]; [[ "$output" == *"cannot check"* ]]
-  [ ! -e "$BATS_TEST_TMPDIR/written" ]
-}
-
-@test "clean of a clean, pushed-nowhere-but-unchanged task succeeds" {
-  skip "rewritten in Task 7"
-  mkclean T-21
-  run ag clean T-21
-  [ "$status" -eq 0 ]; [ ! -e "$wt" ]
-}
-
-@test "clean refuses a running task unless forced, then stops it first" {
-  skip "rewritten in Task 7"
-  mkclean T-22
-  DOCKER_STATUS=running run ag clean T-22
-  [ "$status" -eq 1 ]; [[ "$output" == *"is running; run agentic stop T-22 first"* ]]
-  : > "$DOCKER_LOG"
-  DOCKER_STATUS=running run ag clean T-22 --force
-  [ "$status" -eq 0 ]
-  grep -qx -- '--- stop' "$DOCKER_LOG"
 }
 
 @test "answer takes -- before text that starts with a dash, and checks grants first" {
@@ -275,32 +182,96 @@ mkclean() {   # a task with a worktree, as run leaves it, container exited
   [ ! -e "$H/T-41/interrupted" ]
 }
 
-@test "takeover refuses a mounts file with anything the host does not write" {
-  skip "rewritten in Task 7"
-  record T-70 stopped
-  printf -- '-v\n%s\n--privileged\n' "$T/T-70:/task" > "$H/T-70/mounts"
-  run ag takeover T-70
-  [ "$status" -eq 1 ]; [[ "$output" == *"not one the host wrote"* ]]
-  printf -- '-v\n/:/h\n' > "$H/T-70/mounts"
-  run ag takeover T-70
-  [ "$status" -eq 1 ]; [[ "$output" == *"not one the host wrote"* ]]
-  printf -- '-v\n%s\n' "$T/T-70/../..:/task" > "$H/T-70/mounts"
-  run ag takeover T-70
-  [ "$status" -eq 1 ]
-  run grep -qx -- '--- run' "$DOCKER_LOG"
-  [ "$status" -ne 0 ]
+@test "stop asks the bridge to stop, then stops the container; without an answer it stops the container" {
+  record T-1 running
+  AGENTIC_STOP_TIMEOUT=1 run ag stop T-1
+  [ "$status" -eq 0 ]
+  [[ "$(posted)" == *"/stop"* ]]
+  grep -qx agentic-demo-task-T-1 <<<"$(docker_sub stop)"
+  : > "$DOCKER_LOG"
+  CURL_RC=7 AGENTIC_STOP_TIMEOUT=1 run ag stop T-1
+  [[ "$output" == *"did not answer"* ]]
+  grep -qx agentic-demo-task-T-1 <<<"$(docker_sub stop)"
 }
 
-@test "takeover refuses a mounts source through a symlink and drops every capability" {
-  skip "rewritten in Task 7"
-  record T-71 stopped
-  ln -s "$T/T-71" "$AGENTIC_WORKSPACES/demo/tlink"
-  printf -- '-v\n%s\n' "$AGENTIC_WORKSPACES/demo/tlink:/task" > "$H/T-71/mounts"
-  run ag takeover T-71
-  [ "$status" -eq 1 ]; [[ "$output" == *"symlink"* ]]
-  printf -- '-v\n%s\n' "$T/T-71:/task" > "$H/T-71/mounts"
-  ag takeover T-71 >/dev/null 2>&1
-  call="$(docker_run_with AGENTIC_GATE=1)"
-  grep -A1 -x -- '--cap-drop' <<<"$call" | grep -qx ALL
-  grep -A1 -x -- '--security-opt' <<<"$call" | grep -qx no-new-privileges
+@test "resume starts the bridge again in the running container when it died" {
+  record T-1 running
+  DOCKER_BRIDGE_RC=1 run ag resume T-1
+  [ "$status" -eq 0 ]
+  grep -qx -- "$H/T-1/env" <<<"$(docker_call_with exec agentic-task-start)"
+  [ -z "$(docker_sub start)" ]
+  [[ "$(posted)" == *"/prompt"* ]]
+}
+
+@test "resume of a task whose container stopped starts it, waits for its start, then the bridge" {
+  record T-1 running
+  DOCKER_STATUS=exited DOCKER_BRIDGE_RC=1 run ag resume T-1
+  [ "$status" -eq 0 ]
+  grep -qx agentic-demo-task-T-1 <<<"$(docker_sub start)"
+  [ -n "$(docker_call_with exec agentic-task-start)" ]
+}
+
+@test "takeover stops the bridge and resumes the session in the task's container and directory" {
+  record T-1 idle
+  printf 'AGENTIC_WORKTREE=1\nAGENTIC_BRANCH=agentic/T-1-x\n' >> "$H/T-1/env"
+  AGENTIC_STOP_TIMEOUT=1 run ag takeover T-1
+  [ "$status" -eq 0 ]
+  [[ "$(posted)" == *"/stop"* ]]
+  ex="$(docker_call_with exec claude)"
+  for l in -w /work/.worktrees/T-1 -e AGENTIC_TASK_DIR=/tasks/T-1 agentic-demo-task-T-1 --dangerously-skip-permissions --resume s1; do
+    grep -qx -- "$l" <<<"$ex"
+  done
+  [ -z "$(docker_sub run)" ]
+}
+
+@test "follow passes the task token through the host env file" {
+  record T-11 idle
+  ag follow T-11 --since 3
+  call="$(docker_call_with exec follow)"
+  grep -qx -- --env-file <<<"$call"; grep -qx -- "$H/T-11/env" <<<"$call"
+  [ "$(tail -n 5 <<<"$call" | tr '\n' ' ')" = "agentic-demo-task-T-11 agentic-bridge follow --since 3 " ]
+}
+
+@test "clean of a task with a worktree removes it in the container, then the container and the files" {
+  record T-1 stopped
+  printf 'AGENTIC_WORKTREE=1\nAGENTIC_BRANCH=agentic/T-1-x\n' >> "$H/T-1/env"
+  DOCKER_BRIDGE_RC=1 run ag clean T-1
+  [ "$status" -eq 0 ]
+  wt="$(docker_call_with exec /opt/agentic/task/worktree.sh)"
+  for l in agentic-demo-task-T-1 remove /work T-1 agentic/T-1-x; do grep -qx -- "$l" <<<"$wt"; done
+  ! grep -qx -- --force <<<"$wt"
+  grep -qx agentic-demo-task-T-1 <<<"$(docker_sub rm)"
+  [ ! -e "$T/T-1" ] && [ ! -e "$H/T-1" ]
+}
+
+@test "clean refuses unpushed work unless forced" {
+  record T-1 stopped
+  printf 'AGENTIC_WORKTREE=1\nAGENTIC_BRANCH=agentic/T-1-x\n' >> "$H/T-1/env"
+  DOCKER_BRIDGE_RC=1 DOCKER_WT_ERR="agentic-worktree: /work/.worktrees/T-1 has commits on no remote branch (agentic/T-1-x); push them, or clean with --force" \
+    run ag clean T-1
+  [ "$status" -eq 1 ]; [[ "$output" == *"has commits on no remote branch"* ]]
+  [ -d "$T/T-1" ]
+  : > "$DOCKER_LOG"
+  DOCKER_BRIDGE_RC=1 run ag clean T-1 --force
+  [ "$status" -eq 0 ]
+  grep -qx -- --force <<<"$(docker_call_with exec /opt/agentic/task/worktree.sh)"
+}
+
+@test "clean without a worktree never touches /work; a reused container stays" {
+  record T-1 stopped
+  printf 'agentic-demo-task-T-0\n0\nT-0\n' > "$H/T-1/container"
+  DOCKER_BRIDGE_RC=1 run ag clean T-1
+  [ "$status" -eq 0 ]
+  [ -z "$(docker_sub rm)" ]
+  ! grep -q worktree.sh "$DOCKER_LOG"
+}
+
+@test "clean refuses a running task unless forced, and a container another task runs in" {
+  record T-1 running
+  run ag clean T-1
+  [ "$status" -eq 1 ]; [[ "$output" == *"task T-1 is running; run agentic stop T-1 first, or --force"* ]]
+  record T-2 stopped
+  run ag clean T-2
+  [ "$status" -eq 1 ]; [[ "$output" == *"another task runs in the container of T-2; stop it first"* ]]
+  [ -d "$T/T-2" ]
 }

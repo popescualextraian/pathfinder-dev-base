@@ -15,8 +15,12 @@ wt="$work/.worktrees/$id"
 # check: nothing uncommitted, and no commit that only the task branch has (not on a remote, not
 # on the checkout's HEAD).
 check() {
-  [ -d "$wt" ] || return 0
-  [ -z "$(git -C "$wt" status --porcelain)" ] || die "$wt has uncommitted changes; commit and push them, or clean with --force"
+  # a worktree folder that is gone leaves its branch: that still counts
+  if [ -d "$wt" ]; then
+    [ -z "$(git -C "$wt" status --porcelain)" ] || die "$wt has uncommitted changes; commit and push them, or clean with --force"
+  else
+    git -C "$work" rev-parse -q --verify "refs/heads/$branch" >/dev/null || return 0
+  fi
   [ -z "$(git -C "$work" log --oneline --not --remotes HEAD --not --end-of-options "$branch" 2>/dev/null)" ] \
     || die "$wt has commits on no remote branch ($branch); push them, or clean with --force"
 }

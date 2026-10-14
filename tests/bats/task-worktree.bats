@@ -48,3 +48,15 @@ setup() {
   run git -C "$W" rev-parse -q --verify refs/heads/agentic/T-1-x; [ "$status" -ne 0 ]
   bash "$S" remove "$W" T-1 agentic/T-1-x   # nothing left: still succeeds
 }
+
+@test "remove of a worktree whose folder is gone still refuses commits only on the task branch" {
+  bash "$S" add "$W" T-1 agentic/T-1-x >/dev/null
+  echo x > "$W/.worktrees/T-1/f"
+  git -C "$W/.worktrees/T-1" add f; git -C "$W/.worktrees/T-1" commit -qm f
+  rm -rf "$W/.worktrees/T-1"; git -C "$W" worktree prune
+  run bash "$S" remove "$W" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]; [[ "$output" == *"has commits on no remote branch"* ]]
+  git -C "$W" rev-parse -q --verify refs/heads/agentic/T-1-x
+  bash "$S" remove "$W" T-1 agentic/T-1-x --force
+  run git -C "$W" rev-parse -q --verify refs/heads/agentic/T-1-x; [ "$status" -ne 0 ]
+}

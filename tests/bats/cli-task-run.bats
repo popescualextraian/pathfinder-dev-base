@@ -605,3 +605,21 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   grep -qx -- "$H/T-Z3/env" <<<"$ex"
   ! grep -qx -- '--- start' "$DOCKER_LOG"
 }
+
+@test "status removes auto-cleaned tasks whose container has exited, and keeps the others" {
+  record T-1 stopped; jq '.cleaned = true' "$T/T-1/state.json" > "$T/x" && mv "$T/x" "$T/T-1/state.json"
+  record T-2 stopped
+  DOCKER_STATUS=exited run ag status
+  [ "$status" -eq 0 ]
+  [ ! -e "$T/T-1" ] && [ ! -e "$H/T-1" ]
+  [ -d "$T/T-2" ]
+  grep -qx agentic-demo-task-T-1 <<<"$(docker_sub rm)"
+}
+
+@test "a forged cleaned flag never removes a task whose created container still runs" {
+  record T-1 idle; jq '.cleaned = true' "$T/T-1/state.json" > "$T/x" && mv "$T/x" "$T/T-1/state.json"
+  run ag status
+  [ "$status" -eq 0 ]
+  [ -d "$T/T-1" ]
+  [ -z "$(docker_sub rm)" ]
+}
