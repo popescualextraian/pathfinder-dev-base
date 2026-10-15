@@ -267,7 +267,10 @@ export class Bridge implements ApiTarget {
       case "timer": if (e.on) this.armIdle(); else this.disarmIdle(); break;
       case "notify": {
         const q = e.question ? redactDeep<Question>(e.question, this.redact) : null;
-        const p = this.d.notifier.webhook(redactDeep(this.m().record, this.redact), q)
+        const rec = this.m().record;
+        const result = rec.scheduled && this.resultText !== null && (rec.state === "stopped" || rec.state === "failed")
+          ? this.redact(this.resultText.trim()) : null;
+        const p = this.d.notifier.webhook(redactDeep(rec, this.redact), q, result)
           .then((ok) => { if (!ok) this.emit("error", { message: "webhook delivery failed after a retry" }); })
           .catch((err) => this.log(`webhook failed: ${message(err)}`))
           .finally(() => this.webhooks.delete(p));

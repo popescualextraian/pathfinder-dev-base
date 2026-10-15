@@ -20,7 +20,7 @@ afterEach(async () => { for (const r of running.splice(0)) { await r.bridge.shut
 
 async function start(dir: string, extra: Record<string, string> = {},
   worktree: (args: string[]) => { ok: boolean; out: string; err: string } = () => ({ ok: true, out: "", err: "" }),
-  over: Partial<Config> = {}) {
+  over: Partial<Config> = {}, bodies?: unknown[]) {
   const exits: number[] = [];
   const cwds: string[] = [];
   const wt: string[][] = [];
@@ -33,7 +33,10 @@ async function start(dir: string, extra: Record<string, string> = {},
   let agentEnv: NodeJS.ProcessEnv = {};
   const bridge = new Bridge({
     store, config: cfg, paragraph: "Use agentic-ask.",
-    notifier: new Notifier({ eventsLog: null, webhook: null, project: "demo", log: () => {} }),
+    notifier: new Notifier(bodies
+      ? { eventsLog: null, webhook: "http://hook.example.com/x", project: "demo", log: () => {},
+        fetch: (async (_u: unknown, init?: RequestInit) => { bodies.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }) as typeof fetch }
+      : { eventsLog: null, webhook: null, project: "demo", log: () => {} }),
     agentFactory: (hooks, cwd) => { cwds.push(cwd); return new AgentProcess(harnessFor("claude", { model: null, acpCmd: cfg.acpCmd }),
       { cwd, env: { ...agentEnv, FAKE_AGENT_STATE: join(dir, "fake") }, paragraph: "Use agentic-ask.", model: null }, hooks); },
     worktree: (args) => { wt.push(args); return worktree(args); },
@@ -539,5 +542,15 @@ describe("scheduled runs", () => {
     const again = await start(dir, { AGENTIC_SCHEDULED: "1" });
     expect(await exited(again.exits)).toEqual([0]); // stopped is final: boot exits at once
     expect(again.store.readRecord().reason).toBe("scheduled-done");
+  });
+
+  it("the stopped webhook of a scheduled run carries the result", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const dir = taskDir("hello");
+    const { exits } = await start(dir, { AGENTIC_SCHEDULED: "1" }, undefined, {}, bodies);
+    expect(await exited(exits)).toEqual([0]);
+    const stopped = bodies.find((b) => b.state === "stopped");
+    expect(stopped?.result).toBe(`echo: ${SUMMARY_PROMPT}`);
+    expect(bodies.filter((b) => b.state === "idle").every((b) => !("result" in b))).toBe(true);
   });
 });

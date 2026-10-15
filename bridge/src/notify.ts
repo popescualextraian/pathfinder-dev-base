@@ -11,13 +11,14 @@ export interface NotifyOptions {
   retryDelayMs?: number;
 }
 
-export function notifyPayload(rec: TaskRecord, q: Question | null, ts: string): Record<string, unknown> {
+export function notifyPayload(rec: TaskRecord, q: Question | null, ts: string, result: string | null = null): Record<string, unknown> {
   return {
     task: rec.task,
     project: rec.project,
     state: rec.state,
     question: q ? { id: q.id, text: q.text, options: q.options, recommendation: q.recommendation } : null,
     summary: rec.summary,
+    ...(result !== null ? { result: result.slice(0, 4096) } : {}),
     reply: q ? `agentic answer ${rec.task} ${q.id} "…"` : `agentic send ${rec.task} "…"`,
     ts,
   };
@@ -37,10 +38,10 @@ export class Notifier {
   }
 
   // true when delivered (or nothing is configured), false after the retry failed
-  async webhook(rec: TaskRecord, q: Question | null): Promise<boolean> {
+  async webhook(rec: TaskRecord, q: Question | null, result: string | null = null): Promise<boolean> {
     if (!this.o.webhook) return true;
     const f = this.o.fetch ?? fetch;
-    const body = JSON.stringify(notifyPayload(rec, q, new Date().toISOString()));
+    const body = JSON.stringify(notifyPayload(rec, q, new Date().toISOString(), result));
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const r = await f(this.o.webhook, { method: "POST", body, headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(5000) });

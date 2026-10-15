@@ -10,6 +10,12 @@ const rec = { version: 1, task: "T-1", project: "demo", agent: "claude", model: 
 const q: Question = { id: "Q1", source: "ask", text: "Which DB?", options: ["pg"], recommendation: "pg", asked: "t", status: "open" };
 
 describe("notify", () => {
+  it("adds the result, at most 4 KB, only when one is given", () => {
+    expect(notifyPayload(rec, null, "t")).not.toHaveProperty("result");
+    const p = notifyPayload(rec, null, "t", "y".repeat(5000));
+    expect(String(p.result).length).toBe(4096);
+  });
+
   it("builds the payload with a reply hint", () => {
     expect(notifyPayload(rec, q, "now")).toEqual({ task: "T-1", project: "demo", state: "waiting",
       question: { id: "Q1", text: "Which DB?", options: ["pg"], recommendation: "pg" }, summary: "Need a DB",
