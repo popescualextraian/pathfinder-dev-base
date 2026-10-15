@@ -56,6 +56,20 @@ export class Store {
     renameSync(tmp, p);
   }
 
+  // writeResult: the summary of a scheduled run, whole, redacted, written like state.json.
+  writeResult(text: string): void {
+    const p = this.path("result.md");
+    const tmp = `${p}.tmp`;
+    const fd = openSync(tmp, "w", 0o644);
+    try {
+      writeSync(fd, this.redact(text.endsWith("\n") ? text : `${text}\n`));
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, p);
+  }
+
   appendEvent(e: Omit<TaskEvent, "seq">): TaskEvent {
     const out = redactDeep({ seq: this.seq + 1, ...e }, this.redact) as TaskEvent;
     appendFileSync(this.path("events.jsonl"), JSON.stringify(out) + "\n");

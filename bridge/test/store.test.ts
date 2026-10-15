@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, readFileSync, appendFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, existsSync, writeFileSync, readFileSync, appendFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -10,7 +10,7 @@ export function record(over: Partial<TaskRecord> = {}): TaskRecord {
   return {
     version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "starting", reason: "",
     session: null, branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [], inbox: [],
-    summary: "", stopped_by_user: false, ...over,
+    summary: "", stopped_by_user: false, scheduled: false, run_timeout: null, ...over,
   };
 }
 const ev = (type: "state" | "message" = "state") =>
@@ -19,6 +19,16 @@ const ev = (type: "state" | "message" = "state") =>
 describe("Store", () => {
   let dir: string;
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "store-")); });
+
+  it("writes result.md whole, atomically and redacted", () => {
+    const s = new Store(dir, makeRedactor(["secret-token-0123456789"]));
+    s.writeResult("# Done\n\nused secret-token-0123456789\n" + "x".repeat(5000));
+    const out = readFileSync(join(dir, "result.md"), "utf8");
+    expect(out.startsWith("# Done\n\nused ")).toBe(true);
+    expect(out).not.toContain("secret-token-0123456789");
+    expect(out.length).toBeGreaterThan(5000);
+    expect(existsSync(join(dir, "result.md.tmp"))).toBe(false);
+  });
 
   it("has no record until one is written; written records read back with the last seq", () => {
     const s = new Store(dir);

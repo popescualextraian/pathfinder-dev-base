@@ -9,6 +9,8 @@
 //   HISTORY           replies "history: <number of earlier messages>"
 //   CRASH             exits with code 3
 //   anything else     replies "echo: <prompt>"
+//   A first prompt carries a scheduled note after "\n\n[scheduled run]\n"; it is ignored.
+//   FAKE_SUMMARY_SLEEP=<ms> delays the reply to the summary prompt (scheduled-run tests).
 // Sessions live in $FAKE_AGENT_STATE (default /tmp/fake-agent), so session/load works across processes.
 import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -66,6 +68,7 @@ async function ask(text) {
 }
 
 async function prompt(sid, text) {
+  if (process.env.FAKE_SUMMARY_SLEEP && text.includes("The run ends now")) await sleep(Number(process.env.FAKE_SUMMARY_SLEEP));
   const s = load(sid);
   const before = s.history.length;
   s.history.push({ role: "user", text });
@@ -121,7 +124,7 @@ async function handle(rpc) {
     }
     case "session/set_mode": { const s = load(p.sessionId); s.mode = p.modeId; save(p.sessionId, s); return reply({}); }
     case "session/set_config_option": return reply({ configOptions: [] });
-    case "session/prompt": return reply(await prompt(p.sessionId, p.prompt.map((b) => b.text ?? "").join("")));
+    case "session/prompt": return reply(await prompt(p.sessionId, p.prompt.map((b) => b.text ?? "").join("").split("\n\n[scheduled run]\n")[0]));
     case "session/cancel": cancelled.add(p.sessionId); return;
     default: if (rpc.id !== undefined) send({ id: rpc.id, error: { code: -32601, message: `${rpc.method} not supported` } });
   }

@@ -54,6 +54,8 @@ export interface TaskRecord {
   inbox: InboxItem[];
   summary: string;
   stopped_by_user: boolean;
+  scheduled: boolean;
+  run_timeout: number | null;
 }
 
 export interface TaskEvent {

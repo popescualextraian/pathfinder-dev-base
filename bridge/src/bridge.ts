@@ -7,6 +7,7 @@ import { UpdateMapper, type Mapped } from "./map.js";
 import type { Notifier } from "./notify.js";
 import type { Store } from "./store.js";
 import { TaskMachine, type Effect, type Input, type Outcome } from "./task.js";
+import { SCHEDULED_NOTE } from "./scheduled.js";
 import { renderEvent } from "./transcript.js";
 import { makeRedactor, redactDeep } from "./redact.js";
 import type { EventType, Question, TaskEvent, TaskRecord } from "./types.js";
@@ -75,13 +76,16 @@ export class Bridge implements ApiTarget {
         version: 1, task: config.task, project: config.project, agent: config.agent, model: config.model, state: "starting",
         reason: "", session: null, branch: config.worktree ? config.branch : null,
         target: config.target, work, worktree, container: config.container, created_container: config.createdContainer, auto_clean: config.autoClean, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
-        inbox: [{ kind: "prompt", text: prompt }], summary: "", stopped_by_user: false,
+        inbox: [{ kind: "prompt", text: config.scheduled ? `${prompt}${SCHEDULED_NOTE}` : prompt }], summary: "", stopped_by_user: false,
+        scheduled: config.scheduled, run_timeout: config.scheduled ? config.runTimeoutMs / 1000 : null,
       };
     } else {
       record = store.readRecord();
       if (typeof record.work !== "string") record.work = config.work;
       record.cleaned = record.cleaned === true;
       record.created_container = record.created_container === true;
+      record.scheduled = record.scheduled === true;
+      record.run_timeout = typeof record.run_timeout === "number" ? record.run_timeout : null;
     }
     // all questions, answered ones too: the next question id counts them all
     this.machine = new TaskMachine(record, store.readQuestions(), this.d.now);

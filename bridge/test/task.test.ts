@@ -5,7 +5,7 @@ import type { TaskRecord, Question } from "../src/types.js";
 const rec = (over: Partial<TaskRecord> = {}): TaskRecord => ({
   version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "starting", reason: "",
   session: null, branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [],
-  inbox: [{ kind: "prompt", text: "Fix the login bug" }], summary: "", stopped_by_user: false, ...over,
+  inbox: [{ kind: "prompt", text: "Fix the login bug" }], summary: "", stopped_by_user: false, scheduled: false, run_timeout: null, ...over,
 });
 const m = (over: Partial<TaskRecord> = {}, qs: Question[] = []) => new TaskMachine(rec(over), qs, () => "now");
 const fx = (o: Outcome): Effect[] => { if (!o.ok) throw new Error(o.message); return o.effects; };

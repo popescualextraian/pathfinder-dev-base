@@ -10,6 +10,7 @@ import { harnessFor } from "../src/harness.js";
 import { Notifier } from "../src/notify.js";
 import { makeRedactor } from "../src/redact.js";
 import { startServer } from "../src/server.js";
+import { SCHEDULED_NOTE } from "../src/scheduled.js";
 import { Store } from "../src/store.js";
 import type { State, TaskEvent } from "../src/types.js";
 
@@ -334,7 +335,7 @@ describe("Bridge with a scripted agent", () => {
     const now = new Date().toISOString();
     store.writeRecord({ version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "suspended",
       reason: "idle timeout", session: "s1", branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [],
-      inbox: [], summary: "", stopped_by_user: false });
+      inbox: [], summary: "", stopped_by_user: false, scheduled: false, run_timeout: null });
     bridge.boot();
     await tick(150);
     expect(bridge.command({ kind: "answer", question: "Q9", text: "x", grant: [] })).toMatchObject({ ok: false, code: "not_found" });
@@ -435,5 +436,24 @@ describe("worktree and auto-clean", () => {
     expect(store.readRecord().cleaned).toBe(false);
     expect(store.readEvents(0).some((e) => e.type === "error" && String(e.data.message).includes("auto-clean kept the task"))).toBe(true);
     expect(released()).toBe(0);
+  });
+});
+
+describe("scheduled runs", () => {
+  it("records scheduled and run_timeout, and appends the scheduled note to the first prompt", async () => {
+    const dir = taskDir("hello");
+    const { bridge, store } = await start(dir, { AGENTIC_SCHEDULED: "1", AGENTIC_RUN_TIMEOUT: "120" });
+    await waitState(bridge, "idle", "stopped");
+    const rec = store.readRecord();
+    expect([rec.scheduled, rec.run_timeout]).toEqual([true, 120]);
+    const first = store.readEvents(0).find((e) => e.type === "message" && e.data.role === "user");
+    expect(String(first?.data.text)).toBe(`hello${SCHEDULED_NOTE}`);
+  });
+
+  it("an unscheduled task records scheduled false and no run timeout", async () => {
+    const dir = taskDir("hello");
+    const { bridge, store } = await start(dir);
+    await waitState(bridge, "idle");
+    expect([store.readRecord().scheduled, store.readRecord().run_timeout]).toEqual([false, null]);
   });
 });
