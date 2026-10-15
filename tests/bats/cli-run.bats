@@ -46,6 +46,21 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   [[ "$output" == *"/login"* ]]
 }
 
+@test "login git runs agentic-git in a throwaway container with the options, without a TTY off a terminal" {
+  run ag login git https://github.com/example/api.git --name "Jane Doe"
+  [ "$status" -eq 0 ]
+  call="$(docker_sub run)"
+  grep -qx -- '--rm' <<<"$call"
+  grep -qx -- '-i' <<<"$call"
+  grep -qx "$PROJ:/work" <<<"$call"
+  [ "$(tail -n 6 <<<"$call" | tr '\n' '|')" = "agentic-demo:local|agentic-git|login|https://github.com/example/api.git|--name|Jane Doe|" ]
+}
+
+@test "login git passes the tool's failure on" {
+  DOCKER_RUN_RC=1 run ag login git
+  [ "$status" -eq 1 ]
+}
+
 @test "login refuses an unknown harness" {
   run ag login gemini
   [ "$status" -eq 1 ]

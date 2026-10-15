@@ -50,6 +50,20 @@ setup() {
   [[ "$output" == *"next:"* ]]
 }
 
+@test "init says that an earlier project of the same name leaves its logins and sessions to be reused" {
+  mkdir -p "$HOME/.agentic/projects/orders-service/harness/claude"
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$HOME/.agentic/projects/orders-service"* ]]
+  [[ "$output" == *"logins, sessions and history"*"reused"* ]]
+}
+
+@test "init of a new project name says nothing about earlier data" {
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"reused"* ]]
+}
+
 # held_mkdir: a mkdir that fails like Windows does for a deleted folder a process still holds open.
 held_mkdir() {
   printf '#!/usr/bin/env bash\nfor a; do case "$a" in */.agentic) echo "mkdir: cannot create directory %s: File exists" "$a" >&2; exit 1 ;; esac; done\nexec %q "$@"\n' \
@@ -223,4 +237,67 @@ ini() { (cd "$PROJ" && bash "$A" init "$@"); }
   [ "$status" -eq 1 ]
   [[ "$output" == *"no git repository in $F or its direct subfolders"* ]]
   [ ! -e "$F/.agentic" ]
+}
+
+@test "init explains targets, harness and the built-in mounts in agentic.yaml, and it stays valid" {
+  run bash -c "cd '$PROJ' && bash '$A' init"
+  y="$PROJ/.agentic/agentic.yaml"
+  grep -B3 '^targets:' "$y" | grep -q 'where setup lines install'
+  grep -B3 '^harness:' "$y" | grep -q 'which agent runs'
+  grep -B8 '^setup:' "$y" | grep -q '/work'
+  grep -B8 '^setup:' "$y" | grep -q '/agentic-config'
+  grep -B8 '^setup:' "$y" | grep -q 'agentic list'
+  make_agentic_dir
+  run "$REPO_ROOT/image/bin/agentic-config" validate "$PROJ/.agentic"
+  [ "$status" -eq 0 ]
+}
+
+# ws_repo NAME: a git repository NAME directly under $WS.
+ws_repo() { mkdir -p "$WS/$1"; git init -q "$WS/$1"; }
+
+@test "init in a repository whose parent holds no other repository says nothing about a workspace" {
+  run ini
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"workspace"* ]]
+  grep -q '^Layout: single (one repository)' "$PROJ/.agentic/detect-report.md"
+}
+
+@test "init in a repository whose parent holds other repositories names them and the parent" {
+  WS="$BATS_TEST_TMPDIR"; ws_repo billing; ws_repo web; mkdir "$WS/plain"
+  run ini
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"billing, web"* ]]
+  [[ "$output" != *"plain"* ]]
+  [[ "$output" == *"run agentic init in $WS"* ]]
+}
+
+@test "init in a folder of repositories lists them, reads their build files and warns about their .agentic" {
+  WS="$BATS_TEST_TMPDIR/ws"; ws_repo api; ws_repo ui; mkdir -p "$WS/notes"
+  echo '{}' > "$WS/ui/package.json"
+  mkdir -p "$WS/api/.agentic"
+  run bash -c "cd '$WS' && bash '$A' init"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"workspace folder"*"api, ui"* ]]
+  [[ "$output" == *"api/.agentic is not read"* ]]
+  [[ "$output" != *"ui/.agentic"* ]]
+  [ "$(yq .project "$WS/.agentic/agentic.yaml")" = ws ]
+  grep -q '^Layout: multi, a workspace folder (api, ui); target: not set' "$WS/.agentic/detect-report.md"
+  grep -q 'ui/package.json' "$WS/.agentic/detect-report.md"
+}
+
+@test "init in a workspace folder records each repository with a remote origin as an add workspace line" {
+  WS="$BATS_TEST_TMPDIR/ws"; ws_repo api; ws_repo ui; ws_repo scratch
+  git -C "$WS/api" remote add origin 'https://user:tok123@git.example.com/team/api.git'
+  git -C "$WS/ui" remote add origin git@git.example.com:team/web-ui.git
+  run bash -c "cd '$WS' && bash '$A' init --bare"
+  [ "$status" -eq 0 ]
+  y="$WS/.agentic/agentic.yaml"
+  [ "$(yq -r '.setup[0]' "$y")" = "add workspace https://git.example.com/team/api.git" ]
+  [ "$(yq -r '.setup[1]' "$y")" = "add workspace git@git.example.com:team/web-ui.git --name ui" ]
+  [ "$(yq '.setup | length' "$y")" = 2 ]
+  run ! grep -rq tok123 "$WS/.agentic"
+  grep -B2 'add workspace https' "$y" | grep -q '/work/<name>'
+  make_agentic_dir
+  run "$REPO_ROOT/image/bin/agentic-config" validate "$WS/.agentic"
+  [ "$status" -eq 0 ]
 }

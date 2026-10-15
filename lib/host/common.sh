@@ -25,6 +25,8 @@ project_root() {
   done
   printf '%s\n' "$start"
 }
+# comma_list: stdin lines joined with ", ".
+comma_list() { paste -sd, - | sed 's/,/, /g'; }
 cfg_dir() { printf '%s\n' "$(project_root)/.agentic"; }
 need_config() {
   [ -f "$(cfg_dir)/agentic.yaml" ] || die "no .agentic/agentic.yaml in $(project_root); run agentic init"

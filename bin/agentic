@@ -23,6 +23,8 @@ agentic <command> [options]          run inside a project repository
   build [--refresh] [--no-cache]
                                      build the base if needed, then agentic-<project>:local
   login [claude|copilot]             log a harness in for this project (once)
+  login git [URL] [--token-var VAR] [--user U] [--name N --email E]
+                                     git push credentials and identity in .agentic/.env, then a check
   setup                              refine .agentic/ with the /agentic-setup skill
   shell [CMD...]                     throwaway container (removed on exit)
   doctor                             check the configured container: steps, tools, logins, MCP, certificates
@@ -45,7 +47,7 @@ agentic <command> [options]          run inside a project repository
   copy SRC DEST | mount SRC DEST [--readonly] | volume NAME DEST
                                      add a setup line (docs/setup.md), then build
   remove KIND KEY [--target T]       delete setup lines, then build
-  list                               the setup lines with their phase
+  list                               the built-in mounts, then the setup lines with their phase
   build-base [--force]               build agentic-dev-base:local (make build)
 EOF
 }
@@ -103,6 +105,19 @@ yaml_str() {
   else printf "'%s'\n" "${1//\'/\'\'}"; fi
 }
 
+# folder_lines ROOT: an `add workspace` line per repository of multi-layout ROOT whose origin is a
+# remote URL (credentials stripped), so a missing one is cloned into /work at start. The origin is
+# read from the repository's config file (origin_url), never with git.
+folder_lines() {
+  local r url n
+  while IFS= read -r r; do
+    url="$(origin_url "$1/$r" | sed -E 's#(://)[^/@]+@#\1#')"
+    case "$url" in https://*|ssh://*|git@*:*) ;; *) continue ;; esac
+    n="${url%/}"; n="${n##*[/:]}"; n="${n%.git}"
+    if [ "$n" = "$r" ]; then printf 'add workspace %s\n' "$url"; else printf 'add workspace %s --name %s\n' "$url" "$r"; fi
+  done < <(repo_dirs "$1")
+}
+
 # recommended_lines [IMAGE]: the recommended setup lines, from IMAGE (an overlay's, else the base's
 # file in it) or from this checkout; comments and blank lines dropped.
 recommended_lines() {
@@ -132,8 +147,28 @@ make_cfg() {
   exit 1
 }
 
+# init_layout_notes ROOT LAYOUT REPOS: what init found about the folder and what that means.
+init_layout_notes() {
+  local root="$1" r sib
+  case "$2" in
+    single)
+      sib="$(repo_dirs "$(dirname "$root")" | grep -vxF -- "$(basename "$root")" | comma_list || true)"
+      if [ -n "$sib" ]; then
+        echo "note: $(dirname "$root") also holds the repositories $sib;"
+        echo "  to work on them together, run agentic init in $(dirname "$root")"
+      fi ;;
+    multi)
+      echo "workspace folder with the repositories $3 (mounted together at /work)"
+      while IFS= read -r r; do
+        if [ -d "$root/$r/.agentic" ]; then
+          echo "warning: $r/.agentic is not read in a workspace folder; move what is needed up to $root/.agentic"
+        fi
+      done < <(repo_dirs "$root") ;;
+  esac
+}
+
 cmd_init() {
-  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r layout tgt
+  local force=0 bare=0 base="" envx=0 root cfg det name line files rec r layout tgt layout_line repos wsl
   while [ $# -gt 0 ]; do
     case "$1" in
       --force) force=1 ;;
@@ -168,23 +203,38 @@ cmd_init() {
   done
   det="$(detect_tools "$root")"
   name="$(slugify "$(basename "$root")")"
+  repos="$(repo_dirs "$root" | comma_list)"
+  case "$layout" in
+    single) layout_line="single (one repository)" ;;
+    *) layout_line="multi, a workspace folder ($repos); target: ${tgt:-not set}" ;;
+  esac
   if [ "$bare" = 0 ]; then rec="$(recommended_lines "$base")"; else rec=""; fi
+  wsl=""; if [ "$layout" = multi ]; then wsl="$(folder_lines "$root")"; fi
   while IFS= read -r line; do
     case "$line" in
       @TOOLS@) render_tools "$det" ;;
       @LAYOUT@) printf 'layout: %s\n' "$layout"; if [ -n "$tgt" ]; then printf 'target: %s\n' "$tgt"; fi ;;
       @BASE@) if [ -n "$base" ]; then printf 'base_image: %s\n' "$base"; fi ;;
       @SETUP@)
-        if [ -z "$rec" ]; then echo 'setup: []'
+        if [ -z "$rec$wsl" ]; then echo 'setup: []'
         else
-          echo 'setup:'; echo '  # recommended (delete a line to drop it)'
-          while IFS= read -r r; do printf '  - %s\n' "$(yaml_str "$r")"; done <<<"$rec"
+          echo 'setup:'
+          if [ -n "$wsl" ]; then
+            echo '  # the repositories of this folder: a missing one is cloned into /work/<name> at start'
+            while IFS= read -r r; do printf '  - %s\n' "$(yaml_str "$r")"; done <<<"$wsl"
+          fi
+          if [ -n "$rec" ]; then
+            echo '  # recommended (delete a line to drop it)'
+            while IFS= read -r r; do printf '  - %s\n' "$(yaml_str "$r")"; done <<<"$rec"
+          fi
         fi ;;
       *) printf '%s\n' "${line//@PROJECT@/$name}" ;;
     esac
   done < "$AGENTIC_ROOT/templates/agentic.yaml.tmpl" > "$cfg/agentic.yaml"
   {
     echo "# Detection report ($(date -u +%Y-%m-%d))"
+    echo
+    echo "Layout: $layout_line"
     echo
     echo "Build files found:"
     files="$(report_files "$root")"
@@ -195,7 +245,14 @@ cmd_init() {
     echo "Notes:"; grep '^note=' <<<"$det" | sed 's/^note=/- /' || true
   } > "$cfg/detect-report.md"
   echo "wrote $cfg/agentic.yaml"
+  init_layout_notes "$root" "$layout" "$repos"
   if [ "$layout" = multi ] && [ -z "$tgt" ]; then echo "note: $(target_hint "$root")"; fi
+  # the harness homes belong to the project name, not to .agentic/: a re-init finds them again
+  if [ -d "$AGENTIC_DATA/projects/$name/harness" ]; then
+    echo "note: $AGENTIC_DATA/projects/$name holds the data of an earlier project named $name;"
+    echo "  its logins, sessions and history are reused. To start fresh, delete its harness/ folder"
+    echo "  (docs/setup.md, \"Where things live\")."
+  fi
   echo "next: review it, then run: agentic build && agentic login && agentic dev"
 }
 
@@ -250,9 +307,17 @@ EOF
 
 cmd_login() {
   need_config
-  local h="${1:-claude}" img
-  case "$h" in claude|copilot) ;; *) die "usage: agentic login [claude|copilot]" ;; esac
+  local h="${1:-claude}" img tty=(-i)
+  case "$h" in claude|copilot|git) ;; *) die "usage: agentic login [claude|copilot|git]" ;; esac
   img="$(run_image)"
+  if [ "$h" = git ]; then
+    # push credentials and identity into .env, written by the image's agentic-git
+    shift
+    if [ -t 0 ] && [ -t 1 ]; then tty=(-it); fi
+    build_run_args "$img"
+    docker run --rm "${tty[@]}" "${RUN_ARGS[@]}" "$img" agentic-git login "$@"
+    return
+  fi
   if harness_authenticated "$h"; then say "$h already has a login or token for $(project_name); starting it anyway"; fi
   echo "Starting $h. Run /login, follow the instructions, then /exit. The login is kept for this project."
   build_run_args "$img"

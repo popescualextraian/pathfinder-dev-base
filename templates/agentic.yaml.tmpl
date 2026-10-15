@@ -2,18 +2,27 @@
 # agentic-dev-base. Secrets never go here: put them in .agentic/.env (git-ignored).
 version: 2
 project: @PROJECT@
+# layout: single (the project root is one repository) or multi (repositories in its direct
+# subfolders); target (multi only): the repository a task starts in (agentic target NAME).
 @LAYOUT@
 @BASE@
+# targets (not target above): the harnesses where setup lines install plugins, marketplaces, MCP servers and assets (both harnesses
+# unless a line narrows it with --target).
 targets: [claude, copilot]
 
 @TOOLS@
 
+# harness: which agent runs when none is named (agentic run without --agent, agentic setup).
 harness:
   default: claude
 
 docker:
   socket: false   # true mounts the host Docker socket (host root)
 
+# Always mounted, not lines here: the project at /work (a task too; --worktree makes one inside it),
+# .agentic/ read-only at /agentic-config, and the project's logins, sessions and clones
+# (docs/setup.md, "Where things live"). `agentic list` shows them with the lines below.
+#
 # The container's setup: agentic commands without the agentic prefix. `agentic add ...` appends
 # here; `agentic remove ...` deletes; delete a line by hand to drop it, then run agentic build.
 @SETUP@

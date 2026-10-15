@@ -79,6 +79,22 @@ lay() { bash -c "source '$REPO_ROOT/lib/host/common.sh'; source '$REPO_ROOT/lib/
   [ -z "$(lay "detect_layout '$BATS_TEST_TMPDIR/none'")" ]
 }
 
+@test "origin_url reads remote origin from .git/config as a file, without git" {
+  git -C "$M/api" remote add up https://example.com/g/up.git
+  git -C "$M/api" remote add origin https://example.com/g/api.git
+  # git stubbed to fail: the file is read without it
+  mkdir -p "$BATS_TEST_TMPDIR/nogit"; printf '#!/bin/sh\nexit 99\n' > "$BATS_TEST_TMPDIR/nogit/git"; chmod +x "$BATS_TEST_TMPDIR/nogit/git"
+  [ "$(PATH="$BATS_TEST_TMPDIR/nogit:$PATH" lay "origin_url '$M/api'")" = https://example.com/g/api.git ]
+  [ -z "$(lay "origin_url '$M/web'")" ]
+  mkdir -p "$BATS_TEST_TMPDIR/none"
+  [ -z "$(lay "origin_url '$BATS_TEST_TMPDIR/none'")" ]
+  # a symlinked config is not read
+  git init -q "$BATS_TEST_TMPDIR/l"; mv "$BATS_TEST_TMPDIR/l/.git/config" "$BATS_TEST_TMPDIR/cfg"
+  ln -s "$BATS_TEST_TMPDIR/cfg" "$BATS_TEST_TMPDIR/l/.git/config"
+  printf '[remote "origin"]\n\turl = https://example.com/x.git\n' >> "$BATS_TEST_TMPDIR/cfg"
+  [ -z "$(lay "origin_url '$BATS_TEST_TMPDIR/l'")" ]
+}
+
 @test "yaml_set_top removes its temp file and fails when the write fails" {
   [ "$(id -u)" != 0 ] || skip "root reads a mode 000 file"
   f="$BATS_TEST_TMPDIR/y.yaml"

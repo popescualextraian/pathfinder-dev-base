@@ -20,7 +20,7 @@ goes to `targets:` (both harnesses by default).
 | `add agent PATH` | build | yes | `.agentic/agents/<name>.md`; a line only when it narrows the target |
 | `add command PATH` | build | yes | `.agentic/commands/<name>.md` (Claude only); a line only when it narrows the target |
 | `copy SRC DEST` | build | no | copies `.agentic/SRC` into the image at `DEST`; never for secrets |
-| `add workspace URL\|PATH [--name N] [--ref R]` | start | no | a URL is cloned once into `/workspaces/repos/<name>`; a path is a bind mount (local only) |
+| `add workspace URL\|PATH [--name N] [--ref R]` | start | no | a URL is cloned once into `/workspaces/repos/<name>` (in a workspace folder: `/work/<name>`); a path is a bind mount (local only) |
 | `mount SRC DEST [--readonly]` | run | no | bind-mounts a host path (`~` is the host home); local only; tasks receive mounts too |
 | `volume NAME DEST` | run | no | a Docker named volume (caches such as `~/.m2`), local and remote |
 

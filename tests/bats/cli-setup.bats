@@ -73,6 +73,14 @@ edit_call() { docker_sub run | tail -n +2; }
   [[ "$output" == *"the clone stays in $AGENTIC_WORKSPACES/demo/repos/api"* ]]
 }
 
+@test "remove workspace in a workspace folder says the clone stays in the folder" {
+  W="$BATS_TEST_TMPDIR/wsf"; mkdir -p "$W/.agentic"; git init -q "$W/api"
+  printf 'version: 2\nproject: wsd\nlayout: multi\n' > "$W/.agentic/agentic.yaml"
+  DOCKER_RUN_OUT="removed: add workspace https://example.com/api.git" run bash -c "cd '$W' && source '$A'; main remove workspace api --no-build"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the clone stays in $W/api"* ]]
+}
+
 @test "remove skill deletes its folder in .agentic" {
   mkdir -p "$PROJ/.agentic/skills/review"
   DOCKER_RUN_RC=3 run in_project 'main remove skill skills/review --no-build'
@@ -163,4 +171,15 @@ edit_call() { docker_sub run | tail -n +2; }
     [ "$status" -ne 0 ]
     [[ "$output" == "agentic: usage: agentic "* ]]
   done
+}
+
+@test "list shows the built-in mounts first, then the setup lines" {
+  DOCKER_RUN_OUT=$'build\tadd plugin a@m' run in_project 'main list'
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = $'built-in\t'"$PROJ"' -> /work (a task too; --worktree works in a worktree inside it)' ]
+  [[ "$output" == *$'built-in\t'"$PROJ/.agentic"' -> /agentic-config (read-only)'* ]]
+  [[ "$output" == *$'built-in\t'"$AGENTIC_DATA/projects/demo/harness/claude"' -> /home/dev/.claude'* ]]
+  [[ "$output" == *$'built-in\t'"$AGENTIC_DATA/projects/demo/harness/copilot"' -> /home/dev/.copilot'* ]]
+  [[ "$output" == *$'built-in\t'"$AGENTIC_WORKSPACES/demo/repos"' -> /workspaces/repos'* ]]
+  [ "${lines[-1]}" = $'build\tadd plugin a@m' ]
 }

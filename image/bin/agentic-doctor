@@ -59,6 +59,30 @@ if [ -n "$(token COPILOT_GITHUB_TOKEN)$(token GH_TOKEN)" ] \
    || jq -e '(.logged_in_users // []) | length > 0' "$(copilot_dir)/config.json" >/dev/null 2>&1; then
   ok "copilot"
 else warn "copilot: not authenticated (agentic login copilot, or COPILOT_GITHUB_TOKEN in .agentic/.env)"; fi
+# git: a credential helper for each origin's host (ssh is rewritten to https), and an identity. /work
+# is one repository or a workspace folder of repositories one level down.
+gw="${AGENTIC_WORK:-/work}"; grepos=()
+if [ -e "$gw/.git" ]; then grepos=("$gw")
+elif [ -d "$gw" ]; then
+  for d in "$gw"/*/; do if [ -e "$d.git" ]; then grepos+=("${d%/}"); fi; done
+  if [ "${#grepos[@]}" -gt 0 ]; then ok "workspace folder: $(for d in "${grepos[@]}"; do basename "$d"; done | paste -sd, - | sed 's/,/, /g')"
+  else warn "no git repository in $gw (agentic login git URL, then clone into it)"; fi
+fi
+ghosts=(); gid=""
+for d in "${grepos[@]}"; do
+  origin="$(git -C "$d" remote get-url origin 2>/dev/null)" || continue
+  ghost="$(sed -E 's#^[a-z+]+://##; s#^[^@/]*@##; s#[:/].*$##' <<<"$origin")"
+  gid="$d"
+  [[ " ${ghosts[*]} " == *" $ghost "* ]] && continue
+  ghosts+=("$ghost")
+  if [ -n "$(git -C "$d" config --get-urlmatch credential.helper "https://$ghost/" 2>/dev/null)" ]; then ok "git ($ghost)"
+  else warn "git: no credentials for $ghost (agentic login git)"; fi
+done
+if [ -n "$gid" ]; then
+  if [ -z "${GIT_AUTHOR_NAME:-$(git -C "$gid" config user.name 2>/dev/null)}" ] || [ -z "${GIT_AUTHOR_EMAIL:-$(git -C "$gid" config user.email 2>/dev/null)}" ]; then
+    warn "git: no commit identity (agentic login git --name N --email E)"
+  fi
+fi
 
 echo "mcp servers"
 while IFS=$'\t' read -r name type target; do

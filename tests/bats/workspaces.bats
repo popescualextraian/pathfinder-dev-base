@@ -57,3 +57,26 @@ conf() { jq -n --args '{version: 2, project: "demo", setup: $ARGS.positional}' "
   [ "$status" -eq 2 ]
   [[ "$output" == *"is not a git clone; left alone"* ]]
 }
+
+@test "in a workspace folder a URL workspace is cloned into the folder, once" {
+  export AGENTIC_WORK="$BATS_TEST_TMPDIR/work"; mkdir -p "$AGENTIC_WORK"
+  conf "add workspace https://example.invalid/api.git"
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$R.insteadOf" GIT_CONFIG_VALUE_0="https://example.invalid/api.git"
+  run bash "$S"
+  [ "$status" -eq 0 ]
+  [ -d "$AGENTIC_WORK/api/.git" ]
+  [ ! -e "$AGENTIC_WORKSPACES_DIR/repos/api" ]
+  echo change > "$AGENTIC_WORK/api/local.txt"
+  run bash "$S" --check
+  [ "$status" -eq 0 ]
+  [ -f "$AGENTIC_WORK/api/local.txt" ]
+}
+
+@test "when /work is a repository a URL workspace still goes to /workspaces/repos" {
+  export AGENTIC_WORK="$BATS_TEST_TMPDIR/work"; git init -q "$AGENTIC_WORK"
+  conf "add workspace https://example.invalid/api.git"
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$R.insteadOf" GIT_CONFIG_VALUE_0="https://example.invalid/api.git"
+  bash "$S"
+  [ -d "$AGENTIC_WORKSPACES_DIR/repos/api/.git" ]
+  [ ! -e "$AGENTIC_WORK/api" ]
+}

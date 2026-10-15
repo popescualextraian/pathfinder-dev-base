@@ -12,6 +12,17 @@ repo_dirs() {
   done | LC_ALL=C sort
 }
 
+# origin_url DIR: the url of remote "origin" in DIR/.git/config, read as a file (never with git); empty
+# when DIR/.git is no plain directory or the config is no regular file or names no origin.
+origin_url() {
+  local c="$1/.git/config"
+  { [ -d "$1/.git" ] && [ ! -L "$1/.git" ] && [ -f "$c" ] && [ ! -L "$c" ]; } || return 0
+  awk '
+    /^[[:space:]]*\[/ { sec = $0; gsub(/[[:space:]]/, "", sec); o = (sec == "[remote\"origin\"]"); next }
+    o && tolower($0) ~ /^[[:space:]]*url[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]+$/, ""); print; exit }
+  ' "$c"
+}
+
 # detect_layout ROOT: single when ROOT holds .git, multi when a direct subfolder does, else nothing.
 detect_layout() {
   if [ -e "$1/.git" ]; then echo single

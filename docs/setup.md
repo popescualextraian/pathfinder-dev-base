@@ -45,7 +45,7 @@ order on every build.
 | `add agent PATH` | build | yes | copies an agent file into `.agentic/agents/` |
 | `add command PATH` | build | yes | copies a slash command into `.agentic/commands/` (Claude only) |
 | `copy SRC DEST` | build | no | copies a file or folder into the image at `DEST`; an outside `SRC` is first copied into `.agentic/files/` |
-| `add workspace URL\|PATH [--name N] [--ref R]` | start | no | a URL is cloned once into `/workspaces/repos/<name>`; a path is bind-mounted there (local only) |
+| `add workspace URL\|PATH [--name N] [--ref R]` | start | no | a URL is cloned once into `/workspaces/repos/<name>` (in a workspace folder: `/work/<name>`); a path is bind-mounted there (local only) |
 | `mount SRC DEST [--readonly]` | run | no | bind-mounts a host path; `~` is your home, a relative path is relative to the project root |
 | `volume NAME DEST` | run | no | a Docker named volume, `agentic-<project>-NAME` |
 
@@ -86,7 +86,7 @@ Rules the commands enforce:
 | Shell command | What it does |
 |---|---|
 | `agentic remove KIND KEY [--target T]` | deletes the matching lines, then builds. Keys: the plugin id, the marketplace source, the MCP name, the copy `DEST`, the asset path, the workspace name, the mount `DEST`, the volume name |
-| `agentic list` | prints every line with its phase |
+| `agentic list` | prints the built-in mounts (`built-in`: the repository, `.agentic/`, the harness homes, the clones; see [Where things live](#where-things-live)), then every line with its phase |
 | `--no-build` | on any add or remove: change the file only |
 | `--yes` | recreate a running dev container without asking |
 | `agentic build --refresh` | rebuild the setup lines without the cache, to pull newer plugins and marketplaces |
@@ -153,6 +153,108 @@ accept that.
 | Plugins, marketplaces, MCP servers, assets, copied files, tools | rebuilt | image |
 | Anything installed by hand, files outside the mounts | no | — |
 | Build caches | only with a `volume` line | named volume |
+
+## Git: push credentials and identity
+
+No SSH keys reach the container; git pushes over https with a token from `.env`. One command sets
+it up, on the host or (as the setup skill does) inside the container:
+
+```
+agentic login git                                   # the origin of the repository
+agentic login git https://git.example.com/team/docs.git --user bot  # token in GIT_TOKEN
+```
+
+It writes, into `.agentic/.env`, the `GIT_CONFIG_*` entries git reads natively: for the URL's host,
+a credential helper that reads the token variable when git runs (github.com: `x-access-token` and
+`GH_TOKEN`; a GitLab host: `oauth2` and `GITLAB_TOKEN`; any other host: `GIT_TOKEN`, and
+`--user` is required; `--token-var NAME` reads another variable, and takes its upper-case name,
+never the token), and for an ssh remote a rewrite to https. Entries for other hosts are kept. A missing
+token gets an empty placeholder in `.env` to fill in. Then it checks read access with
+`git ls-remote`; pushing needs a token with write access. The container reads `.env` at start:
+`agentic dev recreate` afterwards.
+
+The commit identity comes from your host's `git config user.name` and `user.email`. Without one,
+pass `--name "Your Name" --email you@example.com`; that writes `GIT_AUTHOR_*` and
+`GIT_COMMITTER_*` into `.env`. `agentic doctor` warns when the origin's host has no credentials or
+there is no identity.
+
+## Several repositories: a workspace folder
+
+A project folder need not be a repository. Make a folder, put the repositories in it, one level
+down, and run `agentic init` in the folder; the dev container mounts the whole folder at `/work`
+(`/work/api`, `/work/ui`), so the agent works on all of them together. agentic does not manage
+the repositories on the host: clone, pull and delete them yourself, or inside `agentic shell`.
+`init` needs at least one repository in the folder.
+
+```
+mkdir ~/work/shop && cd ~/work/shop
+git clone https://git.example.com/team/api.git && git clone https://git.example.com/team/ui.git
+agentic init                                         # layout: multi
+agentic target api                                   # the default repository of a task
+agentic login git https://git.example.com/team/api.git
+agentic build && agentic dev
+```
+
+`init` says what it found and never asks, using file tests only (never git): a single repository
+(`layout: single`, with a hint when the parent folder holds other repositories) or a workspace
+folder (`layout: multi`: it lists the repositories, reads their build files, and warns about a
+`.agentic/` inside one of them: only the folder's own is read). With exactly one repository it
+also writes `target:`; with several it prints the `agentic target NAME` hint. The layout and the
+target are recorded in `agentic.yaml` and the `Layout:` line of `.agentic/detect-report.md`. The
+CLI finds the folder's `.agentic/` from inside one of its repositories too (the nearest
+`.agentic/agentic.yaml` upwards). `agentic doctor`, in the container, lists the repositories and
+checks each origin's host for credentials.
+
+Tasks start in the target repository of the folder, `/work/<target>`: `target:` in `agentic.yaml`,
+or `agentic run --target api "..."`. The task container mounts the folder as the dev container
+does; the host clones nothing (see [detached-mode.md](detached-mode.md)).
+
+On Windows, keep the folder on the Linux filesystem of WSL (`~/work/shop`) rather than under
+`/mnt/c`: file access from the container is many times faster there.
+
+In a workspace folder, an `add workspace URL` line clones into the folder itself (`/work/<name>`,
+on the host `<folder>/<name>`) at the next start when that folder is missing, and never touches
+an existing one; a repository cloned there can then be a target. `init` writes one such line for
+each repository whose origin is a remote URL (read from its `.git/config` file), so `.agentic/`
+records the set: copy it to an empty folder on another machine (or give it to a
+teammate), run `agentic login git`, and the first `agentic dev` clones the rest. For a folder set up
+before, add them by hand:
+
+```
+agentic add workspace https://git.example.com/team/api.git
+```
+
+A path line still bind-mounts a folder from elsewhere at `/workspaces/repos/<name>`.
+
+## Where things live
+
+Only the configuration lives in the repository. Everything a harness remembers lives on your
+machine, under the project name (`project:` in `agentic.yaml`), not under `.agentic/`:
+
+| What | On the host | In the container |
+|---|---|---|
+| Configuration and secrets | `<repository>/.agentic/` (`.env` git-ignored) | `/agentic-config` (read-only) |
+| Claude: logins, sessions, history, memory, settings | `~/.agentic/projects/<project>/harness/claude/` | `/home/dev/.claude` |
+| Copilot: the same | `~/.agentic/projects/<project>/harness/copilot/` | `/home/dev/.copilot` |
+| Clones of URL workspaces (single layout) | `~/agentic-workspaces/<project>/repos/` | `/workspaces/repos` |
+| Task records and task harness homes | `~/agentic-workspaces/<project>/tasks/`, `~/.agentic/projects/<project>/tasks/` | `/tasks` (in task containers) |
+| `volume` lines | Docker volumes `agentic-<project>-<name>` | the line's path |
+
+`AGENTIC_DATA` and `AGENTIC_WORKSPACES` move `~/.agentic` and `~/agentic-workspaces`
+([tasks.md](tasks.md#files) has the full layout).
+
+So deleting `.agentic/` and running `agentic init` again finds the same project name and reuses
+its logins, sessions and history; `init` says so. To start fresh:
+
+| To drop | Delete |
+|---|---|
+| one harness's logins, sessions and history | `~/.agentic/projects/<project>/harness/<claude\|copilot>/` |
+| clones | `~/agentic-workspaces/<project>/repos/<name>/`, after checking for unpushed work |
+| a volume | `docker volume rm agentic-<project>-<name>` |
+| one task | `agentic clean ID` |
+
+Two repositories with the same project name share these homes and see each other's sessions and
+logins; give one of them another `project:` before its first `agentic build`.
 
 ## Recommended lines
 

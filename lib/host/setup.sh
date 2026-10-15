@@ -112,7 +112,7 @@ cmd_remove() {
   # KIND KEY, then nothing or --target T: any other word (--target=T) would widen the removal
   [ "${#WORDS[@]}" -eq 2 ] || { [ "${#WORDS[@]}" -eq 4 ] && [ "${WORDS[2]}" = --target ]; } \
     || die "usage: agentic remove KIND KEY [--target T]"
-  local kind="${WORDS[0]}" key="${WORDS[1]}" out rc=0 cfg
+  local kind="${WORDS[0]}" key="${WORDS[1]}" out rc=0 cfg d
   cfg="$(cfg_dir)"
   case "$kind" in
     skill|agent|command)
@@ -133,11 +133,25 @@ cmd_remove() {
     *) [ "$rc" = 0 ] || exit "$rc" ;;
   esac
   case "$kind" in
-    workspace) echo "the clone stays in $(realpath -m -- "$AGENTIC_WORKSPACES")/$(project_name)/repos/$key; delete it yourself when you are done" ;;
+    workspace)
+      if [ "$(yaml_top "$cfg/agentic.yaml" layout)" != multi ]; then d="$(realpath -m -- "$AGENTIC_WORKSPACES")/$(project_name)/repos/$key"
+      else d="$(project_root)/$key"; fi
+      echo "the clone stays in $d; delete it yourself when you are done" ;;
     volume) echo "the Docker volume agentic-$(project_name)-$key stays; docker volume rm agentic-$(project_name)-$key deletes it" ;;
     copy) echo "files under .agentic/files/ stay; delete the one you no longer need" ;;
   esac
   after_change "$BUILD" "$YES"
 }
 
-cmd_list(){ need_config; setup_edit list; }
+# cmd_list: the built-in mounts every container of the project gets (build_run_args), then the lines.
+cmd_list(){
+  need_config
+  local root p t=$'\t'
+  root="$(project_root)"; p="$(project_name)"
+  echo "built-in${t}$root -> /work (a task too; --worktree works in a worktree inside it)"
+  echo "built-in${t}$root/.agentic -> /agentic-config (read-only)"
+  echo "built-in${t}$AGENTIC_DATA/projects/$p/harness/claude -> /home/dev/.claude"
+  echo "built-in${t}$AGENTIC_DATA/projects/$p/harness/copilot -> /home/dev/.copilot"
+  echo "built-in${t}$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/repos -> /workspaces/repos"
+  setup_edit list
+}

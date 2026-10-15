@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Clones every `add workspace URL` line that has no clone yet into /workspaces/repos/<name>. A clone
-# is never pulled, reset or deleted: it may hold the user's work. Credentials come from the
+# Clones every `add workspace URL` line that has no clone yet: into /work/<name> when /work is a
+# workspace folder (no repository itself), else into /workspaces/repos/<name>. A clone is never
+# pulled, reset or deleted: it may hold the user's work. Credentials come from the
 # environment as for any git use (.env). Path workspaces are bind mounts made by the host CLI.
 set -uo pipefail
 source "${AGENTIC_DIR:-/opt/agentic}/lib/common.sh"
 source "$AGENTIC_DIR/lib/setup-line.sh"
 source "$AGENTIC_DIR/lib/gitenv.sh"
 check=0; [ "${1:-}" = --check ] && check=1
-ws="${AGENTIC_WORKSPACES_DIR:-/workspaces}/repos"
+work="${AGENTIC_WORK:-/work}"
+if [ -d "$work" ] && [ ! -e "$work/.git" ]; then ws="$work"; else ws="${AGENTIC_WORKSPACES_DIR:-/workspaces}/repos"; fi
 rc=0
 while IFS= read -r l; do
   parse_line "$l" || continue

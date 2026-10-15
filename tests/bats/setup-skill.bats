@@ -21,3 +21,10 @@ load helpers
   grep -q 'layout: multi' "$REPO_ROOT/skills/agentic-setup/SKILL.md"
   grep -q 'agentic target NAME' "$REPO_ROOT/skills/agentic-setup/SKILL.md"
 }
+
+@test "the setup skill sets git up with agentic-git login, never the GIT_CONFIG keys by hand" {
+  s="$REPO_ROOT/skills/agentic-setup/SKILL.md"
+  grep -q 'agentic-git login' "$s"
+  if grep -q 'agentic-env add GIT_CONFIG' "$s"; then return 1; fi
+  grep -q 'identity from the host' "$s"
+}
