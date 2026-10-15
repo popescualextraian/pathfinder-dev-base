@@ -113,9 +113,30 @@ Follow, answer, cancel and stop it from the CLI or a small local API.
 agentic run --worktree --allow open-pr "Fix the failing login test and open a pull request"
 agentic follow T-20261012-a3f1
 agentic answer T-20261012-a3f1 Q1 "Yes, use the staging config" --allow push
+agentic send T-20261012-a3f1 "Also add a test for the logout path"
 agentic status
 agentic stop T-20261012-a3f1
 agentic clean T-20261012-a3f1
+```
+
+The CLI only relays: each command goes to the bridge in the task container over HTTP or
+WebSocket, and the bridge is the only process that speaks ACP to the agent.
+
+```mermaid
+flowchart LR
+  subgraph host["Host"]
+    cli["<b>agentic CLI</b><br/>run · send · resume · answer<br/>cancel · stop · follow"]
+  end
+  subgraph task["Task container"]
+    bridge["<b>Bridge · HTTP / WS</b><br/>/status · /events · /prompt · /answer<br/>/cancel · /stop · /ask · /gate"]
+    agent["<b>Agent · ACP</b><br/>claude-agent-acp or copilot --acp"]
+    tools["<b>Agent's tools</b><br/>gate.sh · agentic-ask"]
+  end
+  cli -- "HTTP / WS" --> bridge
+  bridge -- "initialize, session/new | load,<br/>session/prompt, session/cancel" --> agent
+  agent -- "session/update,<br/>request_permission" --> bridge
+  agent --> tools
+  tools -- "POST /ask, /gate" --> bridge
 ```
 
 Full guide: [`docs/detached-mode.md`](docs/detached-mode.md). States, API, events, files and
