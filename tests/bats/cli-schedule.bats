@@ -212,6 +212,7 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
   ended failed "agent exited with code 3"
   ag schedule run a
   grep -qx '| State | failed (agent exited with code 3) |' "$(results a)"
+  grep -q 'Reason: agent exited with code 3' "$(results a)"
   [ -z "$(ls -A "$T")" ]
   ag schedule add b --cron "0 2 * * *" --keep-on-failure "x"
   ag schedule run b
@@ -263,6 +264,7 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
   ag schedule add once --at "$when" "x"
   sed -i "s/^when=[0-9]\{4\}/when=1999/" "$S/once/schedule"
   ag schedule fire once
+  grep -q 'fire once' "$S/once/fire.log"
   [ ! -e "$R/once" ]; grep -q '# agentic:demo:once' "$CT"
   sed -i "s/^when=1999/when=$(date +%Y)/" "$S/once/schedule"
   ended stopped scheduled-done "ok"
@@ -287,4 +289,51 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
   run ag schedule run a
   [ "$status" -eq 0 ]
   grep -q '/stop' "$CURL_LOG"
+}
+
+@test "a huge result.md is capped at 64 KiB and the firing still completes" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended stopped scheduled-done "ok"
+  echo "head -c 400000 /dev/zero | tr '\\0' x > \"\$d/result.md\"" >> "$DOCKER_START_HOOK"
+  run ag schedule run a
+  [ "$status" -eq 0 ]
+  f="$(results a)"
+  [ -n "$f" ]
+  [ "$(grep -c '^xxxx' "$f")" -eq 1 ]
+  [ "$(wc -c < "$f")" -lt 66000 ]
+  [ -z "$(ls -A "$T")" ]; [ ! -e "$S/a/lock" ]
+}
+
+@test "a failed run with an empty result.md still reports its reason" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended failed "boom" ""
+  ag schedule run a
+  grep -q 'Reason: boom' "$(results a)"
+}
+
+@test "long agent-written header values are capped at 500 characters" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended stopped scheduled-done "ok"
+  echo "jq --arg b \"\$(head -c 3000 /dev/zero | tr '\\0' b)\" '.branch=\$b' \"\$d/state.json\" > \"\$d/s2\" && mv \"\$d/s2\" \"\$d/state.json\"" >> "$DOCKER_START_HOOK"
+  ag schedule run a
+  [ "$(grep '^| Branch |' "$(results a)" | wc -c)" -lt 600 ]
+}
+
+@test "a record that says cleaned does not skip the worktree check" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended stopped scheduled-done "ok"
+  echo "jq '.cleaned=true' \"\$d/state.json\" > \"\$d/s2\" && mv \"\$d/s2\" \"\$d/state.json\"" >> "$DOCKER_START_HOOK"
+  export DOCKER_WT_ERR="agentic-worktree: has commits on no remote branch"
+  ag schedule run a
+  grep -q '| Kept | unpushed work; agentic clean ' "$(results a)"
+  [ -n "$(ls -A "$T")" ]
+}
+
+@test "a worktree run whose container is not running is kept unchecked" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended stopped scheduled-done "ok"
+  echo "echo exited > \"$BATS_TEST_TMPDIR/docker.status\"" >> "$DOCKER_START_HOOK"
+  ag schedule run a
+  grep -q '| Kept | worktree not checked; agentic clean ' "$(results a)"
+  [ -n "$(ls -A "$T")" ]
 }

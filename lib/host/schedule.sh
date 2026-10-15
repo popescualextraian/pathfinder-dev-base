@@ -221,8 +221,13 @@ sched_wait() {
   done
 }
 
-# cell TEXT: one Markdown table cell (one line, no control characters, | escaped).
-cell() { printf '%s' "$1" | plain | tr '\n\t' '  ' | sed 's/|/\\|/g'; }
+# cell TEXT: one Markdown table cell (at most 500 characters, one line, no control characters, | escaped).
+cell() { local t="${1:0:500}"; printf '%s' "$t" | plain | tr '\n\t' '  ' | sed 's/|/\\|/g'; }
+
+# sched_read_capped ID NAME: at most 64 KiB of a task file, capped at the read (no SIGPIPE).
+sched_read_capped() {
+  task_readable "$1" "$2" && dd if="$(task_dir "$1")/$2" iflag=nofollow,nonblock,count_bytes count=65536 status=none 2>/dev/null
+}
 
 # sched_result NAME ID STATE KEPT: the result file of one firing. Agent-written files are read with
 # the safe-read rules and capped.
@@ -234,9 +239,9 @@ sched_result() {
     branch="$(record_get "$id" .branch)"
     allowed="$(record_get "$id" '(.allowed_actions // []) | join(", ")')"
     open="$(open_questions "$id" | jq -r 'map("\(.id): \(.text)") | join("; ")' 2>/dev/null || true)"
-    if task_readable "$id" result.md; then body="$(task_read "$id" result.md | head -c 65536 | plain)"
-    elif [[ "$state" == failed* ]]; then
-      body="$(printf 'Reason: %s\n\n' "$(record_get "$id" .reason | plain)"; if task_readable "$id" bridge.log; then task_read "$id" bridge.log | tail -n 20 | plain; fi)"
+    if [[ "$state" == failed* ]]; then
+      body="$(r="$(record_get "$id" .reason)"; printf 'Reason: %s\n\n' "$(printf '%s' "${r:0:500}" | plain)"; if task_readable "$id" bridge.log; then task_read "$id" bridge.log | tail -n 20 | plain; fi)"
+    elif task_readable "$id" result.md; then body="$(sched_read_capped "$id" result.md | plain)"
     fi
   fi
   {
@@ -284,8 +289,12 @@ sched_fire() {
   case "$st" in stopped|failed) st="$st (${reason:-no reason})" ;; *) st="${st:-unknown} (the run did not end)" ;; esac
   kept=""
   c="$(task_container "$id")"
-  if task_has_worktree "$id" && [ "$(record_get "$id" .cleaned)" != true ] && [ "$(container_status "$id")" = running ]; then
-    worktree_cmd "$id" check >/dev/null 2>&1 || kept="unpushed work"
+  if task_has_worktree "$id"; then
+    if [ "$(container_status "$id")" = running ]; then
+      worktree_cmd "$id" check >/dev/null 2>&1 || kept="unpushed work"
+    else
+      kept="worktree not checked"
+    fi
   fi
   if [ "$(container_status "$id")" = running ]; then docker stop "$c" >/dev/null 2>&1 || say "could not stop $c"; fi
   if [ -z "$kept" ] && [ "$(sched_get "$name" keep)" = 1 ]; then kept="--keep"; fi
