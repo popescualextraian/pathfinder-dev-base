@@ -54,9 +54,10 @@ agentic schedule results nightly-deps      # read what it did
 
 What happens at 02:00:
 
-1. cron calls `agentic schedule fire nightly-deps`. If the previous run of this schedule still
-   runs, or three tasks already run (`AGENTIC_MAX_RUNNING`), the firing is skipped and the skip is
-   recorded as a result.
+1. cron runs the schedule's launcher (`~/.agentic/projects/<project>/schedules/nightly-deps/fire`),
+   which calls `agentic schedule fire nightly-deps` in your project. If the previous run of this
+   schedule still runs, or three tasks already run (`AGENTIC_MAX_RUNNING`), the firing is skipped
+   and the skip is recorded as a result.
 2. A fresh task container starts, the agent works in `.worktrees/<id>` on a new branch, with the
    grants you gave. It is told that nobody is watching: it decides what it can and does not wait
    for answers.

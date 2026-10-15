@@ -80,21 +80,29 @@ crontab_set() {
   } | crontab - || die "could not write the crontab"
 }
 
-# cron_line NAME FIELDS: the crontab line that fires schedule NAME, with the paths and the Docker
-# and agentic locations captured now. No token or project setting goes in.
+# sched_launcher NAME: the script cron runs for schedule NAME: the project, the PATH and the Docker
+# and agentic locations captured now. Host-only, next to the definition; any path fits in it.
+sched_launcher() {
+  local f v; f="$(sched_dir "$1")/fire"
+  (umask 077
+    { printf '#!/usr/bin/env bash\n# schedule %s: written by agentic schedule add, run by cron\n' "$1"
+      printf 'export PATH=%q\n' "$PATH"
+      for v in DOCKER_HOST DOCKER_CONTEXT AGENTIC_DATA AGENTIC_WORKSPACES; do
+        if [ -n "${!v:-}" ]; then printf 'export %s=%q\n' "$v" "${!v}"; fi
+      done
+      printf 'cd %q || exit 1\n' "$(project_root)"
+      printf 'exec %q schedule fire %s\n' "$AGENTIC_ROOT/bin/agentic" "$1"
+    } > "$f.tmp"
+    chmod 700 "$f.tmp")
+  mv -f -- "$f.tmp" "$f"
+}
+
+# cron_line NAME FIELDS: the crontab line of schedule NAME. It only runs the launcher, so it stays
+# short (cron refuses lines over about 1000 characters) whatever the PATH holds.
 cron_line() {
-  local name="$1" cfields="$2" root bin v envs=()
-  root="$(project_root)"; bin="$AGENTIC_ROOT/bin/agentic"
-  for v in "$root" "$bin" "$PATH"; do cron_safe "$v" || die "a path for the crontab line has a quote, % or a newline: $(printf '%s' "$v" | plain)"; done
-  envs=("PATH='$PATH'")
-  for v in DOCKER_HOST DOCKER_CONTEXT AGENTIC_DATA AGENTIC_WORKSPACES; do
-    if [ -n "${!v:-}" ]; then
-      cron_safe "${!v}" || die "$v has a quote, % or a newline; the crontab line cannot hold it"
-      envs+=("$v='${!v}'")
-    fi
-  done
-  printf "%s cd '%s' && /usr/bin/env %s '%s' schedule fire %s >/dev/null 2>&1 %s\n" \
-    "$cfields" "$root" "${envs[*]}" "$bin" "$name" "$(cron_marker "$name")"
+  local f; f="$(sched_dir "$1")/fire"
+  cron_safe "$f" || die "the schedules folder $(printf '%s' "$f" | plain) has a quote, % or a newline; the crontab line cannot hold it"
+  printf "%s '%s' >/dev/null 2>&1 %s\n" "$2" "$f" "$(cron_marker "$1")"
 }
 
 sched_add() {
@@ -144,6 +152,7 @@ sched_add() {
     "$([ -n "$cron" ] && echo cron || echo at)" "${cron:-$at}" "$(IFS=,; echo "${allow[*]+"${allow[*]}"}")" "$agent" "$model" \
     "$target" "$worktree" "$keep" "$kof" "$secs" "$(date -Iseconds)" | sched_write "$name"
   (umask 077; printf '%s\n' "$prompt" > "$d/prompt.md")
+  sched_launcher "$name"
   if ! err="$(crontab_set "$name" "$line" 2>&1)"; then
     safe_rm "$(sched_root)" "$d"; die "could not write the crontab; nothing was added (${err#*: })"
   fi

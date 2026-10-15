@@ -81,6 +81,7 @@ $AGENTIC_DATA/projects/<project>/schedules/<name>/      host only, never mounted
 ├─ schedule        key=value: kind (cron|at), when, allow, agent, model, target, worktree,
 │                  keep, keep_on_failure, timeout, created
 ├─ prompt.md       the prompt
+├─ fire            the launcher cron runs (mode 700): PATH and locations, cd, agentic schedule fire
 ├─ lock/           exists while a firing runs; holds pid (S9)
 └─ fire.log        what fire printed, the last 1000 lines
 
@@ -94,7 +95,19 @@ directories are made by `bin/agentic` as the invoking user, mode 700 for `schedu
 ### 4.1 The crontab line
 
 ```
-0 2 * * 1-5 cd '/home/me/src/orders' && /usr/bin/env PATH='<PATH at add time>' '/opt/agentic-dev-base/bin/agentic' schedule fire nightly-deps >/dev/null 2>&1 # agentic:orders:nightly-deps
+0 2 * * 1-5 '/home/me/.agentic/projects/orders/schedules/nightly-deps/fire' >/dev/null 2>&1 # agentic:orders:nightly-deps
+```
+
+The line only runs the schedule's launcher, so it stays short: cron refuses lines over about 1000
+characters, and a `PATH` on WSL alone is often longer. The launcher holds the rest:
+
+```bash
+#!/usr/bin/env bash
+# schedule nightly-deps: written by agentic schedule add, run by cron
+export PATH=<PATH at add time>
+export AGENTIC_DATA=/home/me/.agentic
+cd /home/me/src/orders || exit 1
+exec /opt/agentic-dev-base/bin/agentic schedule fire nightly-deps
 ```
 
 - `add` and `remove` rewrite the crontab with `crontab -l` and `crontab -`, touching only lines
@@ -102,10 +115,12 @@ directories are made by `bin/agentic` as the invoking user, mode 700 for `schedu
   cannot be read or written fails the command and leaves the definition unchanged (add) or in
   place (remove). Only `crontab -l` saying "no crontab for" means an empty crontab; any other read
   failure fails `add` and `remove`, and the crontab is never replaced.
-- The project root, `bin/agentic` and `PATH` are absolute and captured at `add` time, single-quoted;
-  a path with a single quote or a newline is refused. Docker settings the CLI needs (`DOCKER_HOST`,
-  `DOCKER_CONTEXT`, `AGENTIC_DATA`, `AGENTIC_WORKSPACES`) are captured the same way when set.
-- No token or project setting goes into the line. Anything the run needs at its time comes from
+- The project root, `bin/agentic` and `PATH` are captured at `add` time into the launcher, shell-quoted
+  (`printf %q`), so any path fits. Docker settings the CLI needs (`DOCKER_HOST`, `DOCKER_CONTEXT`,
+  `AGENTIC_DATA`, `AGENTIC_WORKSPACES`) are captured the same way when set. Only the launcher's own
+  path goes into the crontab line, single-quoted; a schedules folder whose path has a single quote,
+  `%` (cron turns it into a newline) or a newline is refused.
+- No token or project setting goes into the line or the launcher. Anything the run needs at its time comes from
   `.agentic/.env`, as for `run`; `AGENTIC_NOTIFY_WEBHOOK` belongs there for scheduled runs.
 - `fire` writes its own log (`fire.log`, the last 1000 lines); cron's mail is not used.
 - `sweep_cleaned` (the host's removal of auto-cleaned tasks) leaves scheduled tasks alone: their

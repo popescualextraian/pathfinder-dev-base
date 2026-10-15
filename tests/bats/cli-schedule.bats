@@ -83,16 +83,38 @@ lib() { (cd "$PROJ" && source "$A" && "$@"); }
   for l in kind=cron "when=0 2 * * 1-5" allow=open-pr worktree=1 keep=0 keep_on_failure=0 timeout=5400; do grep -qxF -- "$l" "$S/nightly/schedule"; done
   [ "$(sed -n 1,2p "$CT")" = "$(printf '# mine\n5 4 * * * /usr/bin/true')" ]
   line="$(grep -F '# agentic:demo:nightly' "$CT")"
-  [[ "$line" == "0 2 * * 1-5 cd '$PROJ' && /usr/bin/env PATH='"* ]]
-  [[ "$line" == *" '$REPO_ROOT/bin/agentic' schedule fire nightly >/dev/null 2>&1 # agentic:demo:nightly" ]]
+  [ "$line" = "0 2 * * 1-5 '$S/nightly/fire' >/dev/null 2>&1 # agentic:demo:nightly" ]
   [ "$(grep -c agentic: "$CT")" = 1 ]
+  # the launcher: host-only, runs fire in the project with the PATH and locations captured now
+  [ "$(stat -c %a "$S/nightly/fire")" = 700 ]
+  bash -n "$S/nightly/fire"
+  grep -qxF "export PATH=$(printf '%q' "$PATH")" "$S/nightly/fire"
+  grep -qxF "cd $(printf '%q' "$PROJ") || exit 1" "$S/nightly/fire"
+  grep -qxF "exec $(printf '%q' "$REPO_ROOT/bin/agentic") schedule fire nightly" "$S/nightly/fire"
+}
+
+@test "a long PATH (as on WSL) stays out of the crontab line, which cron limits to about 1000 characters" {
+  long="$PATH"; for i in $(seq 40); do long="$long:/mnt/c/Program Files/Some Vendor $i/bin"; done
+  run env PATH="$long" bash -c "cd '$PROJ' && bash '$A' schedule add nightly --cron '0 2 * * *' x"
+  [ "$status" -eq 0 ]
+  line="$(grep -F '# agentic:demo:nightly' "$CT")"
+  [ "${#line}" -lt 300 ]
+  grep -qxF "export PATH=$(printf '%q' "$long")" "$S/nightly/fire"
+}
+
+@test "the launcher runs fire for its schedule in the project" {
+  ag schedule add nightly --cron "0 2 * * *" x
+  rm "$S/nightly/schedule"   # fire of a schedule without a definition only drops its crontab line
+  run "$S/nightly/fire"
+  [ "$status" -eq 0 ]
+  run ! grep -q '# agentic:demo:nightly' "$CT"
 }
 
 @test "add --at writes the fields of that minute; --no-worktree, --keep and --keep-on-failure are stored" {
   when="$(date -d '+2 days' '+%Y-%m-%d 06:05')"
   ag schedule add once --at "$when" --no-worktree --keep --keep-on-failure "x"
   for l in kind=at "when=$when" worktree=0 keep=1 keep_on_failure=1 timeout=7200; do grep -qxF -- "$l" "$S/once/schedule"; done
-  grep -q "^5 6 $(date -d "$when" +%-d) $(date -d "$when" +%-m) \* cd " "$CT"
+  grep -q "^5 6 $(date -d "$when" +%-d) $(date -d "$when" +%-m) \* '$S/once/fire' " "$CT"
 }
 
 @test "add refuses a bad name, an existing name, both or neither of --cron and --at, bad values, and writes nothing" {
@@ -110,11 +132,18 @@ lib() { (cd "$PROJ" && source "$A" && "$@"); }
   run ag schedule add a --cron "0 3 * * *" y; [ "$status" -ne 0 ]; [[ "$output" == *"exists"* ]]
 }
 
-@test "add refuses a path with a quote or a percent sign, which would break the crontab line" {
-  mv "$PROJ" "$BATS_TEST_TMPDIR/pro%j"; PROJ="$BATS_TEST_TMPDIR/pro%j"
+@test "a project path with a quote or a percent sign goes into the launcher, not the crontab line" {
+  mv "$PROJ" "$BATS_TEST_TMPDIR/pro%j'x"; PROJ="$BATS_TEST_TMPDIR/pro%j'x"
+  run ag schedule add a --cron "0 2 * * *" x
+  [ "$status" -eq 0 ]
+  grep -qxF "cd $(printf '%q' "$PROJ") || exit 1" "$S/a/fire"
+}
+
+@test "add refuses a schedules folder whose path would break the crontab line, and writes nothing" {
+  export AGENTIC_DATA="$BATS_TEST_TMPDIR/da%ta"
   run ag schedule add a --cron "0 2 * * *" x
   [ "$status" -ne 0 ]; [[ "$output" == *"quote, % or a newline"* ]]
-  [ ! -e "$S/a" ]
+  [ ! -e "$AGENTIC_DATA/projects/demo/schedules/a" ]; [ ! -e "$CT" ]
 }
 
 @test "a failing crontab write leaves no definition" {
