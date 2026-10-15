@@ -308,7 +308,10 @@ sched_fire() {
     if [ "$(container_status "$id")" = running ]; then
       worktree_cmd "$id" check >/dev/null 2>&1 || kept="unpushed work"
     else
-      kept="worktree not checked"
+      # the bridge removes the worktree on a clean auto-clean; a folder left in the checkout is unchecked work
+      local work wt; work="$(dotenv_value "$(host_file "$id" env)" AGENTIC_WORK 2>/dev/null || true)"
+      wt="$(project_root)${work#/work}/.worktrees/$id"
+      if [ -e "$wt" ] || [ -L "$wt" ]; then kept="worktree not checked"; fi
     fi
   fi
   if [ "$(container_status "$id")" = running ]; then docker stop "$c" >/dev/null 2>&1 || say "could not stop $c"; fi

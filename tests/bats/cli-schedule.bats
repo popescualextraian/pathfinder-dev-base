@@ -332,7 +332,7 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
 @test "a worktree run whose container is not running is kept unchecked" {
   ag schedule add a --cron "0 2 * * *" "x"
   ended stopped scheduled-done "ok"
-  echo "echo exited > \"$BATS_TEST_TMPDIR/docker.status\"" >> "$DOCKER_START_HOOK"
+  echo "echo exited > \"$BATS_TEST_TMPDIR/docker.status\"; mkdir -p \"$PROJ/.worktrees/\$(basename \"\$d\")\"" >> "$DOCKER_START_HOOK"
   ag schedule run a
   grep -q '| Kept | worktree not checked; agentic clean ' "$(results a)"
   [ -n "$(ls -A "$T")" ]
@@ -373,4 +373,13 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
   run ag doctor
   [ "$status" -eq 0 ]
   [[ "$output" == *"ok    cron"* ]]; [[ "$output" == *"ok    schedule nightly"* ]]
+}
+
+@test "an auto-cleaned run whose container exited is removed" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended stopped scheduled-done "ok"
+  echo "echo exited > \"$BATS_TEST_TMPDIR/docker.status\"" >> "$DOCKER_START_HOOK"
+  ag schedule run a
+  grep -qx '| Kept | no |' "$(results a)"
+  [ -z "$(ls -A "$T")" ]
 }
