@@ -1,7 +1,7 @@
 IMAGE ?= agentic-dev-base:local
 SHELL_SOURCES = $(wildcard bin/agentic lib/host/*.sh image/*.sh image/lib/*.sh image/start.d/*.sh \
   image/tools/*.sh image/bin/* image/profile.d/*.sh derive/*.sh tools/*.sh tests/image/*.sh \
-  image/task/*.sh image/task/lib/*.sh tests/e2e/*.sh image/cost/snapshot)
+  image/task/*.sh image/task/lib/*.sh tests/e2e/*.sh image/cost/snapshot image/cost/ccusage-collector)
 
 .DEFAULT_GOAL := test
 .PHONY: test lint build smoke

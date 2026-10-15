@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# ccusage-collector EVENT HARNESS: the cost-record/v1 of the session in the hook payload (stdin),
+# for any harness ccusage reads (spec C2, C4): claude from $CLAUDE_CONFIG_DIR, copilot from
+# $COPILOT_HOME/session-state. ccusage counts each request once, adds subagents, prices offline.
+set -euo pipefail
+harness="${2:?usage: ccusage-collector EVENT HARNESS}"
+sid="$(jq -r '.session_id // .sessionId // empty' 2>/dev/null || true)"
+[ -n "$sid" ] || exit 0
+args=(--json --offline)
+cfg="${AGENTIC_CONFIG_MOUNT:-/agentic-config}/cost/ccusage.json"
+if [ -f "$cfg" ]; then args+=(--config "$cfg"); fi   # the project's pricing overrides
+ccusage "$harness" session "${args[@]}" | jq -c --arg h "$harness" --arg s "$sid" --arg ts "$(date -u +%FT%TZ)" \
+  --arg v "$(ccusage --version 2>/dev/null | awk '{print $NF}')" '
+  # tokens with no price are unknown; a price with no tokens is Copilot credits (no shutdown yet)
+  def src($cost; $tokens): if $tokens == 0 and $cost > 0 then "billed-credits"
+    elif $cost == 0 and $tokens > 0 then "unknown" else "estimate" end;
+  .sessions[]? | select(.sessionId == $s)
+  | {schema: "cost-record/v1", ts: $ts, harness: $h, session: $s,
+     models: [.modelBreakdowns[]?
+       | {model: .modelName, input: .inputTokens, output: .outputTokens, cache_read: .cacheReadTokens,
+          cache_write: .cacheCreationTokens, cost: .cost,
+          cost_source: src(.cost; .inputTokens + .outputTokens + .cacheReadTokens + .cacheCreationTokens)}],
+     totals: {input: .inputTokens, output: .outputTokens, cache_read: .cacheReadTokens,
+              cache_write: .cacheCreationTokens, cost: {}},
+     producer: {collector: "ccusage", ccusage: $v}}
+  | .totals.cost = (reduce .models[] as $m ({}; .[$m.cost_source] += $m.cost))'
