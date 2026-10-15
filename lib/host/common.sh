@@ -115,7 +115,7 @@ project_run_args() {
   bind_src_ok "$repos" || die "$repos is a symlink or goes through one; refused"
   bind_src_ok "$cost" || die "$cost is a symlink or goes through one; refused"
   RUN_ARGS=(--label "agentic.project=$p" -v "$root:/work" -v "$repos:/workspaces/repos" -v "$cost:/cost"
-    -v "$cfg:/agentic-config:ro")
+    -v "$cfg:/agentic-config:ro" -e "AGENTIC_PROJECT=$p")
   shared_run_args "$1"
 }
 

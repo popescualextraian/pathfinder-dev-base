@@ -48,12 +48,18 @@ record() {
       <<<"$out" 2>>"$LOG")" || { log "the collector printed something that is not JSON"; return 0; }
   [ -n "$out" ] || return 0
   # task and dev containers share the ledger: one locked write per snapshot keeps lines whole
-  { flock 9 && printf '%s\n' "$out" >&9; } 9>>"$LEDGER_DIR/ledger.jsonl"
+  { flock 9 && printf '%s\n' "$out" >&9; } 9>>"$LEDGER_DIR/ledger.jsonl" || log "ledger append failed"
   return 0
 }
 
-if [ "${AGENTIC_COST_FOREGROUND:-0}" = 1 ]; then record; exit 0; fi
-# the payload is read before detaching: the harness closes the pipe when the hook returns
-payload="$(cat 2>/dev/null || true)"
+if [ "${AGENTIC_COST_FOREGROUND:-0}" = 1 ]; then
+  # one snapshot at a time per container, so an older one cannot land after a newer one
+  exec 8>>"$(dirname "$LOG")/cost.lock"
+  flock -w 90 8 || { log "busy; not recorded"; exit 0; }
+  record; exit 0
+fi
+# the payload is read before detaching: the harness closes the pipe when the hook returns; a
+# harness that never closes it must not hold the turn
+payload="$(timeout 5 cat 2>/dev/null || true)"
 printf '%s' "$payload" | AGENTIC_COST_FOREGROUND=1 setsid "$0" "$ev" "$harness" >/dev/null 2>&1 &
 exit 0

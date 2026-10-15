@@ -122,3 +122,32 @@ collector() { mkdir -p "$1"; printf '#!/usr/bin/env bash\n%s\n' "$3" > "$1/$2"; 
   [ "$(wc -l < "$LEDGER")" -eq 8 ]
   jq -e . "$LEDGER" >/dev/null
 }
+
+@test "snapshots started in order land in order, even when the first collector is slower" {
+  unset AGENTIC_COST_FOREGROUND
+  collector "$AGENTIC_COST_DIR/collectors" claude "s=\$(jq -r .session_id); if mkdir '$BATS_TEST_TMPDIR/first' 2>/dev/null; then sleep 2; fi; jq -c --arg s \"\$s\" '.session = \$s' <<<'$REC'"
+  "$S" turn <<<'{"session_id":"a"}'
+  sleep 0.5
+  "$S" turn <<<'{"session_id":"b"}'
+  for _ in $(seq 100); do [ "$(wc -l < "$LEDGER" 2>/dev/null || echo 0)" -ge 2 ] && break; sleep 0.1; done
+  [ "$(jq -sc 'map(.session)' "$LEDGER")" = '["a","b"]' ]
+}
+
+@test "a harness that never closes stdin does not hold the hook" {
+  unset AGENTIC_COST_FOREGROUND
+  collector "$AGENTIC_COST_DIR/collectors" claude "echo '$REC'"
+  SECONDS=0
+  # process substitution: the hook is a plain command, so only it is timed, not the stdin holder
+  "$S" turn < <(exec sleep 30)
+  [ "$SECONDS" -lt 8 ]
+  pkill -f '^sleep 30$' || true
+}
+
+@test "a failed ledger append is logged and the exit is 0" {
+  [ "$(id -u)" -ne 0 ] || skip "root ignores file modes"
+  collector "$AGENTIC_COST_DIR/collectors" claude "echo '$REC'"
+  : > "$LEDGER"; chmod 444 "$LEDGER"
+  run "$S" turn </dev/null
+  [ "$status" -eq 0 ]
+  grep -q 'ledger append failed' "$AGENTIC_STATE/cost.log"
+}

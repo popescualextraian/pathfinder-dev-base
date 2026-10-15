@@ -48,7 +48,7 @@ too large (64 MiB, `AGENTIC_COST_LEDGER_MAX`), move it aside and start a new one
 
 A UI or another reader runs `summary.jq` on the ledger (`jq -n -R -L image/cost -f
 image/cost/summary.jq --arg project P --arg since "" --arg until "" --arg task "" --arg schedule ""
---arg by context < ledger.jsonl`) or calls `agentic cost --json`. Adding an optional field or a
+--arg by context < ledger.jsonl`; in a container the path is `/opt/agentic/cost`) or calls `agentic cost --json`. Adding an optional field or a
 new `by` value keeps a version; anything else is v2.
 
 ## Extend

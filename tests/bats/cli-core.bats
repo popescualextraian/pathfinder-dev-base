@@ -74,6 +74,7 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
   [ -d "$AGENTIC_WORKSPACES/demo/repos" ]
   grep -qx "$AGENTIC_WORKSPACES/demo/cost:/cost" <<<"$output"
   [ -d "$AGENTIC_WORKSPACES/demo/cost" ]
+  grep -qx "AGENTIC_PROJECT=demo" <<<"$output"
   # only the clones: never the workspace root, its tasks/ or events/
   [ "$(grep -Ec "^$AGENTIC_WORKSPACES/demo(/tasks|/events)?:" <<<"$output")" -eq 0 ]
   grep -qx "$AGENTIC_DATA/projects/demo/harness/claude:/home/dev/.claude" <<<"$output"

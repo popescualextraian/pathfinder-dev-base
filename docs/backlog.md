@@ -78,6 +78,8 @@ Items we chose not to do yet. Each names where it was decided.
 - **A cost UI** – consumes `cost-summary/v1`. (source: `docs/specs/2026-10-15-cost-tracking-design.md` §7)
 - **Remote cost ledger** – on a remote host the ledger stays there until a relay or shared store
   reads it. (source: `docs/specs/2026-10-15-cost-tracking-design.md` §7)
+- **Ledger compaction** – keep the last line per session when the ledger nears the cap, so moving
+  it aside does not drop history. (source: `docs/specs/2026-10-15-cost-tracking-design.md` §7)
 
 ## Images
 
