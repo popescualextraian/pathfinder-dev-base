@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentProcess, type AgentHooks, type AgentLike } from "../src/agent.js";
 import { Bridge } from "../src/bridge.js";
 import { agentEnvironment, loadConfig, type Config } from "../src/config.js";
@@ -10,7 +10,7 @@ import { harnessFor } from "../src/harness.js";
 import { Notifier } from "../src/notify.js";
 import { makeRedactor } from "../src/redact.js";
 import { startServer } from "../src/server.js";
-import { SCHEDULED_NOTE, SUMMARY_PROMPT } from "../src/scheduled.js";
+import { NO_SUMMARY, SCHEDULED_NOTE, SUMMARY_PROMPT, TIMEOUT_NOTE } from "../src/scheduled.js";
 import { Store } from "../src/store.js";
 import type { State, TaskEvent } from "../src/types.js";
 
@@ -19,7 +19,8 @@ const running: Array<{ bridge: Bridge; close(): Promise<void> }> = [];
 afterEach(async () => { for (const r of running.splice(0)) { await r.bridge.shutdownAgent(); await r.close(); } });
 
 async function start(dir: string, extra: Record<string, string> = {},
-  worktree: (args: string[]) => { ok: boolean; out: string; err: string } = () => ({ ok: true, out: "", err: "" })) {
+  worktree: (args: string[]) => { ok: boolean; out: string; err: string } = () => ({ ok: true, out: "", err: "" }),
+  over: Partial<Config> = {}) {
   const exits: number[] = [];
   const cwds: string[] = [];
   const wt: string[][] = [];
@@ -27,7 +28,7 @@ async function start(dir: string, extra: Record<string, string> = {},
   const env = { AGENTIC_TASK_TOKEN: "task-token-0123456789", AGENTIC_AGENT_TOKEN: "agent-token-0123456789",
     AGENTIC_TASK_DIR: dir, AGENTIC_TASK_ID: "T-1", AGENTIC_PROJECT: "demo", AGENTIC_ACP_CMD: JSON.stringify(["node", FAKE]),
     AGENTIC_WORK: dir, AGENTIC_EVENTS_DIR: join(dir, "no-events"), ...extra };
-  const cfg: Config = { ...loadConfig(env), port: 0 };
+  const cfg: Config = { ...loadConfig(env), port: 0, ...over };
   const store = new Store(dir, makeRedactor([cfg.tokens.task, cfg.tokens.agent]));
   let agentEnv: NodeJS.ProcessEnv = {};
   const bridge = new Bridge({
@@ -440,6 +441,27 @@ describe("worktree and auto-clean", () => {
 });
 
 describe("scheduled runs", () => {
+  it("at the timeout cancels the turn and asks for the summary with the note", async () => {
+    const dir = taskDir("SLEEP:10000");
+    const { store, exits } = await start(dir, { AGENTIC_SCHEDULED: "1" }, undefined, { runTimeoutMs: 150 });
+    expect(await exited(exits)).toEqual([0]);
+    expect([store.readRecord().state, store.readRecord().reason]).toEqual(["stopped", "timeout"]);
+    expect(readFileSync(join(dir, "result.md"), "utf8")).toBe(`echo: ${TIMEOUT_NOTE}\n\n${SUMMARY_PROMPT}\n`);
+  });
+
+  it("a summary that overruns the grace ends the run without one", async () => {
+    vi.stubEnv("FAKE_SUMMARY_SLEEP", "5000");
+    try {
+      const dir = taskDir("SLEEP:10000");
+      const { store, exits } = await start(dir, { AGENTIC_SCHEDULED: "1" }, undefined, { runTimeoutMs: 100, summaryGraceMs: 200 });
+      expect(await exited(exits)).toEqual([0]);
+      expect([store.readRecord().state, store.readRecord().reason]).toEqual(["stopped", "timeout"]);
+      expect(readFileSync(join(dir, "result.md"), "utf8").startsWith(NO_SUMMARY)).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("records scheduled and run_timeout, and appends the scheduled note to the first prompt", async () => {
     const dir = taskDir("hello");
     const { bridge, store } = await start(dir, { AGENTIC_SCHEDULED: "1", AGENTIC_RUN_TIMEOUT: "120" });

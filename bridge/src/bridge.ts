@@ -7,7 +7,7 @@ import { UpdateMapper, type Mapped } from "./map.js";
 import type { Notifier } from "./notify.js";
 import type { Store } from "./store.js";
 import { TaskMachine, type Effect, type Input, type Outcome } from "./task.js";
-import { SCHEDULED_NOTE, SUMMARY_PROMPT, TIMEOUT_NOTE } from "./scheduled.js";
+import { NO_SUMMARY, SCHEDULED_NOTE, SUMMARY_PROMPT, TIMEOUT_NOTE } from "./scheduled.js";
 import { renderEvent } from "./transcript.js";
 import { makeRedactor, redactDeep } from "./redact.js";
 import type { EventType, Question, TaskEvent, TaskRecord } from "./types.js";
@@ -49,6 +49,8 @@ export class Bridge implements ApiTarget {
   private lastTurn = "";
   private resultText: string | null = null;
   private timedOut = false;
+  private runTimer: NodeJS.Timeout | null = null;
+  private graceTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly d: BridgeDeps) {
     // what leaves the bridge outside the store (status, webhook, events log, log lines) is masked too
@@ -95,7 +97,10 @@ export class Bridge implements ApiTarget {
     // all questions, answered ones too: the next question id counts them all
     this.machine = new TaskMachine(record, store.readQuestions(), this.d.now);
     this.flush = setInterval(() => this.emitMapped(this.mapper.flushPartial()), 1000);
-    if (fresh && config.scheduled) this.phase = "work";
+    if (fresh && config.scheduled) {
+      this.phase = "work";
+      this.runTimer = setTimeout(() => this.onRunTimeout(), config.runTimeoutMs);
+    }
     this.run({ kind: "boot", fresh });
   }
 
@@ -207,8 +212,39 @@ export class Bridge implements ApiTarget {
     }
   }
 
+  // onRunTimeout: cancel the work turn (its end sends the summary prompt with the note); the grace
+  // timer ends the run if no summary comes.
+  private onRunTimeout(): void {
+    this.runTimer = null;
+    if (this.down || this.phase === "off" || this.phase === "done") return;
+    this.timedOut = true;
+    this.emit("error", { message: "the run timed out; asking for the summary" });
+    this.graceTimer = setTimeout(() => this.onGraceEnd(), this.d.config.summaryGraceMs);
+    const m = this.m();
+    if (this.phase !== "work") return;
+    if (m.promptOutstanding) this.run({ kind: "cancel" });
+    else {
+      this.phase = "summary";
+      this.run({ kind: "userPrompt", text: `${TIMEOUT_NOTE}\n\n${SUMMARY_PROMPT}` });
+    }
+  }
+
+  private onGraceEnd(): void {
+    this.graceTimer = null;
+    if (this.down || this.phase === "done") return;
+    const last = this.m().record.summary;
+    this.finishScheduled(last ? `${NO_SUMMARY}\n\nLast message:\n${last}` : NO_SUMMARY, "timeout");
+  }
+
+  private clearRunTimers(): void {
+    if (this.runTimer) clearTimeout(this.runTimer);
+    if (this.graceTimer) clearTimeout(this.graceTimer);
+    this.runTimer = this.graceTimer = null;
+  }
+
   // finishScheduled: result.md, then auto-clean or a plain stop; either way the bridge exits 0.
   private finishScheduled(result: string, reason: string): void {
+    this.clearRunTimers();
     this.phase = "done";
     this.resultText = result;
     this.d.store.writeResult(result);
@@ -390,6 +426,7 @@ export class Bridge implements ApiTarget {
   }
 
   private clearTimers(): void {
+    this.clearRunTimers();
     this.disarmIdle();
     if (this.flush) clearInterval(this.flush);
     this.flush = null;
