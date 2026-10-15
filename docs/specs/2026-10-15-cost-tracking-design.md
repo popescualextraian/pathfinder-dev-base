@@ -37,9 +37,9 @@ Success criteria:
 | # | Decision | Why |
 |---|---|---|
 | C1 | **Recording is a plugin**, `cost@agentic`, in a marketplace shipped in the image (`/opt/agentic/marketplace`). `config/recommended` adds it for both targets; a project deletes the lines to opt out. One Claude-format `hooks/hooks.json` serves both harnesses (Copilot reads it); the snapshot tells them apart by `COPILOT_PLUGIN_ROOT`, which only Copilot sets. | Recommended, not imposed (architecture). A plugin is the harnesses' own extension point and loads in every mode, also under ACP. |
-| C2 | **ccusage is the reader of the harnesses' own usage files and the pricing authority**, pinned in the Dockerfile (20.0.32), run `--offline` with a pricing-overrides file: the image's `/opt/agentic/cost/ccusage.json`, or the project's `.agentic/cost/ccusage.json`. We never parse transcripts ourselves. | It already reads Claude, Copilot, Codex, Gemini and opencode and prices with the LiteLLM table. Pinned and offline: the same version gives the same prices, also behind a proxy; a release once silently dropped Claude Code 2.1+ lines. |
+| C2 | **ccusage is the reader of the harnesses' own usage files and the pricing authority**, pinned in the Dockerfile (20.0.32), run `--offline`, with the project's `.agentic/cost/ccusage.json` as pricing overrides when it has one. We never parse transcripts ourselves. | It already reads Claude, Copilot, Codex, Gemini and opencode and prices with the LiteLLM table. Pinned and offline: the same version gives the same prices, also behind a proxy; a release once silently dropped Claude Code 2.1+ lines. |
 | C3 | **A record is a cumulative snapshot of one session**, written after every turn and at session end. The ledger is append-only; readers keep the latest record per `(harness, session)`. | Idempotent: reruns and duplicate hooks never count twice. A killed container loses at most the last turn. No locking or rewriting. |
-| C4 | **Collectors are the extension point for harnesses**: one executable per harness that reads the hook payload and prints records. The image ships `claude` and `copilot`; a project adds more in `.agentic/cost/collectors/`. | The core never names a harness (setup.md: no per-technology code). Same pattern as `hooks.d`. |
+| C4 | **Collectors are the extension point for harnesses**: an executable that reads the hook payload and prints records. One generic collector, `ccusage-collector`, serves every harness ccusage reads (Claude and Copilot today; Codex, Gemini, opencode with only a hook). A project replaces it for one harness, or adds a harness ccusage does not read, with `.agentic/cost/collectors/<harness>`. | The core never names a harness (setup.md: no per-technology code). One file instead of one per harness. Same pattern as `hooks.d`. |
 | C5 | **Three versioned contracts**: the record (`cost-record/v1`), the collector interface, the summary (`cost-summary/v1`). JSON Schemas in `schema/`. | Producers, the CLI and a future UI evolve independently. Adding fields is compatible; anything else is v2. |
 | C6 | **One ledger per project on the host**, `$AGENTIC_WORKSPACES/<project>/cost/ledger.jsonl`, mounted at `/cost` in task **and** dev containers. | `/events` is not mounted in dev containers; task homes go with `clean`. A dedicated folder holds only what the cost plugin writes. |
 | C7 | **Costs keep their kind.** `cost_source` is `estimate` (list price from tokens; ccusage prices both Claude's and Copilot's tokens this way), `billed-credits` (Copilot AI credits with no tokens yet: a session that has not shut down) or `unknown` (tokens without a price). Kinds are never summed; unpriced is `unknown`, not zero. | A list-price estimate, a seat's credits and an unpriced model are different numbers; one total would mislead. |
@@ -81,15 +81,15 @@ One JSON object per line in `ledger.jsonl`. Schema: `schema/cost-record.schema.j
 ### 3.2 Collector interface
 
 ```
-<collectors>/<harness> EVENT        # EVENT: turn | end; hook payload on stdin
+<collector> EVENT HARNESS            # EVENT: turn | end; hook payload on stdin
 ```
 
 - Prints zero or more `cost-record/v1` lines on stdout, exit 0. It does not fill `project` or
   `context`: the core adds them from the environment. It does not write the ledger.
-- Looked up in `/agentic-config/cost/collectors/` (project) first, then
-  `/opt/agentic/cost/collectors/` (image); an overlay replaces image files.
-- Has 60 s. `/opt/agentic/cost/lib.sh` gives collectors the shared pieces: the payload's
-  session id, ccusage with the pricing overrides, and the mapping of ccusage's session list to records.
+- Looked up as `/agentic-config/cost/collectors/<harness>` (project), then
+  `/opt/agentic/cost/collectors/<harness>` (an overlay's), then
+  `/opt/agentic/cost/ccusage-collector`, the generic one.
+- Has 60 s.
 
 ### 3.3 Summary (`cost-summary/v1`)
 
@@ -100,7 +100,7 @@ One JSON object per line in `ledger.jsonl`. Schema: `schema/cost-record.schema.j
 {
   "schema": "cost-summary/v1",
   "project": "shop",
-  "filter": { "since": "2026-10-01", "until": null, "task": null, "schedule": null, "kind": null, "by": "context" },
+  "filter": { "since": "2026-10-01", "until": null, "task": null, "schedule": null, "by": "context" },
   "groups": [
     { "key": { "kind": "scheduled", "task": "20261015-0200", "schedule": "nightly-deps" }, "sessions": 9,
       "last": "2026-10-15T02:41:07Z",
@@ -115,9 +115,9 @@ One JSON object per line in `ledger.jsonl`. Schema: `schema/cost-record.schema.j
 }
 ```
 
-- `by`: `context` (default: one group per task run, scheduled run, and `dev`), `task`, `schedule`
-  (all runs of a schedule), `session`, `model`, `day`.
-- Filters: `--since`, `--until` (days, both inclusive, on `ts`), `--task`, `--schedule`, `--kind`.
+- `by`: `context` (default: one group per task run, scheduled run, and `dev`), `model`, `day`.
+  A new value is a compatible change; a UI that needs another grouping adds it to `summary.jq`.
+- Filters: `--since`, `--until` (days, both inclusive, on `ts`), `--task`, `--schedule`.
   A session counts in the window of its latest snapshot.
 - `last` is the latest snapshot's `ts` in the group.
 
@@ -129,9 +129,8 @@ marketplace/                                  → /opt/agentic/marketplace
   plugins/cost/                               hooks/hooks.json (both harnesses)
 image/cost/                                   → /opt/agentic/cost
   snapshot                                    hook entry: collector → tag → append
-  lib.sh, collectors/claude, collectors/copilot
+  ccusage-collector                           the generic collector (C4)
   record.jq                                   valid_record, the readers' check of the schema
-  ccusage.json                                the image's pricing overrides
   summary.jq                                  the one aggregation (C8)
 schema/cost-record.schema.json, schema/cost-summary.schema.json
 bin/agentic, lib/host/cost.sh                 agentic cost; the /cost mount
@@ -144,14 +143,15 @@ bin/agentic, lib/host/cost.sh                 agentic cost; the /cost mount
    `COPILOT_PLUGIN_ROOT` is set, else `claude`.
 2. `snapshot` detaches, finds the collector, runs it with the payload and a timeout.
 3. For each record it adds `project` (`AGENTIC_PROJECT`) and `context` (`AGENTIC_TASK_ID`,
-   `AGENTIC_SCHEDULED`, `AGENTIC_SCHEDULE`; none set → `dev`), checks it against the schema and
-   appends it to `/cost/ledger.jsonl` with one `write` under `flock`.
+   `AGENTIC_SCHEDULED`, `AGENTIC_SCHEDULE`; none set → `dev`) and appends it to
+   `/cost/ledger.jsonl` with one `write` under `flock`. It does not check the schema: the readers
+   skip what is not a `cost-record/v1` (C9).
 4. No `/cost` (an old container, a remote host without the mount): a warning in
    `~/.agentic/cost.log`, nothing else.
 
-The collectors call `ccusage <harness> session --json --offline` and keep the payload's session
-(ccusage's `--id` exists for Claude only and drops the per-model split; the list takes 0.3 s on
-380 MB of transcripts). They know the harness; nothing else does.
+The generic collector calls `ccusage <harness> session --json --offline` and keeps the payload's
+session (ccusage's `--id` exists for Claude only and drops the per-model split; the list takes
+0.3 s on 380 MB of transcripts).
 
 ### 4.2 Host changes
 
@@ -159,8 +159,8 @@ The collectors call `ccusage <harness> session --json --offline` and keep the pa
   `/cost`, created first and refused when it is a symlink (`bind_src_ok`), like `tasks/` and
   `events/`.
 - `sched_fire` passes `AGENTIC_SCHEDULE=<name>` to the run.
-- `agentic cost [--since D] [--until D] [--task ID] [--schedule NAME] [--kind K]
-  [--by context|task|schedule|session|model|day] [--json]`: safe-read the ledger (C9), run
+- `agentic cost [--since D] [--until D] [--task ID] [--schedule NAME] [--by context|model|day]
+  [--json]`: safe-read the ledger (C9), run
   `summary.jq`, print the table or the JSON. Implemented in `lib/host/cost.sh`.
 
 ## 5. Harness facts
@@ -175,13 +175,15 @@ them by hand once.
 
 ## 6. Testing
 
-- bats, written first: `snapshot` with stub collectors (tagging, schema rejection, no `/cost`,
-  timeout, always exit 0); each collector with a stub `ccusage` and recorded fixtures;
-  `summary.jq` on fixture ledgers (latest-per-session, every `group_by`, filters, kinds kept
+- bats, written first: `snapshot` with stub collectors (tagging, lookup order, no `/cost`,
+  timeout, always exit 0); the generic collector with a stub `ccusage` and recorded fixtures;
+  `summary.jq` on fixture ledgers (latest-per-session, every `by`, filters, kinds kept
   apart, bad lines counted); `agentic cost` (symlinked ledger refused, size cap, table, `--json`
   valid against the schema); the `/cost` mount and `AGENTIC_SCHEDULE`.
 - Schema: both schemas checked by `make lint`; fixtures validated against them.
-- Smoke: a task run with the plugin installed leaves at least one valid record for its task id.
+- Smoke: the plugin is installed for both harnesses and `/cost` is mounted; in the image, the
+  snapshot with the pinned ccusage on the synthetic transcripts gives the measured counts. A real
+  session needs a login and is checked by hand once.
 
 ## 7. Out of scope (backlog)
 

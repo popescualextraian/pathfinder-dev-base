@@ -14,7 +14,7 @@
 
 - bash: `set -euo pipefail` (hooks and the snapshot: `set -uo pipefail`, they must never fail a turn), short comments, `shellcheck -x` clean, a bats test for every behaviour, written first.
 - No company names, hosts or URLs; examples use `example.com`. `tools/leak-check.sh` must pass.
-- ccusage pinned to exactly `20.0.32`, always run with `--json --offline --config FILE`.
+- ccusage pinned to exactly `20.0.32`, always run with `--json --offline`, plus `--config` with the project's `.agentic/cost/ccusage.json` when it has one.
 - Record and summary versions: `cost-record/v1`, `cost-summary/v1`. Adding an optional field is compatible; anything else is v2.
 - `cost_source` values: `estimate`, `billed-credits`, `unknown`. Never added together.
 - Ledger: `$AGENTIC_WORKSPACES/<project>/cost/ledger.jsonl` on the host, `/cost/ledger.jsonl` in the container.
@@ -41,9 +41,8 @@
 | `image/cost/record.jq` | `valid_record`, the readers' check of the record schema |
 | `image/cost/summary.jq` | the one aggregation |
 | `image/cost/snapshot` | hook entry: collector → tag → append |
-| `image/cost/lib.sh` | shared by collectors: payload session, ccusage call, mapping to records |
-| `image/cost/collectors/claude`, `.../copilot` | one per harness: the extension point |
-| `image/cost/ccusage.json` | the image's pricing overrides (empty) |
+| `image/cost/ccusage-collector` | the default collector, for every harness ccusage reads |
+| `.agentic/cost/collectors/<harness>` (a project's) | the extension point: replaces the default for one harness |
 | `marketplace/` | the in-image marketplace `agentic` with the `cost` plugin |
 | `lib/host/cost.sh` | `agentic cost`: safe read, summary, table |
 | `docs/cost.md` | user documentation and the three contracts |
@@ -57,7 +56,7 @@
 - Modify: `Makefile` (lint: every schema)
 
 **Interfaces:**
-- Produces: `include "record"; valid_record` (jq, needs `-L image/cost`). `summary.jq`: run as `jq -n -R -L <dir> -f <dir>/summary.jq` with `--arg project P --arg since D --arg until D --arg task T --arg schedule S --arg kind K --arg by B` (empty string = not set), raw ledger lines on stdin, prints one `cost-summary/v1`. `tests/fixtures/cost/validate.py SCHEMA FILE`: prints `ok`, `bad` or `invalid-json` per non-empty line.
+- Produces: `include "record"; valid_record` (jq, needs `-L image/cost`). `summary.jq`: run as `jq -n -R -L <dir> -f <dir>/summary.jq` with `--arg project P --arg since D --arg until D --arg task T --arg schedule S --arg by context|model|day` (empty string = not set), raw ledger lines on stdin, prints one `cost-summary/v1`. `tests/fixtures/cost/validate.py SCHEMA FILE`: prints `ok`, `bad` or `invalid-json` per non-empty line.
 
 - [ ] **Step 1: Write the fixture ledger**
 
@@ -113,10 +112,10 @@ setup() {
   V="$REPO_ROOT/tests/fixtures/cost/validate.py"
 }
 
-# summary [FILE]: the summary of FILE (default: the fixture ledger), filters from SINCE UNTIL TASK SCHED KIND BY.
+# summary [FILE]: the summary of FILE (default: the fixture ledger), filters from SINCE UNTIL TASK SCHED BY.
 summary() {
   jq -n -R -L "$C" --arg project demo --arg since "${SINCE:-}" --arg until "${UNTIL:-}" --arg task "${TASK:-}" \
-    --arg schedule "${SCHED:-}" --arg kind "${KIND:-}" --arg by "${BY:-}" -f "$C/summary.jq" < "${1:-$L}"
+    --arg schedule "${SCHED:-}" --arg by "${BY:-}" -f "$C/summary.jq" < "${1:-$L}"
 }
 
 @test "valid_record and the record schema agree on every fixture line" {
@@ -129,7 +128,7 @@ summary() {
 }
 
 @test "the summary is a cost-summary/v1 for every grouping" {
-  for by in context task schedule session model day; do
+  for by in context model day; do
     BY="$by" summary | jq -c . > "$BATS_TEST_TMPDIR/s.json"
     [ "$(python3 "$V" "$REPO_ROOT/schema/cost-summary.schema.json" "$BATS_TEST_TMPDIR/s.json")" = ok ] || { echo "by $by"; false; }
   done
@@ -155,9 +154,7 @@ summary() {
   [ "$(jq -r '.groups[0].last' <<<"$output")" = 2026-10-04T02:00:00Z ]
 }
 
-@test "by schedule, model and day" {
-  BY=schedule run summary
-  [ "$(jq -c '[.groups[] | [.key.schedule, .sessions]]' <<<"$output")" = '[["nightly",2],[null,2]]' ]
+@test "by model and day" {
   BY=model run summary
   [ "$(jq '.groups | length' <<<"$output")" = 5 ]
   [ "$(jq -c '.groups[] | select(.key.model == "unknown") | [.key.harness, .totals.cost]' <<<"$output")" = '["copilot",{"billed-credits":0.03}]' ]
@@ -165,15 +162,14 @@ summary() {
   [ "$(jq -c '[.groups[].key.day]' <<<"$output")" = '["2026-10-04","2026-10-03","2026-10-02","2026-10-01"]' ]
 }
 
-@test "filters: days inclusive, task, schedule, kind; the filter is echoed" {
+@test "filters: days inclusive, task, schedule; the filter is echoed" {
   SINCE=2026-10-03 run summary
   [ "$(jq .sessions <<<"$output")" = 2 ]
-  [ "$(jq -c .filter <<<"$output")" = '{"since":"2026-10-03","until":null,"task":null,"schedule":null,"kind":null,"by":"context"}' ]
+  [ "$(jq -c .filter <<<"$output")" = '{"since":"2026-10-03","until":null,"task":null,"schedule":null,"by":"context"}' ]
   SINCE=2026-10-02 UNTIL=2026-10-02 run summary
   [ "$(jq -c '[.groups[].key.task]' <<<"$output")" = '["t1"]' ]
-  TASK=t1 run summary;     [ "$(jq .sessions <<<"$output")" = 1 ]
-  SCHED=nightly run summary; [ "$(jq .sessions <<<"$output")" = 2 ]
-  KIND=dev run summary;    [ "$(jq .totals.input <<<"$output")" = 200 ]
+  TASK=t1 run summary;       [ "$(jq .sessions <<<"$output")" = 1 ]
+  SCHED=nightly run summary; [ "$(jq -c '[.sessions, [.groups[].key.task]]' <<<"$output")" = '[2,["t3","t2"]]' ]
 }
 
 @test "an empty or missing ledger gives an empty summary" {
@@ -276,14 +272,13 @@ Expected: FAIL (no `schema/cost-record.schema.json`, no `image/cost/summary.jq`)
     "project": { "type": "string" },
     "filter": {
       "type": "object",
-      "required": ["since", "until", "task", "schedule", "kind", "by"],
+      "required": ["since", "until", "task", "schedule", "by"],
       "properties": {
         "since": { "type": ["string", "null"], "description": "First day, inclusive." },
         "until": { "type": ["string", "null"], "description": "Last day, inclusive." },
         "task": { "type": ["string", "null"] },
         "schedule": { "type": ["string", "null"] },
-        "kind": { "enum": ["task", "scheduled", "dev", null] },
-        "by": { "enum": ["context", "task", "schedule", "session", "model", "day"] }
+        "by": { "enum": ["context", "model", "day"], "description": "A new value is a compatible change." }
       }
     },
     "groups": {
@@ -363,8 +358,8 @@ def valid_record:
 
 ```jq
 # cost-summary/v1 of a ledger: raw lines on stdin, run as jq -n -R -L <this dir> -f summary.jq with
-# --arg project, since, until, task, schedule, kind, by ("" = not set). The one place that
-# aggregates (spec C8).
+# --arg project, since, until, task, schedule, by ("" = not set). The one place that aggregates
+# (spec C8).
 include "record";
 
 def _set: if . == "" then null else . end;
@@ -379,10 +374,7 @@ def _rows: . as $r
   | {sid: "\($r.harness)/\($r.session)", ts: $r.ts, context: $r.context, harness: $r.harness,
      session: $r.session, model, input, output, cache_read, cache_write, cost};
 def _key($by):
-  if $by == "task" then {task: (.context.task // null)}
-  elif $by == "schedule" then {schedule: (.context.schedule // null)}
-  elif $by == "session" then {harness, session}
-  elif $by == "model" then {harness, model}
+  if $by == "model" then {harness, model}
   elif $by == "day" then {day: .ts[0:10]}
   else .context end;
 # _in: both days inclusive, compared at the precision given
@@ -392,13 +384,12 @@ def _in($since; $until): ($since == null or .ts[0:($since | length)] >= $since)
 [inputs | select(length > 0) | (try fromjson catch null)] as $lines
 | ($lines | map(select(. != null and valid_record))) as $ok
 | {since: ($since | _set), until: ($until | _set), task: ($task | _set),
-   schedule: ($schedule | _set), kind: ($kind | _set), by: (($by | _set) // "context")} as $f
+   schedule: ($schedule | _set), by: (($by | _set) // "context")} as $f
 # snapshots are cumulative and appended in order: a session's last line is its total (C3)
 | ([reduce $ok[] as $r ({}; .["\($r.harness)/\($r.session)"] = $r) | .[]]
    | map(select(_in($f.since; $f.until)
        and ($f.task == null or .context.task == $f.task)
-       and ($f.schedule == null or .context.schedule == $f.schedule)
-       and ($f.kind == null or .context.kind == $f.kind)))
+       and ($f.schedule == null or .context.schedule == $f.schedule)))
    | map(_rows)) as $rows
 | {schema: "cost-summary/v1", project: $project, filter: $f,
    groups: ($rows | group_by(_key($f.by))
@@ -435,8 +426,8 @@ git commit -m "feat: cost contracts: cost-record/v1 and cost-summary/v1 schemas,
 - Modify: `Makefile` (`SHELL_SOURCES` += `image/cost/snapshot`)
 
 **Interfaces:**
-- Consumes: `valid_record` (Task 1) through `jq -L "$COST_DIR"`.
-- Produces: `snapshot EVENT [HARNESS]`, payload on stdin, always exit 0. Environment: `AGENTIC_COST_DIR` (default `/opt/agentic/cost`), `AGENTIC_COST_LEDGER_DIR` (default `/cost`), `AGENTIC_CONFIG_MOUNT` (default `/agentic-config`), `AGENTIC_STATE` (log in `$AGENTIC_STATE/cost.log`), `AGENTIC_COST_TIMEOUT` (default 60), `AGENTIC_COST_FOREGROUND=1` (do not detach; tests and the smoke use it). Collector contract: `<dir>/collectors/<harness> EVENT`, payload on stdin, prints `cost-record/v1` lines without `project` and `context`.
+- Consumes: nothing from Task 1: the snapshot does not check records; the readers do (spec C9).
+- Produces: `snapshot EVENT [HARNESS]`, payload on stdin, always exit 0. Environment: `AGENTIC_COST_DIR` (default `/opt/agentic/cost`), `AGENTIC_COST_LEDGER_DIR` (default `/cost`), `AGENTIC_CONFIG_MOUNT` (default `/agentic-config`), `AGENTIC_STATE` (log in `$AGENTIC_STATE/cost.log`), `AGENTIC_COST_TIMEOUT` (default 60), `AGENTIC_COST_FOREGROUND=1` (do not detach; tests and the smoke use it). Collector contract: `<collector> EVENT HARNESS`, payload on stdin, prints `cost-record/v1` lines without `project` and `context`. Lookup: `$AGENTIC_CONFIG_MOUNT/cost/collectors/<harness>`, then `$AGENTIC_COST_DIR/collectors/<harness>` (an overlay's), then `$AGENTIC_COST_DIR/ccusage-collector` (Task 3).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -449,10 +440,9 @@ load helpers
 setup() {
   make_tmp_home
   S="$REPO_ROOT/image/cost/snapshot"
-  # an image cost dir with the real record.jq and stub collectors
+  # an image cost dir with stub collectors
   export AGENTIC_COST_DIR="$BATS_TEST_TMPDIR/cost"
   mkdir -p "$AGENTIC_COST_DIR/collectors"
-  ln -s "$REPO_ROOT/image/cost/record.jq" "$AGENTIC_COST_DIR/record.jq"
   export AGENTIC_COST_LEDGER_DIR="$BATS_TEST_TMPDIR/ledger" AGENTIC_CONFIG_MOUNT="$BATS_TEST_TMPDIR/cfg"
   export AGENTIC_STATE="$HOME/.agentic" AGENTIC_COST_FOREGROUND=1 AGENTIC_PROJECT=demo
   mkdir -p "$AGENTIC_COST_LEDGER_DIR"
@@ -480,10 +470,10 @@ collector() { mkdir -p "$1"; printf '#!/usr/bin/env bash\n%s\n' "$3" > "$1/$2"; 
   [ "$(jq -sc 'map(.context)' "$LEDGER")" = '[{"kind":"task","task":"t1"},{"kind":"scheduled","task":"t2","schedule":"nightly"}]' ]
 }
 
-@test "the collector gets the event as its argument and the payload on stdin" {
-  collector "$AGENTIC_COST_DIR/collectors" claude "echo \"\$1\" > '$BATS_TEST_TMPDIR/event'; cat > '$BATS_TEST_TMPDIR/payload'"
+@test "the collector gets the event and the harness as arguments and the payload on stdin" {
+  collector "$AGENTIC_COST_DIR/collectors" claude "echo \"\$1 \$2\" > '$BATS_TEST_TMPDIR/event'; cat > '$BATS_TEST_TMPDIR/payload'"
   "$S" end <<<'{"session_id":"abc"}'
-  [ "$(cat "$BATS_TEST_TMPDIR/event")" = end ]
+  [ "$(cat "$BATS_TEST_TMPDIR/event")" = "end claude" ]
   [ "$(jq -r .session_id "$BATS_TEST_TMPDIR/payload")" = abc ]
 }
 
@@ -503,15 +493,21 @@ collector() { mkdir -p "$1"; printf '#!/usr/bin/env bash\n%s\n' "$3" > "$1/$2"; 
   [ "$(jq -r .session "$LEDGER")" = mine ]
 }
 
-@test "a record that breaks the schema is not written, and is logged" {
-  collector "$AGENTIC_COST_DIR/collectors" claude "echo '{\"schema\":\"cost-record/v1\",\"session\":\"x\"}'; echo 'not json'"
+@test "a harness with no collector of its own gets the generic ccusage collector" {
+  collector "$AGENTIC_COST_DIR" ccusage-collector "jq -c --arg h \"\$2\" '.harness = \$h' <<<'$REC'"
+  "$S" turn codex </dev/null
+  [ "$(jq -r .harness "$LEDGER")" = codex ]
+}
+
+@test "output that is not JSON is not written, and is logged" {
+  collector "$AGENTIC_COST_DIR/collectors" claude "echo 'not json'"
   run "$S" turn </dev/null
   [ "$status" -eq 0 ]
   [ ! -s "$LEDGER" ]
-  grep -q 'claude' "$AGENTIC_STATE/cost.log"
+  grep -q 'not JSON' "$AGENTIC_STATE/cost.log"
 }
 
-@test "no ledger folder, no collector, a failing or a slow collector: nothing written, exit 0" {
+@test "no ledger folder, no collector at all, a failing or a slow collector: nothing written, exit 0" {
   rmdir "$AGENTIC_COST_LEDGER_DIR"
   collector "$AGENTIC_COST_DIR/collectors" claude "echo '$REC'"
   run "$S" turn </dev/null
@@ -586,14 +582,15 @@ log() {
   return 0
 }
 
-# collector: the project's collector for the harness, else the image's; the name is a plain word.
+# collector: the project's collector for the harness, else an overlay's, else the generic ccusage
+# one (spec C4); the harness name is a plain word.
 collector() {
   local f
   [[ "$harness" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || return 1
   for f in "$PROJECT_COST/collectors/$harness" "$COST_DIR/collectors/$harness"; do
     if [ -f "$f" ] && [ -x "$f" ]; then printf '%s\n' "$f"; return 0; fi
   done
-  return 1
+  printf '%s\n' "$COST_DIR/ccusage-collector"
 }
 
 # context: where the session runs, from what the host gave the container.
@@ -608,11 +605,10 @@ record() {
   local c out
   c="$(collector)" || { log "no collector"; return 0; }
   if [ ! -d "$LEDGER_DIR" ] || [ ! -w "$LEDGER_DIR" ]; then log "no writable $LEDGER_DIR; not recorded"; return 0; fi
-  out="$(timeout "${AGENTIC_COST_TIMEOUT:-60}" "$c" "$ev" 2>>"$LOG")" || { log "collector failed ($?)"; return 0; }
-  out="$(jq -c -L "$COST_DIR" --arg p "${AGENTIC_PROJECT:-}" --argjson ctx "$(context)" 'include "record";
-      . + {project: $p, context: $ctx}
-      | if valid_record then . else ("rejected: \(tojson[0:300])\n" | stderr | empty) end' <<<"$out" 2>>"$LOG")" \
-    || { log "the collector printed something that is not JSON"; return 0; }
+  out="$(timeout "${AGENTIC_COST_TIMEOUT:-60}" "$c" "$ev" "$harness" 2>>"$LOG")" || { log "collector failed ($?)"; return 0; }
+  # no schema check here: the readers skip what is not a cost-record/v1 (spec C9)
+  out="$(jq -c --arg p "${AGENTIC_PROJECT:-}" --argjson ctx "$(context)" '. + {project: $p, context: $ctx}' \
+      <<<"$out" 2>>"$LOG")" || { log "the collector printed something that is not JSON"; return 0; }
   [ -n "$out" ] || return 0
   # task and dev containers share the ledger: one locked write per snapshot keeps lines whole
   { flock 9 && printf '%s\n' "$out" >&9; } 9>>"$LEDGER_DIR/ledger.jsonl"
@@ -631,7 +627,7 @@ exit 0
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `bats tests/bats/cost-snapshot.bats && shellcheck -x image/cost/snapshot`
-Expected: 10 tests PASS, shellcheck silent.
+Expected: 11 tests PASS, shellcheck silent.
 
 - [ ] **Step 5: Commit**
 
@@ -642,15 +638,15 @@ git commit -m "feat: cost snapshot: runs the harness's collector, tags the recor
 
 ---
 
-### Task 3: The Claude and Copilot collectors
+### Task 3: The generic ccusage collector
 
 **Files:**
-- Create: `image/cost/lib.sh`, `image/cost/collectors/claude` (755), `image/cost/collectors/copilot` (755), `image/cost/ccusage.json`, `tests/fixtures/cost/ccusage-claude-session.json`, `tests/fixtures/cost/ccusage-copilot-session.json`, `tests/bats/cost-collectors.bats`
-- Modify: `Makefile` (`SHELL_SOURCES` += `image/cost/lib.sh image/cost/collectors/*`)
+- Create: `image/cost/ccusage-collector` (755), `tests/fixtures/cost/ccusage-claude-session.json`, `tests/fixtures/cost/ccusage-copilot-session.json`, `tests/bats/cost-collectors.bats`
+- Modify: `Makefile` (`SHELL_SOURCES` += `image/cost/ccusage-collector`)
 
 **Interfaces:**
-- Consumes: the collector contract of Task 2; `valid_record` of Task 1 (tests).
-- Produces: `lib.sh` functions `payload_session` (stdin → session id), `ccusage_session_list HARNESS` (ccusage's JSON), `to_records HARNESS SESSION` (stdin: ccusage's list → the session's record, no `project`/`context`).
+- Consumes: the collector contract of Task 2 (`<collector> EVENT HARNESS`, payload on stdin); `valid_record` of Task 1 (tests only).
+- Produces: `/opt/agentic/cost/ccusage-collector EVENT HARNESS`, the default for every harness: runs `ccusage HARNESS session --json --offline [--config <project overrides>]` and prints the payload session's `cost-record/v1` without `project` and `context`.
 
 - [ ] **Step 1: Write the recorded ccusage outputs**
 
@@ -678,167 +674,135 @@ load helpers
 
 setup() {
   make_tmp_home
-  export AGENTIC_COST_DIR="$REPO_ROOT/image/cost" AGENTIC_CONFIG_MOUNT="$BATS_TEST_TMPDIR/cfg"
+  export AGENTIC_CONFIG_MOUNT="$BATS_TEST_TMPDIR/cfg"
+  K="$REPO_ROOT/image/cost/ccusage-collector"
   F="$REPO_ROOT/tests/fixtures/cost"
-  # a ccusage stand-in: logs its arguments, prints the recorded list of the harness (or $STUB_OUT)
+  # a ccusage stand-in: logs its arguments, prints the recorded list of claude or copilot (or $STUB_OUT)
   mkdir -p "$BATS_TEST_TMPDIR/bin"
   cat > "$BATS_TEST_TMPDIR/bin/ccusage" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >> "$BATS_TEST_TMPDIR/ccusage.args"
 if [ "\$1" = --version ]; then echo "ccusage 20.0.32"; exit 0; fi
-cat "\${STUB_OUT:-$F/ccusage-\$1-session.json}"
+f="$F/ccusage-claude-session.json"; [ "\$1" != copilot ] || f="$F/ccusage-copilot-session.json"
+cat "\${STUB_OUT:-\$f}"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/bin/ccusage"
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
 }
 
-# valid OUTPUT: every line of OUTPUT, completed as the snapshot does, is a valid record.
+# valid OUTPUT: OUTPUT, completed as the snapshot does, is a valid record.
 valid() {
-  jq -e -L "$AGENTIC_COST_DIR" 'include "record"; . + {project: "p", context: {kind: "dev"}} | valid_record' <<<"$1" >/dev/null
+  jq -e -L "$REPO_ROOT/image/cost" 'include "record"; . + {project: "p", context: {kind: "dev"}} | valid_record' <<<"$1" >/dev/null
 }
 
 @test "claude: the payload's session, per model, with ccusage's deduplicated totals" {
-  run "$AGENTIC_COST_DIR/collectors/claude" turn <<<'{"session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"/x"}'
+  run "$K" turn claude <<<'{"session_id":"11111111-1111-1111-1111-111111111111","transcript_path":"/x"}'
   [ "$status" -eq 0 ]
   [ "${#lines[@]}" -eq 1 ]
   valid "$output"
   [ "$(jq -c '[.harness, .session, .totals.input, .totals.output, .totals.cache_read, .totals.cache_write]' <<<"$output")" \
     = '["claude","11111111-1111-1111-1111-111111111111",1015,127,3000,2000]' ]
   [ "$(jq -c '[.models[] | [.model, .cost_source]]' <<<"$output")" = '[["claude-sonnet-4-5","estimate"],["claude-opus-5-5","estimate"]]' ]
-  jq -e '(.totals.cost.estimate - 0.01346 | fabs) < 1e-9 and .producer == {collector: "claude", ccusage: "20.0.32"}' <<<"$output"
-  grep -qx "claude session --json --offline --config $AGENTIC_COST_DIR/ccusage.json" "$BATS_TEST_TMPDIR/ccusage.args"
+  jq -e '(.totals.cost.estimate - 0.01346 | fabs) < 1e-9 and .producer == {collector: "ccusage", ccusage: "20.0.32"}' <<<"$output"
+  grep -qx "claude session --json --offline" "$BATS_TEST_TMPDIR/ccusage.args"
 }
 
 @test "copilot: a camelCase payload; a shut-down session is a token estimate" {
-  run "$AGENTIC_COST_DIR/collectors/copilot" end <<<'{"sessionId":"33333333-3333-3333-3333-333333333333"}'
+  run "$K" end copilot <<<'{"sessionId":"33333333-3333-3333-3333-333333333333"}'
   [ "$status" -eq 0 ]
   valid "$output"
   [ "$(jq -c '[.harness, .totals.input, .totals.cost]' <<<"$output")" = '["copilot",38812,{"estimate":0.1723746}]' ]
 }
 
 @test "an open Copilot session (credits, no tokens yet) is billed-credits, not an estimate" {
-  run "$AGENTIC_COST_DIR/collectors/copilot" turn <<<'{"session_id":"44444444-4444-4444-4444-444444444444"}'
+  run "$K" turn copilot <<<'{"session_id":"44444444-4444-4444-4444-444444444444"}'
   valid "$output"
   [ "$(jq -c '[.models[0].cost_source, .totals.cost]' <<<"$output")" = '["billed-credits",{"billed-credits":0.03196233}]' ]
 }
 
+@test "any harness ccusage reads: the name is passed through" {
+  run "$K" turn codex <<<'{"session_id":"11111111-1111-1111-1111-111111111111"}'
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .harness <<<"$output")" = codex ]
+  grep -qx "codex session --json --offline" "$BATS_TEST_TMPDIR/ccusage.args"
+}
+
 @test "tokens without a price are unknown, beside the priced ones" {
   jq '.sessions[0].modelBreakdowns[1].cost = 0' "$F/ccusage-claude-session.json" > "$BATS_TEST_TMPDIR/out.json"
-  STUB_OUT="$BATS_TEST_TMPDIR/out.json" run "$AGENTIC_COST_DIR/collectors/claude" turn <<<'{"session_id":"11111111-1111-1111-1111-111111111111"}'
+  STUB_OUT="$BATS_TEST_TMPDIR/out.json" run "$K" turn claude <<<'{"session_id":"11111111-1111-1111-1111-111111111111"}'
   valid "$output"
   [ "$(jq -c '[.models[1].cost_source, (.totals.cost | keys)]' <<<"$output")" = '["unknown",["estimate","unknown"]]' ]
 }
 
 @test "no session id, an unknown session, or a failing ccusage: no record, exit 0 for the first two" {
-  run "$AGENTIC_COST_DIR/collectors/claude" turn <<<'{}'
+  run "$K" turn claude <<<'{}'
   [ "$status" -eq 0 ]; [ -z "$output" ]
-  run "$AGENTIC_COST_DIR/collectors/claude" turn <<<'not json'
+  run "$K" turn claude <<<'not json'
   [ "$status" -eq 0 ]; [ -z "$output" ]
-  run "$AGENTIC_COST_DIR/collectors/claude" turn <<<'{"session_id":"nope"}'
+  run "$K" turn claude <<<'{"session_id":"nope"}'
   [ "$status" -eq 0 ]; [ -z "$output" ]
   printf '#!/bin/sh\nexit 2\n' > "$BATS_TEST_TMPDIR/bin/ccusage"
-  run "$AGENTIC_COST_DIR/collectors/claude" turn <<<'{"session_id":"11111111-1111-1111-1111-111111111111"}'
+  run "$K" turn claude <<<'{"session_id":"11111111-1111-1111-1111-111111111111"}'
   [ "$status" -ne 0 ]; [ -z "$output" ]
 }
 
-@test "the project's pricing overrides win over the image's" {
+@test "the project's pricing overrides are passed when it has them" {
   mkdir -p "$AGENTIC_CONFIG_MOUNT/cost"; echo '{}' > "$AGENTIC_CONFIG_MOUNT/cost/ccusage.json"
-  "$AGENTIC_COST_DIR/collectors/copilot" turn <<<'{"sessionId":"33333333-3333-3333-3333-333333333333"}' >/dev/null
+  "$K" turn copilot <<<'{"sessionId":"33333333-3333-3333-3333-333333333333"}' >/dev/null
   grep -qx "copilot session --json --offline --config $AGENTIC_CONFIG_MOUNT/cost/ccusage.json" "$BATS_TEST_TMPDIR/ccusage.args"
-}
-
-@test "the image's pricing overrides file is valid ccusage config" {
-  jq -e 'type == "object"' "$AGENTIC_COST_DIR/ccusage.json"
 }
 ```
 
 - [ ] **Step 3: Run the tests to see them fail**
 
 Run: `bats tests/bats/cost-collectors.bats`
-Expected: FAIL (no collectors).
+Expected: FAIL (no `image/cost/ccusage-collector`).
 
-- [ ] **Step 4: Write `lib.sh`, the collectors and the overrides file**
+- [ ] **Step 4: Write the collector**
 
-`image/cost/lib.sh`:
-
-```bash
-# Shared by the cost collectors (spec §3.2); sourced. ccusage reads the harness's own files and
-# prices them (spec C2); this maps its session list to cost-record/v1.
-COST_DIR="${AGENTIC_COST_DIR:-/opt/agentic/cost}"
-
-# payload_session: the session id of the hook payload on stdin (Claude and Copilot spell it apart).
-payload_session() { jq -r '.session_id // .sessionId // empty' 2>/dev/null || true; }
-
-# ccusage_session_list HARNESS: ccusage's session list for HARNESS, offline, with the project's
-# pricing overrides or else the image's.
-ccusage_session_list() {
-  local cfg="${AGENTIC_CONFIG_MOUNT:-/agentic-config}/cost/ccusage.json"
-  [ -f "$cfg" ] || cfg="$COST_DIR/ccusage.json"
-  ccusage "$1" session --json --offline --config "$cfg"
-}
-
-# to_records HARNESS SESSION: ccusage's session list (stdin) to SESSION's cost-record/v1, without
-# project and context (the snapshot adds them). Nothing when the list does not have SESSION.
-to_records() {
-  jq -c --arg h "$1" --arg s "$2" --arg ts "$(date -u +%FT%TZ)" \
-    --arg v "$(ccusage --version 2>/dev/null | awk '{print $NF}')" '
-    # tokens with no price are unknown; a price with no tokens is Copilot credits (no shutdown yet)
-    def src($cost; $tokens): if $tokens == 0 and $cost > 0 then "billed-credits"
-      elif $cost == 0 and $tokens > 0 then "unknown" else "estimate" end;
-    .sessions[]? | select(.sessionId == $s)
-    | {schema: "cost-record/v1", ts: $ts, harness: $h, session: $s,
-       models: [.modelBreakdowns[]?
-         | {model: .modelName, input: .inputTokens, output: .outputTokens, cache_read: .cacheReadTokens,
-            cache_write: .cacheCreationTokens, cost: .cost,
-            cost_source: src(.cost; .inputTokens + .outputTokens + .cacheReadTokens + .cacheCreationTokens)}],
-       totals: {input: .inputTokens, output: .outputTokens, cache_read: .cacheReadTokens,
-                cache_write: .cacheCreationTokens, cost: {}},
-       producer: {collector: $h, ccusage: $v}}
-    | .totals.cost = (reduce .models[] as $m ({}; .[$m.cost_source] += $m.cost))'
-}
-```
-
-`image/cost/collectors/claude`:
+`image/cost/ccusage-collector`:
 
 ```bash
 #!/usr/bin/env bash
-# collectors/claude EVENT: the cost-record/v1 of the Claude session in the hook payload (stdin).
-# ccusage reads $CLAUDE_CONFIG_DIR/projects, counts each request once and adds the subagents.
+# ccusage-collector EVENT HARNESS: the cost-record/v1 of the session in the hook payload (stdin),
+# for any harness ccusage reads (spec C2, C4): claude from $CLAUDE_CONFIG_DIR, copilot from
+# $COPILOT_HOME/session-state. ccusage counts each request once, adds subagents, prices offline.
 set -euo pipefail
-# shellcheck source=SCRIPTDIR/../lib.sh
-source "${AGENTIC_COST_DIR:-/opt/agentic/cost}/lib.sh"
-sid="$(payload_session)"
+harness="${2:?usage: ccusage-collector EVENT HARNESS}"
+sid="$(jq -r '.session_id // .sessionId // empty' 2>/dev/null || true)"
 [ -n "$sid" ] || exit 0
-ccusage_session_list claude | to_records claude "$sid"
+args=(--json --offline)
+cfg="${AGENTIC_CONFIG_MOUNT:-/agentic-config}/cost/ccusage.json"
+if [ -f "$cfg" ]; then args+=(--config "$cfg"); fi   # the project's pricing overrides
+ccusage "$harness" session "${args[@]}" | jq -c --arg h "$harness" --arg s "$sid" --arg ts "$(date -u +%FT%TZ)" \
+  --arg v "$(ccusage --version 2>/dev/null | awk '{print $NF}')" '
+  # tokens with no price are unknown; a price with no tokens is Copilot credits (no shutdown yet)
+  def src($cost; $tokens): if $tokens == 0 and $cost > 0 then "billed-credits"
+    elif $cost == 0 and $tokens > 0 then "unknown" else "estimate" end;
+  .sessions[]? | select(.sessionId == $s)
+  | {schema: "cost-record/v1", ts: $ts, harness: $h, session: $s,
+     models: [.modelBreakdowns[]?
+       | {model: .modelName, input: .inputTokens, output: .outputTokens, cache_read: .cacheReadTokens,
+          cache_write: .cacheCreationTokens, cost: .cost,
+          cost_source: src(.cost; .inputTokens + .outputTokens + .cacheReadTokens + .cacheCreationTokens)}],
+     totals: {input: .inputTokens, output: .outputTokens, cache_read: .cacheReadTokens,
+              cache_write: .cacheCreationTokens, cost: {}},
+     producer: {collector: "ccusage", ccusage: $v}}
+  | .totals.cost = (reduce .models[] as $m ({}; .[$m.cost_source] += $m.cost))'
 ```
 
-`image/cost/collectors/copilot`:
-
-```bash
-#!/usr/bin/env bash
-# collectors/copilot EVENT: the cost-record/v1 of the Copilot session in the hook payload (stdin).
-# ccusage reads $COPILOT_HOME/session-state; a resumed session's last cumulative shutdown counts.
-set -euo pipefail
-# shellcheck source=SCRIPTDIR/../lib.sh
-source "${AGENTIC_COST_DIR:-/opt/agentic/cost}/lib.sh"
-sid="$(payload_session)"
-[ -n "$sid" ] || exit 0
-ccusage_session_list copilot | to_records copilot "$sid"
-```
-
-`chmod 755 image/cost/collectors/*`. `image/cost/ccusage.json` is `{}` (the format is in `docs/cost.md`, Task 7). In `Makefile`, add `image/cost/lib.sh image/cost/collectors/*` to `SHELL_SOURCES`.
+`chmod 755 image/cost/ccusage-collector`. In `Makefile`, add `image/cost/ccusage-collector` to `SHELL_SOURCES`.
 
 - [ ] **Step 5: Run the tests to see them pass**
 
-Run: `bats tests/bats/cost-collectors.bats && shellcheck -x image/cost/lib.sh image/cost/collectors/*`
+Run: `bats tests/bats/cost-collectors.bats && shellcheck -x image/cost/ccusage-collector`
 Expected: 7 tests PASS, shellcheck silent.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add image/cost/lib.sh image/cost/collectors image/cost/ccusage.json tests/fixtures/cost/ccusage-*.json \
-  tests/bats/cost-collectors.bats Makefile
-git commit -m "feat: cost collectors for Claude and Copilot on ccusage, with pricing overrides"
+git add image/cost/ccusage-collector tests/fixtures/cost/ccusage-*.json tests/bats/cost-collectors.bats Makefile
+git commit -m "feat: the generic cost collector on ccusage, for Claude, Copilot and any harness it reads"
 ```
 
 ---
@@ -875,7 +839,7 @@ M="$REPO_ROOT/marketplace"
   [ "$(jq -r '.hooks.SessionEnd[0].hooks[0].command' "$h")" = "/opt/agentic/cost/snapshot end" ]
   [ "$(jq -r '[.hooks[][].hooks[].type] | unique | join(",")' "$h")" = command ]
   # /opt/agentic/cost is image/cost in the repository: the commands exist and are executable
-  for c in snapshot collectors/claude collectors/copilot; do [ -x "$REPO_ROOT/image/cost/$c" ]; done
+  for c in snapshot ccusage-collector; do [ -x "$REPO_ROOT/image/cost/$c" ]; done
 }
 
 @test "the recommended lines install the cost plugin for both harnesses" {
@@ -1083,7 +1047,7 @@ git commit -m "feat: every container of a project mounts its cost ledger at /cos
 
 **Interfaces:**
 - Consumes: `image/cost/summary.jq` and `record.jq` (Task 1) from `$AGENTIC_ROOT/image/cost`; `bind_src_ok`, `read_agent_file`, `valid_task_id`, `valid_sched_name`, `optval`, `need_config`, `project_name`, `die`.
-- Produces: `agentic cost [--since D] [--until D] [--task ID] [--schedule NAME] [--kind task|scheduled|dev] [--by context|task|schedule|session|model|day] [--json]`. `--json` prints `cost-summary/v1`, the contract a UI consumes.
+- Produces: `agentic cost [--since D] [--until D] [--task ID] [--schedule NAME] [--by context|model|day] [--json]`. `--json` prints `cost-summary/v1`, the contract a UI consumes.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1118,10 +1082,12 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
 }
 
 @test "filters and grouping reach the summary" {
-  run ag cost --json --since 2026-10-03 --until 2026-10-04 --by schedule --kind scheduled --schedule nightly
+  run ag cost --json --since 2026-10-03 --until 2026-10-04 --schedule nightly
   [ "$status" -eq 0 ]
-  [ "$(jq -c .filter <<<"$output")" = '{"since":"2026-10-03","until":"2026-10-04","task":null,"schedule":"nightly","kind":"scheduled","by":"schedule"}' ]
-  [ "$(jq -c '[.groups[] | [.key.schedule, .sessions]]' <<<"$output")" = '[["nightly",2]]' ]
+  [ "$(jq -c .filter <<<"$output")" = '{"since":"2026-10-03","until":"2026-10-04","task":null,"schedule":"nightly","by":"context"}' ]
+  [ "$(jq -c '[.groups[].key.task]' <<<"$output")" = '["t3","t2"]' ]
+  run ag cost --json --by day
+  [ "$(jq '.groups | length' <<<"$output")" = 4 ]
   run ag cost --json --task t1
   [ "$(jq .sessions <<<"$output")" = 1 ]
 }
@@ -1147,7 +1113,7 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
 }
 
 @test "bad options are refused" {
-  for a in "--since 2026-13-01" "--since yesterday" "--until 2026-02-30" "--by colour" "--kind other" \
+  for a in "--since 2026-13-01" "--since yesterday" "--until 2026-02-30" "--by colour" "--by session" \
            "--task a/b" "--schedule Nightly" "--bogus"; do
     # shellcheck disable=SC2086
     run ag cost $a
@@ -1243,25 +1209,22 @@ cost_table() {
 
 cmd_cost() {
   need_config
-  local since="" until="" task="" schedule="" kind="" by=context json=0 out
+  local since="" until="" task="" schedule="" by=context json=0 out
   while [ $# -gt 0 ]; do
     case "$1" in
       --since|--until) optval "$@"; valid_day "$2" || die "$1 takes a day, YYYY-MM-DD"
         if [ "$1" = --since ]; then since="$2"; else until="$2"; fi; shift 2 ;;
       --task) optval "$@"; valid_task_id "$2" || die "--task takes a task id"; task="$2"; shift 2 ;;
       --schedule) optval "$@"; valid_sched_name "$2" || die "--schedule takes a schedule name"; schedule="$2"; shift 2 ;;
-      --kind) optval "$@"; [[ "$2" =~ ^(task|scheduled|dev)$ ]] || die "--kind takes task, scheduled or dev"
-        kind="$2"; shift 2 ;;
-      --by) optval "$@"; [[ "$2" =~ ^(context|task|schedule|session|model|day)$ ]] \
-          || die "--by takes context, task, schedule, session, model or day"
+      --by) optval "$@"; [[ "$2" =~ ^(context|model|day)$ ]] || die "--by takes context, model or day"
         by="$2"; shift 2 ;;
       --json) json=1; shift ;;
-      *) die "usage: agentic cost [--since D] [--until D] [--task ID] [--schedule NAME] [--kind K] [--by G] [--json]" ;;
+      *) die "usage: agentic cost [--since D] [--until D] [--task ID] [--schedule NAME] [--by context|model|day] [--json]" ;;
     esac
   done
   out="$(cost_ledger | jq -n -R -L "$AGENTIC_ROOT/image/cost" --arg project "$(project_name)" \
     --arg since "$since" --arg until "$until" --arg task "$task" --arg schedule "$schedule" \
-    --arg kind "$kind" --arg by "$by" -f "$AGENTIC_ROOT/image/cost/summary.jq")" || exit 1
+    --arg by "$by" -f "$AGENTIC_ROOT/image/cost/summary.jq")" || exit 1
   if [ "$json" = 1 ]; then printf '%s\n' "$out"; else cost_table <<<"$out"; fi
 }
 ```
@@ -1280,8 +1243,7 @@ source "$AGENTIC_ROOT/lib/host/cost.sh"
 In `usage`, after the `schedule follow` lines add:
 
 ```
-  cost [--since D] [--until D] [--task ID] [--schedule NAME] [--kind task|scheduled|dev]
-       [--by context|task|schedule|session|model|day] [--json]
+  cost [--since D] [--until D] [--task ID] [--schedule NAME] [--by context|model|day] [--json]
                                      what the project's sessions spent (docs/cost.md); --json is cost-summary/v1
 ```
 
@@ -1363,7 +1325,7 @@ out="$(docker run --rm --network none -v "$root/tests/fixtures/cost:/fx:ro" -e A
     echo "{\"session_id\":\"11111111-1111-1111-1111-111111111111\"}" | /opt/agentic/cost/snapshot turn claude
     echo "{\"sessionId\":\"33333333-3333-3333-3333-333333333333\"}" | /opt/agentic/cost/snapshot end copilot
     jq -n -R -L /opt/agentic/cost --arg project smoke --arg since "" --arg until "" --arg task "" \
-      --arg schedule "" --arg kind "" --arg by session -f /opt/agentic/cost/summary.jq < /tmp/ledger/ledger.jsonl')" \
+      --arg schedule "" --arg by context -f /opt/agentic/cost/summary.jq < /tmp/ledger/ledger.jsonl')" \
   || fail "cost: the snapshot failed in the image"
 [ "$(jq -c '[.sessions, .skipped_lines, .totals.input]' <<<"$out")" = "[2,0,$((1015 + 38812))]" ] \
   || fail "cost: ccusage counts changed (dedup, subagents or the Copilot shutdown): $out"
@@ -1397,9 +1359,11 @@ lines to stop.
 ## Read
 
 ```
-agentic cost [--since D] [--until D] [--task ID] [--schedule NAME] [--kind task|scheduled|dev]
-             [--by context|task|schedule|session|model|day] [--json]
+agentic cost [--since D] [--until D] [--task ID] [--schedule NAME] [--by context|model|day] [--json]
 ```
+
+`--by context` (the default) shows one line per task run, scheduled run, and `dev`; `--schedule
+NAME` keeps the runs of one schedule.
 
 - **EST. USD** is the list price of the tokens (ccusage, the LiteLLM table, offline). A
   subscription or a negotiated price bills differently; it is an estimate.
@@ -1417,21 +1381,22 @@ too large (64 MiB, `AGENTIC_COST_LEDGER_MAX`), move it aside and start a new one
 | Contract | Where | For |
 |---|---|---|
 | `cost-record/v1` | `schema/cost-record.schema.json` | one ledger line; what collectors produce |
-| collector | `<dir>/collectors/<harness> EVENT`, payload on stdin, records on stdout | adding a harness |
+| collector | `<collector> EVENT HARNESS`, payload on stdin, records on stdout | a harness ccusage does not read |
 | `cost-summary/v1` | `schema/cost-summary.schema.json`; `image/cost/summary.jq` | `agentic cost --json`, a UI |
 
 A UI or another reader runs `summary.jq` on the ledger (`jq -n -R -L image/cost -f
 image/cost/summary.jq --arg project P --arg since "" --arg until "" --arg task "" --arg schedule ""
---arg kind "" --arg by context < ledger.jsonl`) or calls `agentic cost --json`. Adding an optional
-field keeps a version; anything else is v2.
+--arg by context < ledger.jsonl`) or calls `agentic cost --json`. Adding an optional field or a
+new `by` value keeps a version; anything else is v2.
 
 ## Extend
 
-- **Another harness:** an executable `.agentic/cost/collectors/<harness>` prints `cost-record/v1`
-  lines for the session in the hook payload, without `project` and `context`; it may source
-  `/opt/agentic/cost/lib.sh` (`payload_session`, `ccusage_session_list`, `to_records`). The
-  harness's own hook calls `/opt/agentic/cost/snapshot turn|end <harness>`.
-- **Prices:** `.agentic/cost/ccusage.json` replaces the image's (empty) overrides:
+- **Another harness ccusage reads** (Codex, Gemini, opencode, …): only a hook, calling
+  `/opt/agentic/cost/snapshot turn|end <harness>`; the generic collector does the rest.
+- **A harness ccusage does not read:** an executable `.agentic/cost/collectors/<harness>` prints
+  `cost-record/v1` lines for the session in the hook payload, without `project` and `context`.
+  It also replaces the generic collector for a harness ccusage reads.
+- **Prices:** `.agentic/cost/ccusage.json` is passed to ccusage as its config:
   `{"defaults": {"pricingOverrides": {"<model>": {"inputCostPerToken": 0.000003, "outputCostPerToken": 0.000015}}}}`.
 - **Diagnostics:** `~/.agentic/cost.log` in the container says why a snapshot was not written.
 ````
@@ -1457,7 +1422,7 @@ Expected: all pass, ending with `smoke OK`. If `make smoke` fails at "the cost p
 
 In a project with the two recommended lines, after `agentic build`:
 
-1. `agentic dev`, start `claude`, ask "say hi", exit. On the host: `agentic cost --by session` shows one `claude` session under `dev`.
+1. `agentic dev`, start `claude`, ask "say hi", exit. On the host: `agentic cost` shows one session under `dev`, and `agentic cost --by model` shows it as `claude`.
 2. Same with `copilot`: one `copilot` session. If none: `~/.agentic/cost.log` in the container. If it says `claude` for a Copilot session, `COPILOT_PLUGIN_ROOT` is not set by this Copilot version: print the hook's environment (`env > /tmp/hookenv` as a temporary hook command) and switch the detection in `snapshot` to a variable Copilot does set.
 3. `agentic run "say hi"`, wait for idle: `agentic cost --task ID`, with the id `run` printed, shows it as `task ID`.
 
