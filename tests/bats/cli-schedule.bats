@@ -337,3 +337,16 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
   grep -q '| Kept | worktree not checked; agentic clean ' "$(results a)"
   [ -n "$(ls -A "$T")" ]
 }
+
+@test "results prints the newest result; --all lists them newest first" {
+  mkdir -p "$R/a"
+  printf '# a\n\n| State | failed (x) |\n\nold\n' > "$R/a/20261015-0200-T-1.md"
+  printf '# a\n\n| State | stopped (scheduled-done) |\n\nnew\n' > "$R/a/20261016-0200-T-2.md"
+  run ag schedule results a
+  [ "$status" -eq 0 ]; [[ "$output" == *new* ]]; [[ "$output" != *old* ]]
+  run ag schedule results a --all
+  [ "$(sed -n 1p <<<"$output")" = "20261016-0200-T-2.md  stopped (scheduled-done)  $R/a/20261016-0200-T-2.md" ]
+  [ "$(sed -n 2p <<<"$output")" = "20261015-0200-T-1.md  failed (x)  $R/a/20261015-0200-T-1.md" ]
+  run ag schedule results none
+  [ "$status" -eq 0 ]; [ "$output" = "no results for none yet" ]
+}

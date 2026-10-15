@@ -166,6 +166,21 @@ sched_last() {
 # result_state FILE: the State cell of a result file.
 result_state() { sed -n 's/^| State | \(.*\) |$/\1/p' "$1" | head -n 1; }
 
+# sched_show NAME [--all]: the newest result, or every result file newest first.
+sched_show() {
+  local name="${1:-}" dir f
+  valid_sched_name "$name" || die "usage: agentic schedule results NAME [--all]"
+  dir="$(sched_results "$name")"
+  if [ -z "$(sched_last "$name")" ]; then echo "no results for $name yet"; return 0; fi
+  if [ "${2:-}" = --all ]; then
+    find "$dir" -maxdepth 1 -type f -name '[0-9]*-[0-9]*-*.md' -printf '%f\n' | sort -r | while IFS= read -r f; do
+      printf '%s  %s  %s\n' "$f" "$(result_state "$dir/$f" | plain)" "$dir/$f"
+    done
+  else
+    plain < "$dir/$(sched_last "$name")"
+  fi
+}
+
 sched_list() {
   local json=0 d n last st rows=()
   [ "${1:-}" != --json ] || json=1
