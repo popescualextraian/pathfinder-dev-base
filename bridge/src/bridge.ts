@@ -7,7 +7,7 @@ import { UpdateMapper, type Mapped } from "./map.js";
 import type { Notifier } from "./notify.js";
 import type { Store } from "./store.js";
 import { TaskMachine, type Effect, type Input, type Outcome } from "./task.js";
-import { SCHEDULED_NOTE } from "./scheduled.js";
+import { SCHEDULED_NOTE, SUMMARY_PROMPT, TIMEOUT_NOTE } from "./scheduled.js";
 import { renderEvent } from "./transcript.js";
 import { makeRedactor, redactDeep } from "./redact.js";
 import type { EventType, Question, TaskEvent, TaskRecord } from "./types.js";
@@ -44,6 +44,11 @@ export class Bridge implements ApiTarget {
   private incoming: ((optionId: string | null) => void) | null = null;
   private down = false;
   private readonly redact: (s: string) => string;
+  // a scheduled run (spec 2026-10-15 §6.2): work, then one summary turn, then the end
+  private phase: "off" | "work" | "summary" | "done" = "off";
+  private lastTurn = "";
+  private resultText: string | null = null;
+  private timedOut = false;
 
   constructor(private readonly d: BridgeDeps) {
     // what leaves the bridge outside the store (status, webhook, events log, log lines) is masked too
@@ -90,6 +95,7 @@ export class Bridge implements ApiTarget {
     // all questions, answered ones too: the next question id counts them all
     this.machine = new TaskMachine(record, store.readQuestions(), this.d.now);
     this.flush = setInterval(() => this.emitMapped(this.mapper.flushPartial()), 1000);
+    if (fresh && config.scheduled) this.phase = "work";
     this.run({ kind: "boot", fresh });
   }
 
@@ -161,7 +167,8 @@ export class Bridge implements ApiTarget {
     for (const e of out.effects) this.perform(e);
     this.d.store.writeRecord(m.record);
     if (input.kind !== "idleTimeout") this.touch();
-    if (this.cleanable(input)) this.autoClean();
+    if (this.phase === "off" && this.cleanable(input)) this.autoClean();
+    if (input.kind === "turnEnd" && (this.phase === "work" || this.phase === "summary")) this.scheduledStep();
     return out;
   }
 
@@ -173,18 +180,40 @@ export class Bridge implements ApiTarget {
   }
 
   // autoClean: removes the worktree (refusing unpushed work), then stops the task; the exit releases
-  // the container when this task created it.
-  private autoClean(): void {
+  // the container when this task created it. false when the worktree was kept.
+  private autoClean(reason = "auto-cleaned"): boolean {
     const rec = this.m().record;
     if (rec.worktree && rec.branch) {
       const r = this.d.worktree(["remove", this.d.config.work, rec.task, rec.branch]);
       if (!r.ok) {
         this.emit("error", { message: `auto-clean kept the task: ${(r.err || r.out).trim()}` });
-        return;
+        return false;
       }
     }
     rec.cleaned = true;
-    this.run({ kind: "stop", reason: "auto-cleaned", byUser: false });
+    this.run({ kind: "stop", reason, byUser: false });
+    return true;
+  }
+
+  // scheduledStep: after the work turn, the summary prompt; after the summary turn, the end.
+  private scheduledStep(): void {
+    const m = this.m();
+    if (m.promptOutstanding || m.record.state === "stopped" || m.record.state === "failed") return;
+    if (this.phase === "work") {
+      this.phase = "summary";
+      this.run({ kind: "userPrompt", text: this.timedOut ? `${TIMEOUT_NOTE}\n\n${SUMMARY_PROMPT}` : SUMMARY_PROMPT });
+    } else {
+      this.finishScheduled(this.lastTurn.trim() || "(the agent wrote no summary)", this.timedOut ? "timeout" : "scheduled-done");
+    }
+  }
+
+  // finishScheduled: result.md, then auto-clean or a plain stop; either way the bridge exits 0.
+  private finishScheduled(result: string, reason: string): void {
+    this.phase = "done";
+    this.resultText = result;
+    this.d.store.writeResult(result);
+    if (this.d.config.autoClean && this.autoClean(reason)) return;
+    this.run({ kind: "stop", reason, byUser: false });
   }
 
   // touch: restarts the idle timer while the task sits in waiting or idle, or is dormant (a lazy boot
@@ -317,6 +346,7 @@ export class Bridge implements ApiTarget {
     if (this.agent !== agent) return;
     const { events, summary } = this.mapper.finishTurn();
     this.emitMapped(events);
+    this.lastTurn = summary;
     this.run({ kind: "turnEnd", stopReason, summary });
   }
 
@@ -350,6 +380,7 @@ export class Bridge implements ApiTarget {
   private armIdle(): void {
     this.disarmIdle();
     if (this.down) return;
+    if (this.phase === "work" || this.phase === "summary") return;
     this.idle = setTimeout(() => this.run({ kind: "idleTimeout" }), this.d.config.idleTimeoutMs);
   }
 

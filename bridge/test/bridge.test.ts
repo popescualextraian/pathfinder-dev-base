@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ import { harnessFor } from "../src/harness.js";
 import { Notifier } from "../src/notify.js";
 import { makeRedactor } from "../src/redact.js";
 import { startServer } from "../src/server.js";
-import { SCHEDULED_NOTE } from "../src/scheduled.js";
+import { SCHEDULED_NOTE, SUMMARY_PROMPT } from "../src/scheduled.js";
 import { Store } from "../src/store.js";
 import type { State, TaskEvent } from "../src/types.js";
 
@@ -443,7 +443,7 @@ describe("scheduled runs", () => {
   it("records scheduled and run_timeout, and appends the scheduled note to the first prompt", async () => {
     const dir = taskDir("hello");
     const { bridge, store } = await start(dir, { AGENTIC_SCHEDULED: "1", AGENTIC_RUN_TIMEOUT: "120" });
-    await waitState(bridge, "idle", "stopped");
+    await waitState(bridge, "stopped");
     const rec = store.readRecord();
     expect([rec.scheduled, rec.run_timeout]).toEqual([true, 120]);
     const first = store.readEvents(0).find((e) => e.type === "message" && e.data.role === "user");
@@ -455,5 +455,65 @@ describe("scheduled runs", () => {
     const { bridge, store } = await start(dir);
     await waitState(bridge, "idle");
     expect([store.readRecord().scheduled, store.readRecord().run_timeout]).toEqual([false, null]);
+  });
+
+  it("after the work turn asks for the summary, writes result.md from it and stops", async () => {
+    const dir = taskDir("hello");
+    const { store, exits } = await start(dir, { AGENTIC_SCHEDULED: "1" });
+    expect(await exited(exits)).toEqual([0]);
+    const rec = store.readRecord();
+    expect([rec.state, rec.reason, rec.stopped_by_user]).toEqual(["stopped", "scheduled-done", false]);
+    expect(readFileSync(join(dir, "result.md"), "utf8")).toBe(`echo: ${SUMMARY_PROMPT}\n`);
+    const prompts = store.readEvents(0).filter((e) => e.type === "message" && e.data.role === "user").map((e) => e.data.text);
+    expect(prompts).toEqual([`hello${SCHEDULED_NOTE}`, SUMMARY_PROMPT]);
+  });
+
+  it("asks for the summary even with an open question, then auto-cleans despite it", async () => {
+    const dir = taskDir("ASK:Which DB?");
+    const wtDir = mkdtempSync(join(tmpdir(), "wt-"));
+    const { store, exits, wt } = await start(dir,
+      { AGENTIC_SCHEDULED: "1", AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "b", AGENTIC_AUTO_CLEAN: "1", AGENTIC_CREATED_CONTAINER: "1" },
+      (args) => ({ ok: true, out: args[0] === "add" ? `${wtDir}\n` : "", err: "" }));
+    expect(await exited(exits)).toEqual([0]);
+    const rec = store.readRecord();
+    expect([rec.state, rec.reason, rec.cleaned]).toEqual(["stopped", "scheduled-done", true]);
+    expect(wt.map((a) => a[0])).toEqual(["add", "remove"]);
+    expect(store.readQuestions().filter((q) => q.status === "open").map((q) => q.text)).toEqual(["Which DB?"]);
+  });
+
+  it("a worktree that cannot be removed still stops the run and keeps it", async () => {
+    const dir = taskDir("hello");
+    const wtDir = mkdtempSync(join(tmpdir(), "wt-"));
+    const { store, exits, released } = await start(dir,
+      { AGENTIC_SCHEDULED: "1", AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "b", AGENTIC_AUTO_CLEAN: "1", AGENTIC_CREATED_CONTAINER: "1" },
+      (args) => args[0] === "add" ? { ok: true, out: wtDir, err: "" } : { ok: false, out: "", err: "agentic-worktree: has commits on no remote branch" });
+    expect(await exited(exits)).toEqual([0]);
+    expect([store.readRecord().state, store.readRecord().cleaned]).toEqual(["stopped", false]);
+    expect(released()).toBe(0);
+  });
+
+  it("does not arm the idle timer while the run works or summarises", async () => {
+    const dir = taskDir("hello");
+    const { store, exits } = await start(dir, { AGENTIC_SCHEDULED: "1", AGENTIC_IDLE_TIMEOUT: "0.05" });
+    expect(await exited(exits)).toEqual([0]);
+    expect(store.readEvents(0).some((e) => e.type === "state" && e.data.state === "suspended")).toBe(false);
+  });
+
+  it("a crashed agent fails the run without a summary", async () => {
+    const dir = taskDir("CRASH");
+    const { store, exits } = await start(dir, { AGENTIC_SCHEDULED: "1" });
+    expect(await exited(exits)).toEqual([1]);
+    expect(store.readRecord().state).toBe("failed");
+    expect(existsSync(join(dir, "result.md"))).toBe(false);
+  });
+
+  it("an existing scheduled record booted again behaves as a normal task", async () => {
+    const dir = taskDir("hello");
+    const first = await start(dir, { AGENTIC_SCHEDULED: "1" });
+    expect(await exited(first.exits)).toEqual([0]);
+    await first.bridge.shutdownAgent();
+    const again = await start(dir, { AGENTIC_SCHEDULED: "1" });
+    expect(await exited(again.exits)).toEqual([0]); // stopped is final: boot exits at once
+    expect(again.store.readRecord().reason).toBe("scheduled-done");
   });
 });
