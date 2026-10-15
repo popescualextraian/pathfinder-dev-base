@@ -226,6 +226,20 @@ ag status >/dev/null
 [ ! -e "$tasks/$id4" ] || fail "task 4: auto-clean left the record"
 [ -z "$(docker ps -aq --filter "name=agentic-smoke-project-task-$id4")" ] || fail "task 4: auto-clean left the container"
 
+step "a scheduled run: summary, result, nothing left"
+mkdir -p "$tmp/bin"; printf '#!/bin/sh\n[ "$1" = -l ] && cat "%s/crontab" 2>/dev/null; [ "$1" = - ] && cat > "%s/crontab"; exit 0\n' "$tmp" "$tmp" > "$tmp/bin/crontab"
+chmod +x "$tmp/bin/crontab"
+PATH="$tmp/bin:$PATH" ag schedule add smoke-nightly --cron "0 2 * * *" --timeout 5m "fifth" >/dev/null
+PATH="$tmp/bin:$PATH" ag schedule run smoke-nightly >/dev/null || fail "schedule run failed"
+res="$(PATH="$tmp/bin:$PATH" ag schedule results smoke-nightly)"
+grep -q '| State | stopped (scheduled-done) |' <<<"$res" || fail "scheduled run: wrong state: $res"
+grep -q 'echo: The run ends now' <<<"$res" || fail "scheduled run: no summary: $res"
+sid="$(sed -n 's/^| Task | \(T-[^ ]*\) |$/\1/p' <<<"$res")"
+[ -n "$sid" ] || fail "scheduled run: no task id in the result"
+[ -z "$(docker ps -aq --filter "name=agentic-smoke-project-task-$sid")" ] || fail "scheduled run: the container of $sid is left"
+[ ! -e "$tasks/$sid" ] || fail "scheduled run: the task files of $sid are left"
+PATH="$tmp/bin:$PATH" ag schedule remove smoke-nightly >/dev/null
+
 ag clean "$id" --force >/dev/null
 ag clean "$id2" >/dev/null || fail "task 2: clean of an unchanged task"
 ag clean "$id3" >/dev/null || fail "task 3: clean"
