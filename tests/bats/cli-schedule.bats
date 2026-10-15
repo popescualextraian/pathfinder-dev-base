@@ -24,7 +24,8 @@ setup() {
 #!/usr/bin/env bash
 f="$BATS_TEST_TMPDIR/crontab"
 case "$1" in
-  -l) [ -f "$f" ] || { echo "no crontab for user" >&2; exit 1; }; cat "$f" ;;
+  -l) [ -z "${CRONTAB_READ_FAIL:-}" ] || { echo "crontab: cannot open spool" >&2; exit 1; }
+      [ -f "$f" ] || { echo "no crontab for user" >&2; exit 1; }; cat "$f" ;;
   -) [ -z "${CRONTAB_FAIL:-}" ] || exit 1; cat > "$f" ;;
 esac
 EOF
@@ -125,7 +126,7 @@ lib() { (cd "$PROJ" && source "$A" && "$@"); }
   mkdir -p "$R/nightly"; echo r > "$R/nightly/20261016-0200-T-1.md"
   run ag schedule remove nightly
   [ "$status" -eq 0 ]
-  ! grep -q '# agentic:demo:nightly$' "$CT"
+  run ! grep -q '# agentic:demo:nightly$' "$CT"
   grep -q '# agentic:demo:nightly-deps$' "$CT"
   [ ! -e "$S/nightly" ]; [ -e "$S/nightly-deps" ]; [ -e "$R/nightly/20261016-0200-T-1.md" ]
   run ag schedule remove nightly; [ "$status" -ne 0 ]; [[ "$output" == *"no schedule nightly"* ]]
@@ -142,4 +143,15 @@ lib() { (cd "$PROJ" && source "$A" && "$@"); }
   : > "$CT"
   run ag schedule list --json
   [ "$(jq -r '.[0].cron' <<<"$output")" = false ]
+}
+
+@test "an unreadable crontab fails add and remove and is never replaced" {
+  ag schedule add keep --cron "0 2 * * *" x
+  printf '# mine\n' >> "$CT"; cp "$CT" "$BATS_TEST_TMPDIR/before"
+  run env CRONTAB_READ_FAIL=1 bash -c "cd '$PROJ' && bash '$A' schedule add a --cron '0 2 * * *' x"
+  [ "$status" -ne 0 ]; [[ "$output" == *"could not read the crontab"* ]]
+  cmp "$CT" "$BATS_TEST_TMPDIR/before"; [ ! -e "$S/a" ]
+  run env CRONTAB_READ_FAIL=1 bash -c "cd '$PROJ' && bash '$A' schedule remove keep"
+  [ "$status" -ne 0 ]
+  cmp "$CT" "$BATS_TEST_TMPDIR/before"; [ -e "$S/keep/schedule" ]
 }

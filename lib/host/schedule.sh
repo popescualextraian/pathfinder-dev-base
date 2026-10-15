@@ -65,7 +65,13 @@ crontab_set() {
   local m; m=" $(cron_marker "$1")"
   command -v crontab >/dev/null || die "crontab is not installed; scheduled runs need cron"
   # read the table fully before writing it back
-  local keep; keep="$(crontab_lines | awk -v m="$m" 'substr($0, length($0) - length(m) + 1) != m')"
+  local cur err keep
+  # only "no crontab for" means an empty table; any other read failure must not become a write
+  if ! cur="$(crontab -l 2>&1)"; then
+    [[ "$cur" == *"no crontab for"* ]] || die "could not read the crontab"
+    cur=""
+  fi
+  keep="$(printf '%s\n' "$cur" | awk -v m="$m" 'substr($0, length($0) - length(m) + 1) != m')"
   { if [ -n "$keep" ]; then printf '%s\n' "$keep"; fi
     if [ -n "${2:-}" ]; then printf '%s\n' "$2"; fi
   } | crontab - || die "could not write the crontab"
@@ -90,7 +96,7 @@ cron_line() {
 
 sched_add() {
   local name="${1:-}" cron="" at="" prompt="" pfile="" agent="" model="" target="" worktree=1 keep=0 kof=0 timeout=2h
-  local allow=() a cfields secs line d v
+  local allow=() a cfields secs line d v err
   valid_sched_name "$name" || die "usage: agentic schedule add NAME (--cron \"M H DOM MON DOW\" | --at \"YYYY-MM-DD HH:MM\") [options] \"prompt\"; NAME is [a-z0-9-], at most 40"
   shift
   while [ $# -gt 0 ]; do
@@ -135,7 +141,9 @@ sched_add() {
     "$([ -n "$cron" ] && echo cron || echo at)" "${cron:-$at}" "$(IFS=,; echo "${allow[*]+"${allow[*]}"}")" "$agent" "$model" \
     "$target" "$worktree" "$keep" "$kof" "$secs" "$(date -Iseconds)" | sched_write "$name"
   (umask 077; printf '%s\n' "$prompt" > "$d/prompt.md")
-  if ! (crontab_set "$name" "$line"); then safe_rm "$(sched_root)" "$d"; die "could not write the crontab; nothing was added"; fi
+  if ! err="$(crontab_set "$name" "$line" 2>&1)"; then
+    safe_rm "$(sched_root)" "$d"; die "could not write the crontab; nothing was added (${err#*: })"
+  fi
   cron_running || say "warning: no cron daemon runs; $name fires only once cron runs (agentic doctor)"
   echo "$name: ${cron:+cron $cron}${at:+at $at}"
 }
