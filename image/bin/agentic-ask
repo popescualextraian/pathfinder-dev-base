@@ -32,4 +32,8 @@ if [ "$code" != 201 ]; then
 fi
 id="$(jq -r '.id // empty' <<<"$json" 2>/dev/null || true)"
 [ -n "$id" ] || die "the bridge answered without a question id"
-echo "Recorded $id. Continue with work that does not depend on it; when nothing else can move, end your turn."
+if [ "${AGENTIC_SCHEDULED:-}" = 1 ]; then
+  echo "Recorded $id. Nobody answers during a scheduled run: decide yourself where you can, otherwise leave it and list it in your summary."
+else
+  echo "Recorded $id. Continue with work that does not depend on it; when nothing else can move, end your turn."
+fi

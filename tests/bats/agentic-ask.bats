@@ -83,3 +83,9 @@ STUB
   bash "$ASK" "x"
   grep -qx -- '--noproxy' "$BATS_TEST_TMPDIR/curl.args"
 }
+
+@test "in a scheduled run the question is recorded and the agent is told nobody answers" {
+  AGENTIC_SCHEDULED=1 run bash "$ASK" "Which DB?"
+  [ "$status" -eq 0 ]
+  [ "$output" = "Recorded Q3. Nobody answers during a scheduled run: decide yourself where you can, otherwise leave it and list it in your summary." ]
+}
