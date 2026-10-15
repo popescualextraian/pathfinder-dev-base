@@ -102,6 +102,14 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   [ "$(jq -c '[.sessions, .skipped_lines]' <<<"$output")" = '[1,1]' ]
 }
 
+@test "a ledger that cannot be read safely is refused, not summarised as empty" {
+  printf '#!/bin/sh\nexit 1\n' > "$BATS_TEST_TMPDIR/bin/dd"; chmod +x "$BATS_TEST_TMPDIR/bin/dd"
+  run ag cost --json
+  [ "$status" -ne 0 ]
+  [[ "$output" == *refused* ]]
+  [[ "$output" != *'"schema"'* ]]
+}
+
 @test "help lists cost" {
   run bash "$A" help
   [[ "$output" == *"cost [--since D]"* ]]
