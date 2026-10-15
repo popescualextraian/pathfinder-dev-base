@@ -16,7 +16,8 @@ cost_ledger() {
   if [ ! -e "$f" ] && [ ! -L "$f" ] && bind_src_ok "$(cost_dir)"; then return 0; fi
   { bind_src_ok "$f" && [ -f "$f" ]; } || die "$f is not a regular file or goes through a symlink; refused"
   [ "$(stat -c %s -- "$f")" -le "$max" ] || die "$f is over $max bytes; rotate it (move it aside) and run again"
-  read_agent_file "$f"
+  # the container appends live: cap the read itself, a cut line counts as skipped
+  { read_agent_file "$f" | head -c "$max"; } || true  # dd gets SIGPIPE when head stops early
 }
 
 # cost_table: a cost-summary/v1 (stdin) as a table. Estimates and credits keep their own columns

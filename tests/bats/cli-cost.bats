@@ -94,6 +94,14 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   [[ "$output" == *"task t [2Jx"* ]]
 }
 
+@test "the read is capped even when the ledger grows after the size check" {
+  # a stat that reports a small file: the cap must hold in the read itself
+  printf '#!/bin/sh\necho 1\n' > "$BATS_TEST_TMPDIR/bin/stat"; chmod +x "$BATS_TEST_TMPDIR/bin/stat"
+  AGENTIC_COST_LEDGER_MAX=934 run ag cost --json
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '[.sessions, .skipped_lines]' <<<"$output")" = '[1,1]' ]
+}
+
 @test "help lists cost" {
   run bash "$A" help
   [[ "$output" == *"cost [--since D]"* ]]
