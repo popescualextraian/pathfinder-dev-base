@@ -10,6 +10,8 @@ source "$AGENTIC_ROOT/lib/host/detect.sh"
 source "$AGENTIC_ROOT/lib/host/layout.sh"
 # shellcheck source=../lib/host/task.sh
 source "$AGENTIC_ROOT/lib/host/task.sh"
+# shellcheck source=../lib/host/schedule.sh
+source "$AGENTIC_ROOT/lib/host/schedule.sh"
 # shellcheck source=../lib/host/setup.sh
 source "$AGENTIC_ROOT/lib/host/setup.sh"
 
