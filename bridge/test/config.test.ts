@@ -41,6 +41,17 @@ describe("loadConfig", () => {
     expect(c.acpCmd).toEqual(["node", "/f.mjs"]);
     expect(c.idleTimeoutMs).toBe(3000);
   });
+
+  it("reads the scheduled settings, off with two hours by default", () => {
+    const on = loadConfig({ ...base, AGENTIC_SCHEDULED: "1", AGENTIC_RUN_TIMEOUT: "120" });
+    expect([on.scheduled, on.runTimeoutMs, on.summaryGraceMs]).toEqual([true, 120000, 300000]);
+    const off = loadConfig(base);
+    expect([off.scheduled, off.runTimeoutMs]).toEqual([false, 7200000]);
+  });
+
+  it.each(["59", "86401", "1.5", "x", ""])("refuses AGENTIC_RUN_TIMEOUT=%j", (v) => {
+    expect(() => loadConfig({ ...base, AGENTIC_RUN_TIMEOUT: v })).toThrow("AGENTIC_RUN_TIMEOUT");
+  });
 });
 
 describe("loadConfig validation", () => {

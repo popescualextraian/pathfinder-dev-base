@@ -29,6 +29,9 @@ export interface Config {
   target: string | null;
   container: string | null;
   createdContainer: boolean;
+  scheduled: boolean;
+  runTimeoutMs: number;
+  summaryGraceMs: number;
 }
 
 const list = (v: string | undefined): string[] => (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -49,6 +52,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   if (!Number.isFinite(idle) || idle <= 0) throw new ConfigError("AGENTIC_IDLE_TIMEOUT must be a number of seconds");
   const port = Number(env.AGENTIC_BRIDGE_PORT ?? "8765");
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigError("AGENTIC_BRIDGE_PORT must be an integer from 1 to 65535");
+  const runTimeout = env.AGENTIC_RUN_TIMEOUT === undefined ? 7200 : Number(env.AGENTIC_RUN_TIMEOUT);
+  if (!Number.isInteger(runTimeout) || runTimeout < 60 || runTimeout > 86400 || env.AGENTIC_RUN_TIMEOUT === "") {
+    throw new ConfigError("AGENTIC_RUN_TIMEOUT must be whole seconds from 60 to 86400");
+  }
   const allowed = list(env.AGENTIC_ALLOWED_ACTIONS);
   const badGrant = allowed.find((g) => !GRANT_RE.test(g));
   if (badGrant !== undefined) throw new ConfigError(`AGENTIC_ALLOWED_ACTIONS has an unknown entry ${badGrant} (push, open-pr, deploy:<target>)`);
@@ -86,6 +93,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     target: opt(env.AGENTIC_TARGET),
     container: opt(env.AGENTIC_CONTAINER),
     createdContainer: env.AGENTIC_CREATED_CONTAINER === "1",
+    scheduled: env.AGENTIC_SCHEDULED === "1",
+    runTimeoutMs: runTimeout * 1000,
+    summaryGraceMs: 300_000,
   };
 }
 
