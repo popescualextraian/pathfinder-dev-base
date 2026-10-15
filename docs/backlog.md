@@ -36,6 +36,14 @@ Items we chose not to do yet. Each names where it was decided.
   only. (source: `docs/specs/2026-10-12-sub-project-2-acp-bridge-design.md` §10, §17)
 - **Web UI and database** – the task state stays in files; there is no UI. (source:
   `docs/specs/2026-10-12-sub-project-2-acp-bridge-design.md` §17)
+- **One data root** – task files live in `~/agentic-workspaces/<p>/tasks/<id>/` (mounted at
+  `/tasks`) and the host's private task files in `~/.agentic/projects/<p>/tasks/<id>/` (never
+  mounted). The split that matters is mounted versus never mounted, not the top folder:
+  `~/.agentic/projects/<p>/harness` is already mounted. Since the host no longer clones,
+  `~/agentic-workspaces` holds only `tasks/` and `events/`. Move both under
+  `~/.agentic/projects/<p>/` as `tasks/<id>/` (mounted) and `private/<id>/` (never mounted), drop
+  `AGENTIC_WORKSPACES`, and decide how existing tasks move or age out. (source: discussion
+  2026-10-15)
 
 ## Setup and configuration
 
