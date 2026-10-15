@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# snapshot EVENT [HARNESS]: the cost plugin's hook entry (docs/specs/2026-10-15-cost-tracking-design.md
+# §4.1). Runs the harness's collector on the hook payload (stdin), tags each record with the project
+# and the task or schedule, and appends it to the project's ledger. Returns at once and always exits
+# 0: cost is diagnostics and never disturbs a turn.
+set -uo pipefail
+COST_DIR="${AGENTIC_COST_DIR:-/opt/agentic/cost}"
+LEDGER_DIR="${AGENTIC_COST_LEDGER_DIR:-/cost}"
+PROJECT_COST="${AGENTIC_CONFIG_MOUNT:-/agentic-config}/cost"
+LOG="${AGENTIC_STATE:-$HOME/.agentic}/cost.log"
+ev="${1:-turn}"
+# the collector's stderr goes to $LOG, so its folder must exist before the first redirect
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+# both harnesses run the plugin's one hooks.json; only Copilot sets COPILOT_PLUGIN_ROOT
+harness="${2:-$(if [ -n "${COPILOT_PLUGIN_ROOT:-}" ]; then echo copilot; else echo claude; fi)}"
+
+log() {
+  mkdir -p "$(dirname "$LOG")" 2>/dev/null && printf '%s %s %s\n' "$(date -u +%FT%TZ)" "$harness" "$*" >> "$LOG" 2>/dev/null
+  return 0
+}
+
+# collector: the project's collector for the harness, else an overlay's, else the generic ccusage
+# one (spec C4); the harness name is a plain word.
+collector() {
+  local f
+  [[ "$harness" =~ ^[a-z0-9][a-z0-9-]{0,39}$ ]] || return 1
+  for f in "$PROJECT_COST/collectors/$harness" "$COST_DIR/collectors/$harness"; do
+    if [ -f "$f" ] && [ -x "$f" ]; then printf '%s\n' "$f"; return 0; fi
+  done
+  printf '%s\n' "$COST_DIR/ccusage-collector"
+}
+
+# context: where the session runs, from what the host gave the container.
+context() {
+  jq -cn --arg t "${AGENTIC_TASK_ID:-}" --arg sch "${AGENTIC_SCHEDULED:-}" --arg s "${AGENTIC_SCHEDULE:-}" '
+    if $t == "" then {kind: "dev"}
+    else {kind: (if $sch == "1" then "scheduled" else "task" end), task: $t}
+      + (if $s == "" then {} else {schedule: $s} end) end'
+}
+
+record() {
+  local c out
+  c="$(collector)" || { log "no collector"; return 0; }
+  if [ ! -d "$LEDGER_DIR" ] || [ ! -w "$LEDGER_DIR" ]; then log "no writable $LEDGER_DIR; not recorded"; return 0; fi
+  out="$(timeout "${AGENTIC_COST_TIMEOUT:-60}" "$c" "$ev" "$harness" 2>>"$LOG")" || { log "collector failed ($?)"; return 0; }
+  # no schema check here: the readers skip what is not a cost-record/v1 (spec C9)
+  out="$(jq -c --arg p "${AGENTIC_PROJECT:-}" --argjson ctx "$(context)" '. + {project: $p, context: $ctx}' \
+      <<<"$out" 2>>"$LOG")" || { log "the collector printed something that is not JSON"; return 0; }
+  [ -n "$out" ] || return 0
+  # task and dev containers share the ledger: one locked write per snapshot keeps lines whole
+  { flock 9 && printf '%s\n' "$out" >&9; } 9>>"$LEDGER_DIR/ledger.jsonl"
+  return 0
+}
+
+if [ "${AGENTIC_COST_FOREGROUND:-0}" = 1 ]; then record; exit 0; fi
+# the payload is read before detaching: the harness closes the pipe when the hook returns
+payload="$(cat 2>/dev/null || true)"
+printf '%s' "$payload" | AGENTIC_COST_FOREGROUND=1 setsid "$0" "$ev" "$harness" >/dev/null 2>&1 &
+exit 0
