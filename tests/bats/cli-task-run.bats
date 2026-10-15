@@ -687,3 +687,33 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   [ ! -e "$T/T-1" ]
   run grep -q pkill "$DOCKER_LOG"; [ "$status" -ne 0 ]
 }
+
+@test "run --scheduled writes the scheduled settings into the host env file" {
+  ag run --id T-S --scheduled 5400 "x"
+  grep -qx AGENTIC_SCHEDULED=1 "$H/T-S/env"
+  grep -qx AGENTIC_RUN_TIMEOUT=5400 "$H/T-S/env"
+  run ag run --id T-S2 --scheduled 1h "x"
+  [ "$status" -ne 0 ]
+}
+
+@test "a scheduled run that already ended when run looks is not rolled back" {
+  export DOCKER_BRIDGE_RC=1   # no bridge process: it already exited
+  export DOCKER_START_HOOK="$BATS_TEST_TMPDIR/ended.sh"
+  printf 'mkdir -p "%s/T-E"; echo %s > "%s/T-E/state.json"\n' "$T" "'{\"state\":\"stopped\",\"reason\":\"scheduled-done\"}'" "$T" > "$DOCKER_START_HOOK"
+  run ag run --id T-E --scheduled 600 "x"
+  [ "$status" -eq 0 ]
+  [ -e "$T/T-E/state.json" ]
+  printf 'mkdir -p "%s/T-F"; echo %s > "%s/T-F/state.json"\n' "$T" "'{\"state\":\"failed\",\"reason\":\"x\"}'" "$T" > "$DOCKER_START_HOOK"
+  run ag run --id T-F --scheduled 600 "x"
+  [ "$status" -eq 0 ]
+  [ -e "$T/T-F/state.json" ]
+}
+
+@test "the sweep leaves an auto-cleaned scheduled task to its firing" {
+  record T-C stopped
+  jq '.cleaned = true' "$T/T-C/state.json" > "$T/T-C/s" && mv "$T/T-C/s" "$T/T-C/state.json"
+  printf 'AGENTIC_AUTO_CLEAN=1\nAGENTIC_SCHEDULED=1\n' >> "$H/T-C/env"
+  export DOCKER_STATUS=exited
+  ag status >/dev/null
+  [ -e "$T/T-C/state.json" ]
+}

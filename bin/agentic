@@ -429,7 +429,7 @@ run_cleanup() {
 
 cmd_run() {
   need_config
-  local prompt="" pfile="" agent="" model="" target="" in="" worktree=0 autoclean=0 id="" keep=0 json=0 allow=() a
+  local prompt="" pfile="" agent="" model="" target="" in="" worktree=0 autoclean=0 id="" keep=0 json=0 sched="" allow=() a
   while [ $# -gt 0 ]; do
     case "$1" in
       --prompt-file) optval "$@"; pfile="$2"; shift 2 ;;
@@ -443,10 +443,12 @@ cmd_run() {
       --id) optval "$@"; id="$2"; shift 2 ;;
       --keep-on-failure) keep=1; shift ;;
       --json) json=1; shift ;;
+      --scheduled) optval "$@"; sched="$2"; shift 2 ;;
       -*) die "unknown option $1 (agentic help)" ;;
       *) [ -z "$prompt" ] || die "one prompt; quote it"; prompt="$1"; shift ;;
     esac
   done
+  [ -z "$sched" ] || [[ "$sched" =~ ^[0-9]+$ ]] || die "--scheduled takes seconds"
   sweep_cleaned
   if [ -n "$pfile" ]; then
     [ -z "$prompt" ] || die "give either a prompt or --prompt-file"
@@ -516,6 +518,7 @@ cmd_run() {
     printf 'AGENTIC_WORK=%s\nAGENTIC_TARGET=%s\nAGENTIC_CONTAINER=%s\nAGENTIC_CREATED_CONTAINER=%s\n' "$work" "$tname" "$c" "$created"
     printf 'AGENTIC_ALLOWED_ACTIONS=%s\nAGENTIC_WORKTREE=%s\nAGENTIC_BRANCH=%s\nAGENTIC_AUTO_CLEAN=%s\n' \
       "$(IFS=,; echo "${allow[*]+"${allow[*]}"}")" "$worktree" "$branch" "$autoclean"
+    if [ -n "$sched" ]; then printf 'AGENTIC_SCHEDULED=1\nAGENTIC_RUN_TIMEOUT=%s\n' "$sched"; fi
     for v in AGENTIC_IDLE_TIMEOUT AGENTIC_NOTIFY_WEBHOOK AGENTIC_GATE_PROTECTED; do
       if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}"; fi
     done
@@ -539,8 +542,10 @@ cmd_run() {
     start_container "$id"
   fi
   start_bridge "$id"
-  # with --auto-clean a quick task can end, and its container exit, before the host looks
-  if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}" && ! { [ "$autoclean" = 1 ] && [ "$(record_get "$id" .cleaned)" = true ]; }; then
+  # with --auto-clean or --scheduled a quick task can end, and its container exit, before the host looks
+  if ! wait_bridge "$id" "${AGENTIC_START_TIMEOUT:-120}" \
+    && ! { [ "$autoclean" = 1 ] && [ "$(record_get "$id" .cleaned)" = true ]; } \
+    && ! { [ -n "$sched" ] && [[ " stopped failed " == *" $(record_get "$id" .state) "* ]]; }; then
     # the bridge's own reason, before the rollback removes the task directory
     bridge_tails "$id"
     die "the bridge of $id did not come up"

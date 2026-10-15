@@ -187,6 +187,8 @@ sweep_cleaned() {
     # only a task that asked for auto-clean (the host's own env file, not the agent's record)
     envf="$(host_file "$id" env)" || continue
     [ "$(dotenv_value "$envf" AGENTIC_AUTO_CLEAN)" = 1 ] || continue
+    # a scheduled task is cleaned by its firing, after it copied the result
+    [ "$(dotenv_value "$envf" AGENTIC_SCHEDULED)" != 1 ] || continue
     if task_created "$id"; then
       case "$(container_status "$id")" in running|unknown) continue ;; esac
     fi
