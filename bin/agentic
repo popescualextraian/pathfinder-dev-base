@@ -14,6 +14,8 @@ source "$AGENTIC_ROOT/lib/host/task.sh"
 source "$AGENTIC_ROOT/lib/host/schedule.sh"
 # shellcheck source=../lib/host/setup.sh
 source "$AGENTIC_ROOT/lib/host/setup.sh"
+# shellcheck source=../lib/host/cost.sh
+source "$AGENTIC_ROOT/lib/host/cost.sh"
 
 usage() {
   cat <<'EOF'
@@ -51,6 +53,8 @@ agentic <command> [options]          run inside a project repository
   schedule list [--json] | remove NAME | run NAME | results NAME [--all]
   schedule follow NAME [--since N] [--raw]
                                      stream the running firing of NAME until its run ends
+  cost [--since D] [--until D] [--task ID] [--schedule NAME] [--by context|model|day] [--json]
+                                     what the project's sessions spent (docs/cost.md); --json is cost-summary/v1
   add marketplace|plugin|mcp|skill|agent|command|workspace ... [--target T] [--no-build] [--yes]
   copy SRC DEST | mount SRC DEST [--readonly] | volume NAME DEST
                                      add a setup line (docs/setup.md), then build
@@ -827,7 +831,7 @@ main() {
     shell) if [ "$#" -eq 1 ] && valid_task_id "$1" && [ -f "$(task_dir "$1" 2>/dev/null)/state.json" ]; then cmd_task_shell "$1"; else cmd_shell "$@"; fi ;;
     build-base) cmd_build_base "$@" ;;
     # each of these is handled by cmd_<command>
-    init|remove|list|build|login|setup|doctor|dev|target|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean|schedule)
+    init|remove|list|build|login|setup|doctor|dev|target|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean|schedule|cost)
       "cmd_$cmd" "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
