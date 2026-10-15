@@ -350,3 +350,27 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
   run ag schedule results none
   [ "$status" -eq 0 ]; [ "$output" = "no results for none yet" ]
 }
+
+@test "doctor says nothing about schedules when there are none" {
+  run ag doctor
+  [[ "$output" != *schedules* ]]
+}
+
+@test "doctor reports a missing cron daemon and a schedule without its crontab line" {
+  install_cmd_stub pgrep 1
+  mkdir -p "$S/nightly"; echo kind=cron > "$S/nightly/schedule"
+  printf '0 3 * * * x # agentic:demo:orphan\n' > "$CT"
+  run ag doctor
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"error cron: no cron daemon runs"* ]]
+  [[ "$output" == *"error schedule nightly: no crontab line"* ]]
+  [[ "$output" == *"error schedule orphan: a crontab line without a definition; agentic schedule remove orphan"* ]]
+}
+
+@test "doctor is content with cron running and every line in place" {
+  install_cmd_stub pgrep 0
+  ag schedule add nightly --cron "0 2 * * *" x
+  run ag doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok    cron"* ]]; [[ "$output" == *"ok    schedule nightly"* ]]
+}

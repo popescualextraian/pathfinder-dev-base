@@ -327,3 +327,23 @@ sched_end() {
     safe_rm "$(sched_root)" "$(sched_dir "$1")"
   fi
 }
+
+# sched_doctor: the host's part of doctor: cron runs, and definitions and crontab lines match.
+sched_doctor() {
+  local d n names=() lines=() errs=0 p; p="$(task_project)"
+  for d in "$(sched_root)"/*/; do n="$(basename "$d")"; if valid_sched_name "$n" && [ -f "$d/schedule" ]; then names+=("$n"); fi; done
+  mapfile -t lines < <(crontab_lines | sed -n "s/.* # agentic:$p:\([a-z0-9-]*\)\$/\1/p")
+  [ ${#names[@]} -gt 0 ] || [ ${#lines[@]} -gt 0 ] || return 0
+  echo "schedules"
+  if cron_running; then echo "  ok    cron"
+  else echo "  error cron: no cron daemon runs; on WSL set systemd=true in /etc/wsl.conf, or sudo service cron start"; errs=1; fi
+  for n in ${names[@]+"${names[@]}"}; do
+    if printf '%s\n' ${lines[@]+"${lines[@]}"} | grep -qx -- "$n"; then echo "  ok    schedule $n"
+    else echo "  error schedule $n: no crontab line; agentic schedule remove $n, then add it again"; errs=1; fi
+  done
+  for n in ${lines[@]+"${lines[@]}"}; do
+    [ -f "$(sched_dir "$n")/schedule" ] && continue
+    echo "  error schedule $n: a crontab line without a definition; agentic schedule remove $n"; errs=1
+  done
+  return "$errs"
+}

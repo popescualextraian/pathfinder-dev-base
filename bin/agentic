@@ -415,9 +415,11 @@ cmd_dev() {
 
 cmd_doctor() {
   need_config
-  local img; img="$(run_image)"
+  local img rc=0; img="$(run_image)"
   build_run_args "$img"
-  docker run --rm "${RUN_ARGS[@]}" -e "AGENTIC_IMAGE_CONFIG_HASH=$(image_label "$img" agentic.config.hash)" "$img" agentic-doctor
+  docker run --rm "${RUN_ARGS[@]}" -e "AGENTIC_IMAGE_CONFIG_HASH=$(image_label "$img" agentic.config.hash)" "$img" agentic-doctor || rc=$?
+  sched_doctor || rc=1
+  return "$rc"
 }
 
 optval() { [ -n "${2:-}" ] || die "$1 needs a value"; }
