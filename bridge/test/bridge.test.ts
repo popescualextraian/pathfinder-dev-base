@@ -492,10 +492,12 @@ describe("scheduled runs", () => {
     expect(released()).toBe(0);
   });
 
-  it("does not arm the idle timer while the run works or summarises", async () => {
-    const dir = taskDir("hello");
-    const { store, exits } = await start(dir, { AGENTIC_SCHEDULED: "1", AGENTIC_IDLE_TIMEOUT: "0.05" });
-    expect(await exited(exits)).toEqual([0]);
+  it("a scheduled run waiting on a permission never suspends", async () => {
+    const dir = taskDir("PERMISSION:git push");
+    const { bridge, store } = await start(dir, { AGENTIC_SCHEDULED: "1", AGENTIC_IDLE_TIMEOUT: "0.05" });
+    await waitState(bridge, "waiting");
+    await new Promise((r) => setTimeout(r, 200));
+    expect(store.readRecord().state).toBe("waiting");
     expect(store.readEvents(0).some((e) => e.type === "state" && e.data.state === "suspended")).toBe(false);
   });
 
