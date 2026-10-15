@@ -147,6 +147,31 @@ flowchart LR
 Full guide: [`docs/detached-mode.md`](docs/detached-mode.md). States, API, events, files and
 environment: [`docs/tasks.md`](docs/tasks.md).
 
+## Scheduled runs (planned)
+
+> **Planned:** designed, not built yet. Commands and behaviour may change.
+
+`agentic schedule add` runs a detached task at a set time, once (`--at`) or on a cron schedule
+(`--cron`): agentic colleagues that update dependencies at night or write a report every Monday.
+Each run gets a fresh container and its own worktree, keeps the `--allow` grants you gave, and is
+told that nobody is watching. At the end the agent writes a summary, the container is stopped and,
+unless you pass `--keep`, removed with the task. Only the summary stays; unpushed work is never
+deleted.
+
+```bash
+agentic schedule add nightly-deps --cron "0 2 * * 1-5" --allow open-pr \
+  "Update the dependencies, run the tests and open a pull request"
+agentic schedule run nightly-deps        # try it now
+agentic schedule results nightly-deps    # the summary of the last run
+agentic schedule list
+agentic schedule remove nightly-deps
+```
+
+Locally your crontab fires the run, so the host needs cron and must be on at the time. Remotely
+the platform's own scheduler starts the image with `AGENTIC_SCHEDULED=1`; the scheduled behaviour
+lives in the bridge, so it is the same in both places. Guide:
+[`docs/scheduled-runs.md`](docs/scheduled-runs.md).
+
 ## Project wiki (WIP)
 
 > **Work in progress:** the wiki skill is not finished yet; commands and page layout may change.

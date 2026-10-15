@@ -13,6 +13,10 @@ Items we chose not to do yet. Each names where it was decided.
   because of sudo. (source: `docs/specs/2026-10-14-run-thin-relay-design.md` §11)
 - **Worktree by default** – `run --worktree` is opt-in; it may become the default.
   (source: `docs/specs/2026-10-14-run-thin-relay-design.md` §11)
+- **Session API** – `POST /sessions` with the task definition as its body, replacing the
+  task-definition env vars once a container runs several tasks at once; and a JSON schema for that
+  definition that every launcher can validate against. Until then env is the bridge's contract.
+  (source: `docs/specs/2026-10-15-schedule-design.md` S11, §12)
 - **Several conversations per task** – more than one agent session in a task, and a `switch`
   between them. (source: `docs/specs/2026-10-12-sub-project-2-acp-bridge-design.md` §17)
 - **Outbound mode** – with `AGENTIC_RELAY_URL` the bridge dials a relay over WSS instead of
@@ -72,8 +76,13 @@ Items we chose not to do yet. Each names where it was decided.
 
 ## Remote
 
-- **Scheduling** – `schedules:` in the config, tested together with a managed container service.
-  (source: `docs/specs/2026-10-14-revamp-design.md` §14, R11)
+- **Schedules shared by a team** – `schedules:` in `agentic.yaml`, which needs one runner for the
+  team instead of one crontab per developer; local scheduling is per user
+  (`docs/scheduled-runs.md`). (source: `docs/specs/2026-10-14-revamp-design.md` §14, R11,
+  `docs/specs/2026-10-15-schedule-design.md` §12)
+- **Scheduling extras** – catch-up of firings missed while the host was off, systemd timers and
+  launchd as triggers, result retention, chained or conditional schedules. (source:
+  `docs/specs/2026-10-15-schedule-design.md` §12)
 - **Several users on one remote host** – per-user containers and volumes, naming, and who may
   attach to whose container. R13 fixes only the principle: one container per user. (source:
   `docs/specs/2026-10-14-revamp-design.md` §14, `docs/remote.md` One user per container)
