@@ -4,3 +4,5 @@ add plugin superpowers@claude-plugins-official --target claude
 add marketplace obra/superpowers-marketplace --target copilot
 add plugin superpowers@superpowers-marketplace --target copilot
 add mcp playwright -- mcp-server-playwright --headless
+add marketplace /opt/agentic/marketplace
+add plugin cost@agentic

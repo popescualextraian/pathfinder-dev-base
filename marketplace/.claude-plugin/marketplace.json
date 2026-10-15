@@ -1,0 +1,8 @@
+{
+  "name": "agentic",
+  "owner": { "name": "agentic-dev-base" },
+  "plugins": [
+    { "name": "cost", "source": "./plugins/cost",
+      "description": "Records the token cost of every session in the project's cost ledger; read it with agentic cost" }
+  ]
+}

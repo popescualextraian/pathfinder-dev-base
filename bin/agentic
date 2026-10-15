@@ -62,7 +62,7 @@ EOF
 
 # base_hash: a hash of everything the base image is built from.
 base_hash() {
-  (cd "$AGENTIC_ROOT" && find image derive config schema skills templates -type f -print0 | sort -z \
+  (cd "$AGENTIC_ROOT" && find image derive config schema skills templates marketplace -type f -print0 | sort -z \
     | xargs -0 sha256sum | sha256sum | cut -c1-16)
 }
 

@@ -71,7 +71,7 @@ RUN /opt/agentic/tools/java.sh install ${JAVA_BASE} \
 
 # Harness CLIs and the Playwright MCP, always run on Node ${NODE_HARNESS} whatever node a project prefers
 RUN PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm install -g --prefix /opt/agentic/npm \
-      @anthropic-ai/claude-code @github/copilot ccusage @playwright/mcp \
+      @anthropic-ai/claude-code @github/copilot ccusage@20.0.32 @playwright/mcp \
  && for b in /opt/agentic/npm/bin/*; do \
       n="$(basename "$b")"; \
       printf '#!/bin/sh\nPATH=/opt/node/%s/bin:$PATH exec %s "$@"\n' "${NODE_HARNESS}" "$b" > "/usr/local/bin/$n"; \
@@ -112,6 +112,8 @@ COPY image/worker.d /opt/agentic/worker.d
 COPY image/bin /opt/agentic/bin
 COPY image/task /opt/agentic/task
 COPY image/hooks.d /opt/agentic/hooks.d
+COPY image/cost /opt/agentic/cost
+COPY marketplace /opt/agentic/marketplace
 COPY derive /opt/agentic/derive
 COPY config /opt/agentic/config
 COPY schema /opt/agentic/schema

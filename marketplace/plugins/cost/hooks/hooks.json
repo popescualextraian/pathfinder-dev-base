@@ -1,0 +1,6 @@
+{
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "/opt/agentic/cost/snapshot turn", "timeout": 10 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "/opt/agentic/cost/snapshot end", "timeout": 10 }] }]
+  }
+}
