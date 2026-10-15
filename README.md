@@ -120,13 +120,17 @@ agentic clean T-20261012-a3f1
 ```
 
 The CLI only relays: each command goes to the bridge in the task container over HTTP or
-WebSocket, and the bridge is the only process that speaks ACP to the agent.
+WebSocket, and the bridge is the only process that speaks ACP to the agent. Each task's state
+lives in `~/agentic-workspaces/<project>/tasks/<id>/`; `agentic status` lists the tasks from there.
 
 ```mermaid
 %%{init: {"theme": "default", "themeVariables": {"edgeLabelBackground": "#ffffff"}, "flowchart": {"rankSpacing": 70, "nodeSpacing": 40}}}%%
 flowchart LR
   subgraph host["Host"]
-    cli["<b>agentic&nbsp;CLI</b><br/>run<br/>send<br/>resume<br/>answer<br/>cancel<br/>stop<br/>follow"]
+    cli["<b>agentic&nbsp;CLI</b><br/>run<br/>send<br/>resume<br/>answer<br/>cancel<br/>stop<br/>follow<br/>status"]
+  end
+  subgraph home["Host · your home directory"]
+    state["~/agentic-workspaces/<br/>&lt;project&gt;/tasks/&lt;id&gt;/<br/>state.json"]
   end
   subgraph task["Task container"]
     bridge["<b>Bridge&nbsp;·&nbsp;HTTP&nbsp;/&nbsp;WS</b><br/>GET&nbsp;/status<br/>GET&nbsp;/events<br/>POST&nbsp;/prompt<br/>POST&nbsp;/answer<br/>POST&nbsp;/cancel<br/>POST&nbsp;/stop<br/>POST&nbsp;/ask<br/>POST&nbsp;/gate"]
@@ -138,6 +142,8 @@ flowchart LR
   agent -- "session/update<br/>request_permission" --> bridge
   agent --> tools
   tools -- "POST /ask<br/>POST /gate" --> bridge
+  bridge -- "writes (mounted at /tasks)" --> state
+  cli -- "status reads" --> state
   linkStyle default color:#1d2329
 ```
 
