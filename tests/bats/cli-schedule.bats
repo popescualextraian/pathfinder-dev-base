@@ -155,3 +155,136 @@ lib() { (cd "$PROJ" && source "$A" && "$@"); }
   [ "$status" -ne 0 ]
   cmp "$CT" "$BATS_TEST_TMPDIR/before"; [ -e "$S/keep/schedule" ]
 }
+
+# ended STATE REASON [RESULT]: a fake bridge run: the start hook writes the record (and result.md) the bridge would leave.
+ended() {
+  export DOCKER_START_HOOK="$BATS_TEST_TMPDIR/ended.sh" DOCKER_BRIDGE_RC=1
+  cat > "$DOCKER_START_HOOK" <<HOOK
+d="\$(ls -d "$T"/T-* | head -n 1)"
+jq -n --arg s "$1" --arg r "$2" '{version:1, state:\$s, reason:\$r, branch:"agentic/x", allowed_actions:["open-pr"], cleaned:false}' > "\$d/state.json"
+printf '%s' "${3:-}" > "\$d/result.md"
+HOOK
+}
+results() { find "$R/$1" -type f -name '*.md' | sort; }
+
+@test "run fires now: scheduled defaults, the result with the summary, and everything removed" {
+  ag schedule add nightly --cron "0 2 * * *" --allow open-pr --timeout 90m "Update"
+  ended stopped scheduled-done "Did the update. PR opened."
+  run ag schedule run nightly
+  [ "$status" -eq 0 ]
+  f="$(results nightly)"
+  [ -n "$f" ]
+  grep -qx '| State | stopped (scheduled-done) |' "$f"
+  grep -qx '| Allowed | open-pr |' "$f"
+  grep -qx '| Kept | no |' "$f"
+  grep -qx 'Did the update. PR opened.' "$f"
+  [ -z "$(ls -A "$T")" ]; [ -z "$(ls -A "$H")" ]
+  [ ! -e "$S/nightly/lock" ]
+  docker_sub stop | grep -q agentic-demo-task-
+}
+
+@test "the task env of a firing has the scheduled settings, worktree and auto-clean" {
+  ag schedule add nightly --cron "0 2 * * *" --timeout 90m --keep "Update"
+  ended stopped scheduled-done "ok"
+  ag schedule run nightly
+  e="$(ls "$H"/*/env)"
+  for l in AGENTIC_SCHEDULED=1 AGENTIC_RUN_TIMEOUT=5400 AGENTIC_WORKTREE=1 AGENTIC_AUTO_CLEAN=1; do grep -qx "$l" "$e"; done
+}
+
+@test "--no-worktree runs without a worktree" {
+  ag schedule add nightly --cron "0 2 * * *" --no-worktree --keep "Update"
+  ended stopped scheduled-done "ok"
+  ag schedule run nightly
+  grep -qx AGENTIC_WORKTREE=0 "$(ls "$H"/*/env)"
+}
+
+@test "--keep keeps the stopped container and the task files, and the result says how to clean" {
+  ag schedule add nightly --cron "0 2 * * *" --keep "Update"
+  ended stopped scheduled-done "ok"
+  ag schedule run nightly
+  [ -n "$(ls -A "$T")" ]
+  grep -Eq '^\| Kept \| --keep; agentic clean T-[0-9]{8}-[0-9a-f]{4} \|$' "$(results nightly)"
+  run ! grep -q task <<<"$(docker_sub rm)"
+}
+
+@test "a failed run is removed, or kept with --keep-on-failure; its result has the reason" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended failed "agent exited with code 3"
+  ag schedule run a
+  grep -qx '| State | failed (agent exited with code 3) |' "$(results a)"
+  [ -z "$(ls -A "$T")" ]
+  ag schedule add b --cron "0 2 * * *" --keep-on-failure "x"
+  ag schedule run b
+  grep -q '| Kept | --keep-on-failure; agentic clean ' "$(results b)"
+}
+
+@test "unpushed work keeps the run whatever the flags" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended stopped scheduled-done "ok"
+  export DOCKER_WT_ERR="agentic-worktree: has commits on no remote branch"
+  ag schedule run a
+  grep -q '| Kept | unpushed work; agentic clean ' "$(results a)"
+  [ -n "$(ls -A "$T")" ]
+}
+
+@test "a live lock skips the firing; a stale one is taken over and its task is reported and kept" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  mkdir "$S/a/lock"; echo $$ > "$S/a/lock/pid"
+  run ag schedule run a
+  [ "$status" -eq 0 ]
+  grep -qx '| State | skipped (the previous run still runs) |' "$(results a)"
+  rm -rf "$R/a"
+  echo 999999 > "$S/a/lock/pid"; echo T-OLD > "$S/a/lock/task"
+  mkdir -p "$T/T-OLD" "$H/T-OLD"; echo '{"state":"running"}' > "$T/T-OLD/state.json"
+  ended stopped scheduled-done "ok"
+  ag schedule run a
+  grep -l interrupted $(results a)
+  [ -e "$T/T-OLD/state.json" ]
+}
+
+@test "the running cap skips the firing" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  export DOCKER_PS="c1 c2 c3"
+  run ag schedule run a
+  [ "$status" -eq 0 ]
+  grep -q '| State | skipped (' "$(results a)"
+}
+
+@test "a refused run is a result with run's message" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  export DOCKER_IMAGE_EXISTS=0 DOCKER_RUN_RC=1
+  run ag schedule run a
+  [ "$status" -eq 0 ]
+  grep -q '| State | refused (' "$(results a)"
+}
+
+@test "fire logs to fire.log; a one-off removes itself after it fired, and skips another year" {
+  when="$(date -d '+1 day' '+%Y-%m-%d %H:%M')"
+  ag schedule add once --at "$when" "x"
+  sed -i "s/^when=[0-9]\{4\}/when=1999/" "$S/once/schedule"
+  ag schedule fire once
+  [ ! -e "$R/once" ]; grep -q '# agentic:demo:once' "$CT"
+  sed -i "s/^when=1999/when=$(date +%Y)/" "$S/once/schedule"
+  ended stopped scheduled-done "ok"
+  ag schedule fire once
+  [ -n "$(results once)" ]
+  run ! grep -q '# agentic:demo:once' "$CT"
+  [ ! -e "$S/once" ]
+}
+
+@test "fire of a removed schedule drops its leftover crontab line" {
+  printf '0 2 * * * x # agentic:demo:gone\n' > "$CT"
+  run ag schedule fire gone
+  [ "$status" -eq 0 ]
+  ! grep -q 'agentic:demo:gone' "$CT"
+}
+
+@test "a run that overruns its timeout is stopped by the host" {
+  ag schedule add a --cron "0 2 * * *" --timeout 60 "x"
+  export DOCKER_BRIDGE_RC=0 AGENTIC_SCHEDULE_GRACE=0 AGENTIC_SCHEDULE_POLL=0.1 AGENTIC_STOP_TIMEOUT=0
+  export CURL_BODY='{"state":"running"}'   # run's start-up wait sees a live bridge
+  sed -i 's/^timeout=60/timeout=0/' "$S/a/schedule"
+  run ag schedule run a
+  [ "$status" -eq 0 ]
+  grep -q '/stop' "$CURL_LOG"
+}

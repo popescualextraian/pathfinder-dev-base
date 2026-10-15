@@ -187,3 +187,119 @@ sched_list() {
     (if .cron then "yes" else "MISSING" end), (if .last then .last.state else "-" end)] | @tsv' \
     | while IFS=$'\t' read -r a b c e f g; do printf '%-20s %-5s %-22s %-14s %-6s %s\n' "$a" "$b" "$c" "$e" "$f" "$g"; done
 }
+
+# sched_lock NAME: one firing per schedule. A lock whose pid is gone is taken over; the task it
+# names is reported as interrupted and kept (its work may not be pushed).
+sched_lock() {
+  local l old t; l="$(sched_dir "$1")/lock"
+  if ! mkdir "$l" 2>/dev/null; then
+    old="$(cat "$l/pid" 2>/dev/null || true)"
+    if [[ "$old" =~ ^[0-9]+$ ]] && kill -0 "$old" 2>/dev/null; then return 1; fi
+    t="$(cat "$l/task" 2>/dev/null || true)"
+    rm -rf -- "$l"; mkdir "$l" || return 1
+    if valid_task_id "$t" && task_readable "$t" state.json; then
+      sched_result "$1" "$t" "interrupted (the firing ended before its run)" "interrupted firing; agentic clean $t"
+    fi
+  fi
+  echo $$ > "$l/pid"
+}
+sched_unlock() { rm -rf -- "$(sched_dir "$1")/lock"; }
+
+# sched_wait ID SECONDS: until the task's bridge has exited; past SECONDS plus the grace the host
+# stops it (the bridge's own timeout should have ended it).
+sched_wait() {
+  local id="$1" c end; c="$(task_container "$1")"
+  end=$((SECONDS + $2 + ${AGENTIC_SCHEDULE_GRACE:-600}))
+  while [ "$(container_status "$id")" = running ] && bridge_running "$c"; do
+    if [ "$SECONDS" -ge "$end" ]; then
+      say "$id overran its timeout; stopping it"
+      bridge_req "$id" POST /stop >/dev/null 2>&1 || true
+      wait_bridge_gone "$c" "${AGENTIC_STOP_TIMEOUT:-30}" || docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep "${AGENTIC_SCHEDULE_POLL:-5}"
+  done
+}
+
+# cell TEXT: one Markdown table cell (one line, no control characters, | escaped).
+cell() { printf '%s' "$1" | plain | tr '\n\t' '  ' | sed 's/|/\\|/g'; }
+
+# sched_result NAME ID STATE KEPT: the result file of one firing. Agent-written files are read with
+# the safe-read rules and capped.
+sched_result() {
+  local name="$1" id="$2" state="$3" kept="$4" dir f branch="" allowed="" open="" body=""
+  dir="$(sched_results "$name")"; mkdir -p "$dir"
+  f="$dir/$(date +%Y%m%d-%H%M)-${id:-none}.md"
+  if [ -n "$id" ] && task_readable "$id" state.json; then
+    branch="$(record_get "$id" .branch)"
+    allowed="$(record_get "$id" '(.allowed_actions // []) | join(", ")')"
+    open="$(open_questions "$id" | jq -r 'map("\(.id): \(.text)") | join("; ")' 2>/dev/null || true)"
+    if task_readable "$id" result.md; then body="$(task_read "$id" result.md | head -c 65536 | plain)"
+    elif [[ "$state" == failed* ]]; then
+      body="$(printf 'Reason: %s\n\n' "$(record_get "$id" .reason | plain)"; if task_readable "$id" bridge.log; then task_read "$id" bridge.log | tail -n 20 | plain; fi)"
+    fi
+  fi
+  {
+    printf '# %s — %s\n\n| | |\n|---|---|\n' "$name" "$(date '+%Y-%m-%d %H:%M')"
+    printf '| Task | %s |\n| State | %s |\n| Branch | %s |\n| Allowed | %s |\n| Open questions | %s |\n| Kept | %s |\n' \
+      "$(cell "${id:--}")" "$(cell "$state")" "$(cell "${branch:--}")" "$(cell "${allowed:--}")" "$(cell "${open:-none}")" "$(cell "${kept:-no}")"
+    if [ -n "$body" ]; then printf '\n%s\n' "$body"; fi
+  } > "$f"
+  echo "$name: $state → $f"
+}
+
+# sched_fire NAME now|cron: one firing (spec §5). cron: output to fire.log, and a one-off checks its
+# year and removes itself. Exits 0 whenever it wrote a result.
+sched_fire() {
+  local name="${1:-}" mode="$2" d id secs out st reason kept c a args=() allow=()
+  valid_sched_name "$name" || die "usage: agentic schedule run NAME"
+  d="$(sched_dir "$name")"
+  if [ ! -f "$d/schedule" ]; then
+    [ "$mode" = cron ] || die "no schedule $name"
+    crontab_set "$name"; return 0
+  fi
+  if [ "$mode" = cron ]; then
+    if [ -f "$d/fire.log" ]; then tail -n 999 "$d/fire.log" > "$d/fire.log.tmp" && mv -f "$d/fire.log.tmp" "$d/fire.log"; fi
+    exec >>"$d/fire.log" 2>&1
+    echo "== $(date '+%F %T') fire $name"
+    if [ "$(sched_get "$name" kind)" = at ] && [ "$(date +%Y)" != "$(sched_get "$name" when | cut -c1-4)" ]; then return 0; fi
+  fi
+  if ! sched_lock "$name"; then sched_result "$name" "" "skipped (the previous run still runs)" ""; return 0; fi
+  if ! out="$( (check_cap) 2>&1 )"; then
+    sched_result "$name" "" "skipped ($(tail -n 1 <<<"$out" | sed 's/^agentic: //'))" ""; sched_end "$name" "$mode"; return 0
+  fi
+  id="$(new_task_id)"; echo "$id" > "$d/lock/task"
+  secs="$(sched_get "$name" timeout)"
+  args=(--id "$id" --scheduled "$secs" --auto-clean --prompt-file "$d/prompt.md")
+  [ "$(sched_get "$name" worktree)" != 1 ] || args+=(--worktree)
+  for a in agent model target; do if [ -n "$(sched_get "$name" "$a")" ]; then args+=("--$a" "$(sched_get "$name" "$a")"); fi; done
+  IFS=, read -ra allow <<<"$(sched_get "$name" allow)"
+  for a in ${allow[@]+"${allow[@]}"}; do args+=(--allow "$a"); done
+  if ! out="$( (cmd_run "${args[@]}") 2>&1 )"; then
+    sched_result "$name" "$id" "refused ($(tail -n 1 <<<"$out" | sed 's/^agentic: //' | plain))" ""; sched_end "$name" "$mode"; return 0
+  fi
+  echo "$name: started $id"
+  sched_wait "$id" "$secs"
+  st="$(record_get "$id" .state)"; reason="$(record_get "$id" .reason)"
+  case "$st" in stopped|failed) st="$st (${reason:-no reason})" ;; *) st="${st:-unknown} (the run did not end)" ;; esac
+  kept=""
+  c="$(task_container "$id")"
+  if task_has_worktree "$id" && [ "$(record_get "$id" .cleaned)" != true ] && [ "$(container_status "$id")" = running ]; then
+    worktree_cmd "$id" check >/dev/null 2>&1 || kept="unpushed work"
+  fi
+  if [ "$(container_status "$id")" = running ]; then docker stop "$c" >/dev/null 2>&1 || say "could not stop $c"; fi
+  if [ -z "$kept" ] && [ "$(sched_get "$name" keep)" = 1 ]; then kept="--keep"; fi
+  if [ -z "$kept" ] && [[ "$st" == failed* ]] && [ "$(sched_get "$name" keep_on_failure)" = 1 ]; then kept="--keep-on-failure"; fi
+  sched_result "$name" "$id" "$st" "${kept:+$kept; agentic clean $id}"
+  if [ -z "$kept" ]; then rollback_task "$id"; fi
+  sched_end "$name" "$mode"
+}
+
+# sched_end NAME MODE: releases the lock; a fired one-off removes its line and definition.
+sched_end() {
+  sched_unlock "$1"
+  if [ "$2" = cron ] && [ "$(sched_get "$1" kind)" = at ]; then
+    crontab_set "$1"
+    safe_rm "$(sched_root)" "$(sched_dir "$1")"
+  fi
+}
