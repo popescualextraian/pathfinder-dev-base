@@ -124,13 +124,11 @@ WebSocket, and the bridge is the only process that speaks ACP to the agent. Each
 lives in `~/agentic-workspaces/<project>/tasks/<id>/`; `agentic status` lists the tasks from there.
 
 ```mermaid
-%%{init: {"theme": "default", "themeVariables": {"edgeLabelBackground": "#ffffff"}, "flowchart": {"rankSpacing": 70, "nodeSpacing": 40}}}%%
+%%{init: {"theme": "default", "themeVariables": {"edgeLabelBackground": "#ffffff"}, "flowchart": {"rankSpacing": 110, "nodeSpacing": 50}}}%%
 flowchart LR
   subgraph host["Host"]
     cli["<b>agentic&nbsp;CLI</b><br/>run<br/>send<br/>resume<br/>answer<br/>cancel<br/>stop<br/>follow<br/>status"]
-  end
-  subgraph home["Host · your home directory"]
-    state["~/agentic-workspaces/<br/>&lt;project&gt;/tasks/&lt;id&gt;/<br/>state.json"]
+    state["<b>Task&nbsp;files</b><br/>~/agentic-workspaces/<br/>&lt;project&gt;/tasks/&lt;id&gt;/<br/>state.json<br/><i>read by agentic status</i>"]
   end
   subgraph task["Task container"]
     bridge["<b>Bridge&nbsp;·&nbsp;HTTP&nbsp;/&nbsp;WS</b><br/>GET&nbsp;/status<br/>GET&nbsp;/events<br/>POST&nbsp;/prompt<br/>POST&nbsp;/answer<br/>POST&nbsp;/cancel<br/>POST&nbsp;/stop<br/>POST&nbsp;/ask<br/>POST&nbsp;/gate"]
@@ -138,12 +136,11 @@ flowchart LR
     tools["<b>Agent's&nbsp;tools</b><br/>gate.sh<br/>agentic-ask"]
   end
   cli -- "HTTP / WS" --> bridge
+  state <---|"← bridge writes<br/>(mounted at /tasks)"| bridge
   bridge -- "initialize<br/>session/new | load<br/>session/prompt<br/>session/cancel" --> agent
   agent -- "session/update<br/>request_permission" --> bridge
   agent --> tools
   tools -- "POST /ask<br/>POST /gate" --> bridge
-  bridge -- "writes (mounted at /tasks)" --> state
-  cli -- "status reads" --> state
   linkStyle default color:#1d2329
 ```
 
