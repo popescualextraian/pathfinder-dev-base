@@ -90,10 +90,17 @@ collector() { mkdir -p "$1"; printf '#!/usr/bin/env bash\n%s\n' "$3" > "$1/$2"; 
 }
 
 @test "a harness name that is not a plain word runs nothing" {
-  printf '#!/bin/sh\ntouch "%s/ran"\n' "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/evil"; chmod +x "$BATS_TEST_TMPDIR/evil"
-  run "$S" turn "../../../$BATS_TEST_TMPDIR/evil" </dev/null
+  # executables a traversal name and an upper-case name would reach if the guard were missing
+  for f in "$AGENTIC_CONFIG_MOUNT/cost/evil" "$AGENTIC_COST_DIR/collectors/Bad"; do
+    mkdir -p "$(dirname "$f")"
+    printf '#!/usr/bin/env bash\ntouch "%s/ran"\necho "%s"\n' "$BATS_TEST_TMPDIR" "$REC" > "$f"; chmod +x "$f"
+  done
+  run "$S" turn "../evil" </dev/null
+  [ "$status" -eq 0 ]
+  run "$S" turn Bad </dev/null
   [ "$status" -eq 0 ]
   [ ! -e "$BATS_TEST_TMPDIR/ran" ]
+  [ ! -e "$LEDGER" ]
 }
 
 @test "the hook returns at once; the snapshot lands in the background" {
