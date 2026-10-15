@@ -44,6 +44,14 @@ Items we chose not to do yet. Each names where it was decided.
   `~/.agentic/projects/<p>/` as `tasks/<id>/` (mounted) and `private/<id>/` (never mounted), drop
   `AGENTIC_WORKSPACES`, and decide how existing tasks move or age out. (source: discussion
   2026-10-15)
+- **Blocking questions through the harness's own ask tool** – an addition to `agentic-ask`, not a
+  replacement. The bridge advertises ACP form elicitation, so `claude-agent-acp` forwards Claude's
+  `AskUserQuestion` (several questions, options, multi-select) as an elicitation; each question
+  becomes a normal question (Q1, Q2…) and `answer` resolves the elicitation. `ask-guard` stops
+  blocking `AskUserQuestion`. Open points: a timeout that ends the wait with "no answer yet, use
+  agentic-ask" so a turn is not held for hours; what happens to an open elicitation on a restart
+  or suspend; whether `copilot --acp` forwards `ask_user`. `agentic-ask` stays for non-blocking
+  questions and for Copilot. (source: discussion 2026-10-15)
 
 ## Setup and configuration
 
