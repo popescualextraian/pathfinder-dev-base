@@ -53,6 +53,7 @@ agentic schedule list [--json]
 agentic schedule remove NAME
 agentic schedule run NAME            # fire now, in the foreground; for trying a schedule out
 agentic schedule results NAME [--all]
+agentic schedule follow NAME [--since N] [--raw]
 agentic schedule fire NAME           # what the crontab line calls; not listed in help
 ```
 
@@ -66,10 +67,15 @@ agentic schedule fire NAME           # what the crontab line calls; not listed i
 - `--keep`: nothing is cleaned up (no auto-clean): the container is stopped, not removed, and the
   worktree, its branch and the task files stay; `agentic clean ID` removes them later. `--keep-on-failure`: the same, only for a failed run.
 - `list`: name, `cron` or `at`, the schedule, grants, keep, the last result's time and state, and
-  whether the crontab line is present. `--json`: an array.
+  whether the crontab line is present, and the task id of a firing in progress (its lock held by a
+  live process). `--json`: an array; `running` is that id or `null`.
 - `remove`: the crontab line and the definition. Results stay (`results/<name>/`).
 - `results NAME`: the newest result; `--all` lists them all, newest first (time, state, task id,
   path).
+- `follow NAME`: `agentic follow ID --forever` on the task of the firing in progress, so the stream
+  runs past the idle state between the work turn and the summary turn, to the run's end. It fails
+  with a pointer to `results` when nothing runs. Every other task command (`status`, `logs`, `send`,
+  `stop`) takes that id as for any task.
 - `run NAME` is `fire NAME` with output to the terminal; it ignores `--at`'s date.
 
 The prompt is stored as given; the scheduled instructions (section 6.2) come from the bridge, which adds them at the first prompt.

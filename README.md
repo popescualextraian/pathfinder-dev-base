@@ -161,6 +161,7 @@ agentic schedule add nightly-deps --cron "0 2 * * 1-5" --allow open-pr \
   "Update the dependencies, run the tests and open a pull request"
 agentic schedule run nightly-deps        # try it now
 agentic schedule results nightly-deps    # the summary of the last run
+agentic schedule follow nightly-deps     # watch a run in progress
 agentic schedule list
 agentic schedule remove nightly-deps
 ```

@@ -49,6 +49,8 @@ agentic <command> [options]          run inside a project repository
                [--target T] [--no-worktree] [--keep] [--keep-on-failure] [--timeout 2h] "prompt"
                                      run a detached task from your crontab; it ends with a summary and is cleaned up
   schedule list [--json] | remove NAME | run NAME | results NAME [--all]
+  schedule follow NAME [--since N] [--raw]
+                                     stream the running firing of NAME until its run ends
   add marketplace|plugin|mcp|skill|agent|command|workspace ... [--target T] [--no-build] [--yes]
   copy SRC DEST | mount SRC DEST [--readonly] | volume NAME DEST
                                      add a setup line (docs/setup.md), then build
@@ -789,7 +791,8 @@ cmd_schedule() {
     run) sched_fire "${1:-}" now ;;
     fire) sched_fire "${1:-}" cron ;;
     results) sched_show "$@" ;;
-    *) die "usage: agentic schedule add|list|remove|run|results ... (agentic help)" ;;
+    follow) sched_follow "$@" ;;
+    *) die "usage: agentic schedule add|list|remove|run|results|follow ... (agentic help)" ;;
   esac
 }
 

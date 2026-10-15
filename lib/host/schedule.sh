@@ -193,26 +193,49 @@ sched_show() {
   fi
 }
 
+# sched_running NAME: the task id of the firing in progress: its lock is held by a live process
+# and names a valid id. Nothing (status 1) otherwise.
+sched_running() {
+  local l t pid; l="$(sched_dir "$1")/lock"
+  pid="$(cat "$l/pid" 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null || return 1
+  t="$(cat "$l/task" 2>/dev/null || true)"
+  valid_task_id "$t" || return 1
+  printf '%s\n' "$t"
+}
+
+# sched_follow NAME [follow options]: follows the running firing's task until the run ends; the
+# summary turn comes after an idle state, so the stream does not stop there (--forever).
+sched_follow() {
+  local name="${1:-}" id
+  valid_sched_name "$name" || die "usage: agentic schedule follow NAME [--since N] [--raw]"
+  [ -f "$(sched_dir "$name")/schedule" ] || die "no schedule $name"
+  shift
+  id="$(sched_running "$name")" || die "$name is not running; agentic schedule results $name shows the last run"
+  cmd_follow "$id" --forever "$@"
+}
+
 sched_list() {
-  local json=0 d n last st rows=()
+  local json=0 d n last st run rows=()
   [ "${1:-}" != --json ] || json=1
   for d in "$(sched_root)"/*/; do
     n="$(basename "$d")"
     { valid_sched_name "$n" && [ -f "$d/schedule" ]; } || continue
     last="$(sched_last "$n")"; st=""
     if [ -n "$last" ]; then st="$(result_state "$(sched_results "$n")/$last" | plain)"; fi
+    run="$(sched_running "$n" || true)"
     rows+=("$(jq -cn --arg n "$n" --arg k "$(sched_get "$n" kind)" --arg w "$(sched_get "$n" when)" --arg a "$(sched_get "$n" allow)" \
-      --arg keep "$(sched_get "$n" keep)" --arg t "$(sched_get "$n" timeout)" --arg l "$last" --arg s "$st" \
+      --arg keep "$(sched_get "$n" keep)" --arg t "$(sched_get "$n" timeout)" --arg l "$last" --arg s "$st" --arg r "$run" \
       --argjson c "$(sched_has_line "$n" && echo true || echo false)" \
       '{name: $n, kind: $k, when: $w, allow: $a, keep: ($keep == "1"), timeout: ($t | tonumber? // null), cron: $c,
-        last: (if $l == "" then null else {file: $l, state: $s} end)}')")
+        running: (if $r == "" then null else $r end), last: (if $l == "" then null else {file: $l, state: $s} end)}')")
   done
   if [ "$json" = 1 ]; then printf '%s\n' ${rows[@]+"${rows[@]}"} | jq -cs .; return 0; fi
   [ ${#rows[@]} -gt 0 ] || { echo "no schedules in $(task_project)"; return 0; }
-  printf '%-20s %-5s %-22s %-14s %-6s %s\n' NAME KIND WHEN ALLOW CRON LAST
+  printf '%-20s %-5s %-22s %-14s %-6s %-22s %s\n' NAME KIND WHEN ALLOW CRON RUNNING LAST
   printf '%s\n' "${rows[@]}" | jq -r '[.name, .kind, .when, (if .allow == "" then "-" else .allow end),
-    (if .cron then "yes" else "MISSING" end), (if .last then .last.state else "-" end)] | @tsv' \
-    | while IFS=$'\t' read -r a b c e f g; do printf '%-20s %-5s %-22s %-14s %-6s %s\n' "$a" "$b" "$c" "$e" "$f" "$g"; done
+    (if .cron then "yes" else "MISSING" end), (.running // "-"), (if .last then .last.state else "-" end)] | @tsv' \
+    | while IFS=$'\t' read -r a b c e f r g; do printf '%-20s %-5s %-22s %-14s %-6s %-22s %s\n' "$a" "$b" "$c" "$e" "$f" "$r" "$g"; done
 }
 
 # sched_lock NAME: one firing per schedule. A lock whose pid is gone is taken over; the task it

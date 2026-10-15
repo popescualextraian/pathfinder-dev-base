@@ -23,8 +23,9 @@ back.
 |---|---|
 | `agentic schedule add NAME --cron "0 2 * * 1-5" [options] "prompt"` | A recurring run, in cron's five fields, local time. |
 | `agentic schedule add NAME --at "2026-10-16 22:00" [options] "prompt"` | A one-off run, local time, in the future and within a year; the schedule removes itself after it fired. |
-| `agentic schedule list [--json]` | The project's schedules, their last result, and whether cron has them. |
+| `agentic schedule list [--json]` | The project's schedules, their last result, whether cron has them, and the task id of a run in progress. |
 | `agentic schedule run NAME` | Fires a schedule now, in your terminal, to try it out. |
+| `agentic schedule follow NAME [--since N] [--raw]` | Streams the run in progress, from wherever cron started it, to its end and its summary. |
 | `agentic schedule results NAME [--all]` | The newest result, or all of them (newest first, with their paths). |
 | `agentic schedule remove NAME` | Removes the schedule. Its results stay. |
 
@@ -92,8 +93,10 @@ writes one, also one that was skipped, refused, failed or interrupted. The state
 - `interrupted (the firing ended before its run)`: a firing died, and the next one found its lock.
   The task it started is kept.
 
-`agentic schedule list` shows each schedule with its last state and whether cron has its line
-(`MISSING` if not). With `AGENTIC_NOTIFY_WEBHOOK` set, the summary also goes to your webhook when
+`agentic schedule list` shows each schedule with its last state, whether cron has its line
+(`MISSING` if not) and, while a firing runs, its task id (`RUNNING`). A running firing is an
+ordinary task: `agentic schedule follow NAME` watches it, and `agentic status ID`, `logs ID`,
+`send ID` and `stop ID` work on it as on any task. With `AGENTIC_NOTIFY_WEBHOOK` set, the summary also goes to your webhook when
 the run ends, in the `result` field (at most 4 KB).
 
 The summary is all that survives a normal run. Anything bigger has to leave through the prompt:

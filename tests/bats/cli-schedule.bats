@@ -177,6 +177,38 @@ lib() { (cd "$PROJ" && source "$A" && "$@"); }
   [ "$(jq -r '.[0].cron' <<<"$output")" = false ]
 }
 
+@test "list shows the task of a running firing; a stale or absent lock shows none" {
+  ag schedule add nightly --cron "0 2 * * *" x
+  run ag schedule list --json
+  [ "$(jq -r '.[0].running' <<<"$output")" = null ]
+  mkdir "$S/nightly/lock"; echo $$ > "$S/nightly/lock/pid"; echo T-RUN > "$S/nightly/lock/task"
+  run ag schedule list --json
+  [ "$(jq -r '.[0].running' <<<"$output")" = T-RUN ]
+  run ag schedule list
+  [[ "${lines[0]}" == *RUNNING* ]]; [[ "${lines[1]}" == *T-RUN* ]]
+  echo 999999 > "$S/nightly/lock/pid"
+  run ag schedule list --json
+  [ "$(jq -r '.[0].running' <<<"$output")" = null ]
+  echo $$ > "$S/nightly/lock/pid"; echo 'bad id' > "$S/nightly/lock/task"
+  run ag schedule list --json
+  [ "$(jq -r '.[0].running' <<<"$output")" = null ]
+}
+
+@test "follow streams the running firing's task to its end; a schedule that is not running says so" {
+  ag schedule add nightly --cron "0 2 * * *" x
+  run ag schedule follow nightly
+  [ "$status" -eq 1 ]; [[ "$output" == *"nightly is not running; agentic schedule results nightly"* ]]
+  mkdir "$S/nightly/lock"; echo $$ > "$S/nightly/lock/pid"; echo T-RUN > "$S/nightly/lock/task"
+  mkdir -p "$T/T-RUN" "$H/T-RUN"; echo '{"state":"running"}' > "$T/T-RUN/state.json"
+  printf 'AGENTIC_TASK_TOKEN=tok-task-0123456789\nAGENTIC_WORK=/work\n' > "$H/T-RUN/env"
+  printf 'agentic-demo-task-T-RUN\n1\nT-RUN\n' > "$H/T-RUN/container"
+  echo agentic-demo-task-T-RUN >> "$BATS_TEST_TMPDIR/docker.known"
+  ag schedule follow nightly --since 2
+  [ "$(docker_sub exec | tail -n 6 | tr '\n' ' ')" = "agentic-demo-task-T-RUN agentic-bridge follow --forever --since 2 " ]
+  run ag schedule follow nope
+  [ "$status" -ne 0 ]
+}
+
 @test "an unreadable crontab fails add and remove and is never replaced" {
   ag schedule add keep --cron "0 2 * * *" x
   printf '# mine\n' >> "$CT"; cp "$CT" "$BATS_TEST_TMPDIR/before"
