@@ -14,8 +14,8 @@ MIT licensed.
 
 The project is heading towards **pathfinder-dev-base**: a generic, company-neutral toolbox for
 running coding agents in containers. It provides a base image, configuration skills, built-in
-core skills, agent scheduling, ACP support, automatic task execution and more. Agent
-scheduling, ACP and automatic task execution are planned, not yet available.
+core skills, agent scheduling, ACP support, automatic task execution and more. ACP and
+automatic task execution are planned, not yet available; scheduling is described below.
 
 Why it is built this way: seventeen pillars, such as "one container with every tool" and "steer
 the agent, don't write code". See the [philosophy](docs/philosophy.md).
@@ -147,9 +147,7 @@ flowchart LR
 Full guide: [`docs/detached-mode.md`](docs/detached-mode.md). States, API, events, files and
 environment: [`docs/tasks.md`](docs/tasks.md).
 
-## Scheduled runs (planned)
-
-> **Planned:** designed, not built yet. Commands and behaviour may change.
+## Scheduled runs
 
 `agentic schedule add` runs a detached task at a set time, once (`--at`) or on a cron schedule
 (`--cron`): agentic colleagues that update dependencies at night or write a report every Monday.

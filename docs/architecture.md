@@ -50,9 +50,11 @@ This document is the umbrella design. Each sub-project has its own spec in `docs
 | 2 | Runtime and CLI | Detached tasks: one ACP bridge per task container (HTTP + WebSocket API), worktrees, questions with grants, the action gate behind AGENTIC_GATE, notify, `run/status/follow/send/answer/cancel/stop/resume/takeover/clean` | Autonomous mode, local and hub-less |
 | 3 | Hub integration (in the overlay) | A worker-mode adapter that lets an external task hub start and drive this image; the gate active under the hub; blocking requests surfaced as the hub's needs-you signal | UI, team board, scheduling and remote runs, all provided by the hub |
 
-Not built here: a central server, a UI, a scheduler or a remote orchestrator; a hub provides them. Each task container has a small bridge with a light API (`docs/tasks.md`), which a hub may use or replace with its own driver. For a hub-less setup, two documented recipes cover the simple cases:
+Not built here: a central server, a UI or a remote orchestrator; a hub provides them. Each task container has a small bridge with a light API (`docs/tasks.md`), which a hub may use or replace with its own driver. For a hub-less setup, these cover the simple cases:
 
-- **Scheduled jobs:** a host `cron` entry that calls `agentic run` with a brief.
+- **Scheduled jobs:** locally through the user's crontab (`agentic schedule`, `docs/scheduled-runs.md`);
+  remotely the platform's own scheduler starts the image. The bridge's scheduled mode
+  (`AGENTIC_SCHEDULED`, `AGENTIC_RUN_TIMEOUT`) is the same in both.
 - **Remote:** the same CLI on a VM with Docker, or the image on a managed container service,
   started from env alone (sub-project 1 guarantees this).
 

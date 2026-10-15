@@ -266,6 +266,7 @@ $AGENTIC_WORKSPACES/<project>/
    │  ├─ questions.jsonl            asked and answered records; the last line per id wins
    │  ├─ transcript.md              readable rendering
    │  ├─ prompt.md                  the first prompt
+   │  ├─ result.md                  scheduled runs: the summary turn's final message, redacted
    │  ├─ bridge.log                 bridge diagnostics, redacted
    │  └─ home/claude/, home/copilot/   CLAUDE_CONFIG_DIR, COPILOT_HOME: sessions survive containers
 
@@ -289,7 +290,8 @@ the homes are seeded from the project login (credentials and config, mode 600); 
 {"version":1,"task":"T-20261012-a3f1","project":"orders","agent":"claude","model":null,
  "state":"waiting","reason":"question Q2","session":"52e775a2-…","branch":"agentic/T-…-fix-login",
  "created":"…","updated":"…","seq":118,"allowed_actions":["open-pr"],
- "inbox":[{"kind":"answer","question":"Q2","text":"…"}],"summary":"…","stopped_by_user":false}
+ "inbox":[{"kind":"answer","question":"Q2","text":"…"}],"summary":"…","stopped_by_user":false,
+ "scheduled":false,"run_timeout":null}
 ```
 
 Written atomically (temp file, `fsync`, rename). A corrupt `state.json` stops the bridge with a
@@ -306,7 +308,9 @@ blocks and state changes as one-line callouts. Redacted.
 
 An agent that needs a human decision runs `agentic-ask "text" [--option X]… [--recommend X]`. It
 POSTs `/ask` with the agent token and prints `Recorded Q<n>. Continue with work that does not
-depend on it; when nothing else can move, end your turn.` Without `AGENTIC_BRIDGE_URL` it exits 1
+depend on it; when nothing else can move, end your turn.` In a scheduled run (`AGENTIC_SCHEDULED=1`,
+inherited by the agent) it prints `Recorded Q<n>. Nobody answers during a scheduled run: decide
+yourself where you can, otherwise leave it and list it in your summary.` instead. Without `AGENTIC_BRIDGE_URL` it exits 1
 with `agentic-ask works only inside a task`. The task becomes `waiting` at the turn end, a
 notification goes out, and `agentic answer` (optionally with `--allow`) delivers the answer.
 
@@ -348,34 +352,49 @@ POSTs `{"task","project","state","question":{id,text,options,recommendation}|nul
 first derives it, to its own log `$AGENTIC_DATA/projects/<project>/events.jsonl`, not to the
 shared log: tasks write `/events`, so the host never writes there.
 
+For a scheduled run the `stopped` and `failed` payloads carry one more field, `result`: the text of
+`result.md` (when the run wrote one), redacted, at most 4 KB. The field is absent for other tasks,
+for other states and when there is no result.
+
 ## Environment
 
-Read by the bridge (`bridge/src/config.ts`):
+Read by the bridge (`bridge/src/config.ts`). The variables belong to the bridge process, not to
+the container: a task started in a reused container gets its own. The first table is how the
+process is set up; the second is the definition of one task.
+
+Process settings:
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `AGENTIC_TASK_TOKEN` | required | task token, 16 or more characters, must differ from the agent token |
 | `AGENTIC_AGENT_TOKEN` | required | agent token (`/ask`, `/gate`), 16 or more characters |
-| `AGENTIC_AGENT` | `claude` | `claude` or `copilot` |
-| `AGENTIC_MODEL` | none | model name passed to the agent |
 | `AGENTIC_TASK_ID` | `task` | task id |
 | `AGENTIC_PROJECT` | `project` | project name |
-| `AGENTIC_BRANCH` | none | the worktree's branch name (only with `AGENTIC_WORKTREE`) |
-| `AGENTIC_PROMPT` | none | first prompt when `prompt.md` is absent (cloud) |
 | `AGENTIC_TASK_DIR` | `/task` | the task's state directory (`agentic run` sets `/tasks/<id>`; `/task` is for a hub or cloud flow with one task volume) |
-| `AGENTIC_WORK` | `/work` | the repository the agent works in (`/work/<target>` in a multi-repository project) |
-| `AGENTIC_TARGET` | none | the target's name, recorded |
-| `AGENTIC_WORKTREE` | none | `1`: the bridge makes a worktree and branch before the session |
-| `AGENTIC_AUTO_CLEAN` | none | `1`: the bridge cleans up after a normal turn |
 | `AGENTIC_EVENTS_DIR` | `/events` | project notify log directory |
-| `AGENTIC_IDLE_TIMEOUT` | `900` | seconds in `waiting` or `idle` before suspension |
+| `AGENTIC_IDLE_TIMEOUT` | `900` | seconds in `waiting` or `idle` before suspension (not armed in a scheduled run) |
 | `AGENTIC_BRIDGE_PORT` | `8765` | listen port, 1 to 65535 |
 | `AGENTIC_BRIDGE_HOSTS` | none | extra accepted `Host` names, comma-separated |
 | `AGENTIC_BRIDGE_ORIGINS` | none | accepted `Origin` values, comma-separated |
 | `AGENTIC_NOTIFY_WEBHOOK` | none | webhook URL for `waiting`, `idle`, `failed`, `stopped` |
-| `AGENTIC_ALLOWED_ACTIONS` | none | comma-separated grants for the initial allowed actions |
 | `AGENTIC_DIR` | `/opt/agentic` | image directory (holds `task/task-prompt.md`) |
 | `AGENTIC_ACP_CMD` | none | JSON array replacing the agent command (test hook) |
+
+Task definition:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENTIC_PROMPT` | none | first prompt when `prompt.md` is absent (cloud) |
+| `AGENTIC_AGENT` | `claude` | `claude` or `copilot` |
+| `AGENTIC_MODEL` | none | model name passed to the agent |
+| `AGENTIC_ALLOWED_ACTIONS` | none | comma-separated grants for the initial allowed actions |
+| `AGENTIC_TARGET` | none | the target's name, recorded |
+| `AGENTIC_WORK` | `/work` | the repository the agent works in (`/work/<target>` in a multi-repository project) |
+| `AGENTIC_WORKTREE` | none | `1`: the bridge makes a worktree and branch before the session |
+| `AGENTIC_BRANCH` | none | the worktree's branch name (only with `AGENTIC_WORKTREE`) |
+| `AGENTIC_AUTO_CLEAN` | none | `1`: the bridge cleans up after a normal turn |
+| `AGENTIC_SCHEDULED` | none | `1`: a scheduled run: the first prompt gets a note that nobody watches, the turn's end asks for a summary, which is written to `result.md`, then the task stops; no idle suspension. See [scheduled runs](scheduled-runs.md) |
+| `AGENTIC_RUN_TIMEOUT` | `7200` | scheduled runs: seconds the run may work before the bridge cancels the turn and asks for the summary; whole seconds, 60 to 86400. After 5 more minutes without a summary the task stops with reason `timeout` |
 
 Read by the image and the host:
 
@@ -391,7 +410,8 @@ Read by the image and the host:
 | `AGENTIC_REPO_URL` | none | cloud: start step `05-workspace` clones it when no worktree is mounted |
 
 `run` passes `AGENTIC_IDLE_TIMEOUT`, `AGENTIC_NOTIFY_WEBHOOK` and `AGENTIC_GATE_PROTECTED` into
-the container when they are set on the host.
+the container when they are set on the host. It writes `AGENTIC_SCHEDULED` and
+`AGENTIC_RUN_TIMEOUT` only for `schedule fire` (`run --scheduled SECONDS`, not a public option).
 
 ## Cloud
 

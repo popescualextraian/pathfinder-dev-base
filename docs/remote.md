@@ -35,6 +35,24 @@ and hub adapters are not part of this repository; an [overlay](overlay.md) holds
 - **A remote task or scheduled job** (clone, work, push, report) needs no volume. Its results
   leave through git and the task record.
 
+A scheduled job is started by the platform's scheduler (nothing here runs one). Give it the
+variables of a detached task plus the two of the scheduled behaviour:
+
+```
+command:  agentic-bridge
+env:      AGENTIC_REPO_URL=https://git.example.com/team/orders.git
+          AGENTIC_PROMPT=Update the dependencies and open a pull request
+          AGENTIC_ALLOWED_ACTIONS=open-pr
+          AGENTIC_WORKTREE=1
+          AGENTIC_SCHEDULED=1
+          AGENTIC_RUN_TIMEOUT=7200
+          AGENTIC_NOTIFY_WEBHOOK=https://hooks.example.com/agentic
+secrets:  AGENTIC_TASK_TOKEN, AGENTIC_AGENT_TOKEN, the harness and git tokens
+```
+
+The run clones, works, writes its summary to `/task/result.md` and the webhook (`result` field),
+and the bridge exits, so the container ends. See [scheduled runs](scheduled-runs.md).
+
 ## Mounts and the files they bring in
 
 `mount` lines name paths on your machine, so they do not apply remotely; `agentic doctor` lists

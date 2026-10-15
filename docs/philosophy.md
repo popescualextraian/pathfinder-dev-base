@@ -11,7 +11,7 @@ builds on the ones before it.
 | 0 | The developer becomes architect and owner | outside the repo: it is up to you |
 | 1 | One container to rule them all | available: the base image |
 | 2 | Run it remotely | planned (same image, any host) |
-| 3 | Agentic colleagues | planned (scheduled runs) |
+| 3 | Agentic colleagues | available locally: `agentic schedule` (cron); remote through the platform's scheduler |
 | 4 | Spec-driven development | available: Superpowers (a recommended setup line); trackers through `add mcp` |
 | 5 | Invest in the plan | available: the spec gate |
 | 6 | Knowledge in AI format | in progress: the wiki skill |

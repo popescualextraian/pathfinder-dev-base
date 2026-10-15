@@ -116,6 +116,9 @@ Run as many as you like; at most three run at once (`AGENTIC_MAX_RUNNING`), beca
 account's rate limits. `run`, and waking a suspended task, refuse at the cap with a message; stop
 or wait for one to suspend. `agentic status` lists them all, `agentic status --all` every project.
 
+To start a task at a set time, once or on a cron schedule, see [scheduled runs](scheduled-runs.md):
+`agentic schedule add` runs a detached task from your crontab and keeps its summary.
+
 ## Being told when a task needs you
 
 Set `AGENTIC_NOTIFY_WEBHOOK` (on the host when you run, or in `.agentic/.env`) to a URL. When a

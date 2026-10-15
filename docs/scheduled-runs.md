@@ -1,8 +1,5 @@
 # Scheduled runs
 
-> **Planned:** scheduled runs are designed, not built yet
-> (`docs/specs/2026-10-15-schedule-design.md`). Commands and behaviour may change.
-
 `agentic schedule add` runs a [detached task](detached-mode.md) at a set time, once or on a cron
 schedule: an agentic colleague that updates dependencies every night, refreshes the wiki every
 week or writes a report on Monday morning. Each run starts a fresh container, works in its own
@@ -23,17 +20,21 @@ back.
 | Command | What it does |
 |---|---|
 | `agentic schedule add NAME --cron "0 2 * * 1-5" [options] "prompt"` | A recurring run, in cron's five fields, local time. |
-| `agentic schedule add NAME --at "2026-10-16 22:00" [options] "prompt"` | A one-off run; the schedule removes itself after it fired. |
+| `agentic schedule add NAME --at "2026-10-16 22:00" [options] "prompt"` | A one-off run, local time, in the future and within a year; the schedule removes itself after it fired. |
 | `agentic schedule list [--json]` | The project's schedules, their last result, and whether cron has them. |
 | `agentic schedule run NAME` | Fires a schedule now, in your terminal, to try it out. |
-| `agentic schedule results NAME [--all]` | The newest result, or all of them. |
+| `agentic schedule results NAME [--all]` | The newest result, or all of them (newest first, with their paths). |
 | `agentic schedule remove NAME` | Removes the schedule. Its results stay. |
+
+`NAME` is lowercase letters, digits and `-`, at most 40 characters, and unique in the project; `add`
+refuses an existing name, so `remove` it first to change a schedule. `add` also takes the prompt
+from a file with `--prompt-file`.
 
 `add` options:
 
-- `--allow push|open-pr|deploy:<target>`, `--agent`, `--model`, `--target`, `--prompt-file F`: as
-  for `agentic run`.
-- `--timeout 2h`: the longest a run may take (default 2 hours, at most 24).
+- `--allow push|open-pr|deploy:<target>`, `--agent`, `--model`, `--target`: as for `agentic run`.
+- `--timeout 2h`: the longest a run may work, as `90m`, `2h` or seconds, from 1 minute to 24 hours
+  (default 2 hours). At the limit the agent is stopped and asked for its summary; see below.
 - `--no-worktree`: work directly in your checkout instead of a worktree of its own. Your files
   change while the run works; avoid it unless the run only reads.
 - `--keep`: stop the container but keep it and the task files, for a look afterwards.
@@ -56,18 +57,38 @@ What happens at 02:00:
 2. A fresh task container starts, the agent works in `.worktrees/<id>` on a new branch, with the
    grants you gave. It is told that nobody is watching: it decides what it can and does not wait
    for answers.
-3. When it is done, the bridge asks it for a summary: what it did, where the result is (branch,
-   pull request), the decisions it made, its open questions and what you should do next.
+3. When the agent ends its turn, the bridge asks it for a summary of about 300 words: what it did,
+   where the result is (branch, pull request), the decisions it made, its open questions and what
+   you should do next. A run never waits for you and never suspends.
 4. The task stops. The container is stopped and removed, the worktree and the task files with it,
-   unless you asked to keep them. Only the summary stays, in
-   `~/agentic-workspaces/<project>/results/nightly-deps/`.
+   unless you asked to keep them or they hold unpushed work. Only the summary stays, in
+   `~/agentic-workspaces/<project>/results/nightly-deps/`, one file per firing named
+   `<YYYYMMDD-HHMM>-<task id>.md`.
+
+If the run is still working at its `--timeout`, the bridge cancels the turn and asks for the
+summary with a note that time is up. If no summary comes within five minutes, the run stops with
+the state `stopped (timeout)` and the result says `No summary: the run timed out.` plus the
+agent's last message. A firing that is still running ten minutes after its timeout is stopped by
+the host.
 
 ## Results
 
 `agentic schedule results NAME` prints the newest result: a header (task id, state, branch,
 allowed actions, open questions, whether anything was kept) and the agent's summary. Every firing
-writes one, also one that was skipped, refused or failed. With `AGENTIC_NOTIFY_WEBHOOK` set, the
-summary also goes to your webhook when the run ends.
+writes one, also one that was skipped, refused, failed or interrupted. The state is one of:
+
+- `stopped (scheduled-done)`: the run worked and wrote its summary.
+- `stopped (timeout)`: the time was up.
+- `failed (<reason>)`: the agent or the bridge failed; the body is the reason and the last 20 lines
+  of the bridge log, with no summary.
+- `skipped (<reason>)`: the previous run still ran, or the running cap was reached.
+- `refused (<message>)`: `agentic run` would not start it (no layout, no target, no login, ...).
+- `interrupted (the firing ended before its run)`: a firing died, and the next one found its lock.
+  The task it started is kept.
+
+`agentic schedule list` shows each schedule with its last state and whether cron has its line
+(`MISSING` if not). With `AGENTIC_NOTIFY_WEBHOOK` set, the summary also goes to your webhook when
+the run ends, in the `result` field (at most 4 KB).
 
 The summary is all that survives a normal run. Anything bigger has to leave through the prompt:
 ask the agent to push a branch, open a pull request or commit a report file. Use `--keep` when you
@@ -78,12 +99,16 @@ want the transcript and logs (`agentic logs ID --transcript`).
 | The run | Container | Worktree and task files | You |
 |---|---|---|---|
 | Ended normally | removed | removed | read the result |
-| Ended with work that is not pushed | stopped, kept | kept | `agentic clean ID` once you have looked (or `--force`) |
+| Ended with unpushed work in its worktree (checked while the container ran) | stopped, kept | kept | `agentic clean ID` once you have looked (or `--force`) |
+| Ended, its container is gone, and the worktree folder is still in the checkout | stopped, kept | kept, "worktree not checked" | look, then `agentic clean ID` |
 | Failed | removed (kept with `--keep-on-failure`) | removed (kept with `--keep-on-failure`) | read the result; `agentic logs ID` when kept |
-| Timed out | as for a normal end, or kept when work is not pushed | the same | the summary says how far it got |
+| Timed out | as for a normal end | as for a normal end | the summary says how far it got |
+| Interrupted firing | kept | kept | `agentic clean ID` |
 | Any, with `--keep` | stopped, kept | kept | `agentic clean ID` |
 
-The container is always stopped at the end. Unpushed work is never deleted by the cleanup.
+The result's `Kept` line names the reason and the `agentic clean ID` command. The container is
+always stopped at the end. Unpushed work is never deleted by the cleanup. With `--no-worktree`
+nothing is checked: the run works in your checkout, which is yours to look at.
 
 ## What the agent may do
 
@@ -112,14 +137,18 @@ env:      AGENTIC_REPO_URL=https://git.example.com/team/orders.git
 secrets:  AGENTIC_TASK_TOKEN, AGENTIC_AGENT_TOKEN, the harness and git tokens
 ```
 
-The run clones, works, writes its summary to `/task/result.md` and the webhook, and the container
-ends. See [remote](remote.md) for the rest of the container contract.
+The run clones, works, writes its summary to `/task/result.md` and the webhook (`result` field),
+and the bridge exits, so the container ends. See [remote](remote.md) for the rest of the container contract.
 
 ## When something is off
 
 - Nothing happened at the time: `agentic doctor` (is cron running, is the schedule in the
-  crontab?), then `~/.agentic/projects/<project>/schedules/<name>/fire.log`.
+  crontab?), then `~/.agentic/projects/<project>/schedules/<name>/fire.log` (the last 1000 lines
+  of what each firing printed; `AGENTIC_DATA` moves `~/.agentic`).
 - The result says `refused`: the same message `agentic run` would print; fix it, then
   `agentic schedule run NAME`.
 - The result says `skipped`: the previous run was still running or the cap was reached.
 - The summary lists a refused push or pull request: add the grant with `remove` and `add`.
+- `agentic doctor` reports `error schedule NAME`: the definition and its crontab line do not
+  match; `agentic schedule remove NAME`, then `add` it again. If the crontab cannot be read,
+  `add` and `remove` stop and leave it as it is.
