@@ -12,7 +12,9 @@ back.
 2. cron runs on your machine. `agentic doctor` checks it. On WSL, set `systemd=true` in
    `/etc/wsl.conf` (then `wsl --shutdown`), or start it with `sudo service cron start`.
 3. Settings the run needs at its time go in `.agentic/.env`, not in your shell: tokens, git
-   credentials, and `AGENTIC_NOTIFY_WEBHOOK` if you want to be told.
+   credentials, and `AGENTIC_NOTIFY_WEBHOOK` if you want to be told. `AGENTIC_MAX_RUNNING` and
+   `AGENTIC_BRANCH_PREFIX` are read by the host from its own environment, not from `.agentic/.env`,
+   so under cron they are the defaults unless you set them in the crontab's environment.
 4. Your machine must be on at the time. A firing missed while it sleeps is not caught up.
 
 ## Commands
@@ -37,8 +39,9 @@ from a file with `--prompt-file`.
   (default 2 hours). At the limit the agent is stopped and asked for its summary; see below.
 - `--no-worktree`: work directly in your checkout instead of a worktree of its own. Your files
   change while the run works; avoid it unless the run only reads.
-- `--keep`: stop the container but keep it and the task files, for a look afterwards.
-- `--keep-on-failure`: the same, only when the run fails.
+- `--keep`: keep everything for a look afterwards: nothing is cleaned up, the container is stopped
+  but kept, with the worktree, its branch and the task files.
+- `--keep-on-failure`: keep the container, the worktree and the task files only when the run fails.
 
 ## A typical schedule
 
@@ -61,15 +64,17 @@ What happens at 02:00:
    where the result is (branch, pull request), the decisions it made, its open questions and what
    you should do next. A run never waits for you and never suspends.
 4. The task stops. The container is stopped and removed, the worktree and the task files with it,
-   unless you asked to keep them or they hold unpushed work. Only the summary stays, in
+   unless you asked to keep them or they hold unpushed work. When the bridge did not remove the
+   worktree itself (a failed or stopped run), the host removes it in the container before the stop,
+   as `agentic clean` does. Only the summary stays, in
    `~/agentic-workspaces/<project>/results/nightly-deps/`, one file per firing named
-   `<YYYYMMDD-HHMM>-<task id>.md`.
+   `<YYYYMMDD-HHMM>-<task id>.md`, the time of the firing.
 
 If the run is still working at its `--timeout`, the bridge cancels the turn and asks for the
 summary with a note that time is up. If no summary comes within five minutes, the run stops with
 the state `stopped (timeout)` and the result says `No summary: the run timed out.` plus the
 agent's last message. A firing that is still running ten minutes after its timeout is stopped by
-the host.
+the host, and its state is `stopped (timeout)`.
 
 ## Results
 
@@ -100,11 +105,11 @@ want the transcript and logs (`agentic logs ID --transcript`).
 |---|---|---|---|
 | Ended normally | removed | removed | read the result |
 | Ended with unpushed work in its worktree (checked while the container ran) | stopped, kept | kept | `agentic clean ID` once you have looked (or `--force`) |
-| Ended, its container is gone, and the worktree folder is still in the checkout | stopped, kept | kept, "worktree not checked" | look, then `agentic clean ID` |
+| Ended, its container is no longer running, and the worktree folder is still in the checkout | stopped, kept | kept, "worktree not checked" | look, then `agentic clean ID` |
 | Failed | removed (kept with `--keep-on-failure`) | removed (kept with `--keep-on-failure`) | read the result; `agentic logs ID` when kept |
 | Timed out | as for a normal end | as for a normal end | the summary says how far it got |
 | Interrupted firing | kept | kept | `agentic clean ID` |
-| Any, with `--keep` | stopped, kept | kept | `agentic clean ID` |
+| Any, with `--keep` | stopped, kept | kept (no cleanup at all) | `agentic clean ID` |
 
 The result's `Kept` line names the reason and the `agentic clean ID` command. The container is
 always stopped at the end. Unpushed work is never deleted by the cleanup. With `--no-worktree`
@@ -123,14 +128,14 @@ On a VM with Docker, install the CLI there and use `agentic schedule` as on your
 
 On a managed container service, the platform's own scheduler (a scheduled job or task) starts the
 image; nothing of this repository runs a scheduler there. Give the job the variables of a detached
-task plus two for the scheduled behaviour:
+task plus two for the scheduled behaviour. Leave out `AGENTIC_WORKTREE`: the job works in a fresh
+clone, which needs no worktree.
 
 ```
 command:  agentic-bridge
 env:      AGENTIC_REPO_URL=https://git.example.com/team/orders.git
           AGENTIC_PROMPT=Update the dependencies and open a pull request
           AGENTIC_ALLOWED_ACTIONS=open-pr
-          AGENTIC_WORKTREE=1
           AGENTIC_SCHEDULED=1
           AGENTIC_RUN_TIMEOUT=7200
           AGENTIC_NOTIFY_WEBHOOK=https://hooks.example.com/agentic

@@ -34,7 +34,7 @@ Success criteria:
 | S2 | **The scheduled behaviour lives in the bridge**, behind `AGENTIC_SCHEDULED=1` and `AGENTIC_RUN_TIMEOUT`. | Remotely no host process waits for the run; the bridge must end it by itself. One behaviour for every host. |
 | S3 | Recurring (`--cron`) and one-off (`--at`) schedules. A one-off is a crontab line that removes itself after it fires. | One-off costs almost nothing on top of recurring. |
 | S4 | A schedule definition is **host-private and per user**: `$AGENTIC_DATA/projects/<project>/schedules/<name>/`, never mounted, not checked in. | An agent cannot rewrite its own schedule. Checked-in schedules would fire once per developer's crontab (R13: one container per user). |
-| S5 | **Scheduled defaults:** worktree on (`--no-worktree` turns it off), auto-clean on, the container always stopped and removed unless `--keep`. Grants (`--allow`) as in `run`. | Unattended runs should leave nothing behind; keeping is the explicit choice. |
+| S5 | **Scheduled defaults:** worktree on (`--no-worktree` turns it off), auto-clean on (off with `--keep`), the container always stopped and removed unless `--keep`. Grants (`--allow`) as in `run`. | Unattended runs should leave nothing behind; keeping is the explicit choice. |
 | S6 | **A run always ends with a summary.** When a turn ends, whatever the state, the bridge sends one summary prompt; that turn's final message is the result (`result.md`). Then the bridge stops the task. | Nobody answers questions at 02:00. The summary is the one thing a user reads the next morning. |
 | S7 | **Only the result survives the cleanup.** The host copies `result.md` with a header into `results/<name>/`; transcript, logs and harness homes go with the task unless `--keep`. Keeping anything bigger is the prompt's job (push, PR, a file in the repository). | Results that matter leave through git; everything else is debugging material. |
 | S8 | **Unpushed work is never deleted.** When the worktree has uncommitted changes or commits on no remote branch, the run is kept (container stopped, task files kept), as with `--keep`, and the result says so. A worktree that cannot be checked (its container is gone, its folder is still there) is kept as well; the record's `cleaned` is not trusted. | The cleanup must not lose work. `agentic clean ID` later decides, as for any task. |
@@ -63,8 +63,8 @@ agentic schedule fire NAME           # what the crontab line calls; not listed i
 - `--at` takes local time, in the future and within 365 days. The crontab line names minute, hour,
   day and month; `fire` also checks the year and removes the line after it ran.
 - `--timeout` is `90m`, `2h` or seconds; default `2h`; at most `24h`.
-- `--keep`: the container is stopped, not removed, and the task files stay; `agentic clean ID`
-  removes them later. `--keep-on-failure`: the same, only for a failed run.
+- `--keep`: nothing is cleaned up (no auto-clean): the container is stopped, not removed, and the
+  worktree, its branch and the task files stay; `agentic clean ID` removes them later. `--keep-on-failure`: the same, only for a failed run.
 - `list`: name, `cron` or `at`, the schedule, grants, keep, the last result's time and state, and
   whether the crontab line is present. `--json`: an array.
 - `remove`: the crontab line and the definition. Results stay (`results/<name>/`).
@@ -120,23 +120,28 @@ directories are made by `bin/agentic` as the invoking user, mode 700 for `schedu
    may not be pushed; `agentic clean <id>`). A live lock writes a `skipped` result ("the previous
    run still runs") and exits 0.
 3. Run the equivalent of `agentic run` with the definition's options, plus `--worktree` (unless
-   `--no-worktree`), `--auto-clean`, a generated id and two more lines in the task's env file:
+   `--no-worktree`), `--auto-clean` (unless `--keep`), a generated id and two more lines in the task's env file:
    `AGENTIC_SCHEDULED=1` and `AGENTIC_RUN_TIMEOUT=<seconds>`. The running cap is checked first
    and is a `skipped` result; any refusal of `run` is a `refused` result.
-4. Wait in the foreground until the bridge has exited (`bridge_running` false, or the container
-   gone). Safety net: at `timeout + 10 minutes` the host calls `POST /stop`, then `docker stop`.
+4. Wait in the foreground until the run has ended: the container is not running, the record's
+   state is `stopped` or `failed`, or `bridge_running` failed twice in a row (one failed
+   `docker exec` may be a Docker hiccup). Safety net: at `timeout + 10 minutes` the host calls
+   `POST /stop`, then `docker stop`; the result's state is then `stopped (timeout)`.
 5. Read the outcome from the host's view: the record's state (read as `status` reads it) and the
    worktree. The record's `cleaned` is not trusted. A running container gets the in-container
-   check (`agentic-worktree check`); unpushed work keeps the run ("unpushed work"). A container
+   check (`agentic-worktree check`) when the run is kept anyway (`--keep`, `--keep-on-failure` on a
+   failed run), otherwise the removal as `clean` does it (`agentic-worktree remove`, no `--force`,
+   before the container stops); unpushed work keeps the run ("unpushed work"). A container
    that is not running (the normal case once the bridge auto-cleaned and released it) keeps the run
    as "worktree not checked" only when the worktree folder still exists in the checkout (a host
    file test, no git); otherwise the run is removed.
-6. Write the result file (section 7).
+6. Write the result file (section 7), named and headed with the firing time.
 7. Clean up:
    - always: the container is stopped;
    - with `--keep`, `--keep-on-failure` on a failed run, or unpushed work (S8): nothing else; the
      result names `agentic clean <id>`;
-   - otherwise: `rollback_task` removes the container and the task files, as `clean` does.
+   - otherwise: `rollback_task` removes the container and the task files, as `clean` does (the
+     worktree is already gone, by the bridge's auto-clean or step 5).
 8. For `at`: remove the crontab line and the definition. Release the lock.
 
 `fire` exits 0 whenever it wrote a result, so cron does not mail; failures are in the result and
@@ -154,7 +159,8 @@ The bridge is configured by environment variables only (S11). Whoever starts it 
 | `AGENTIC_SCHEDULED` | `1`, written by `schedule fire` into the same env file | `1` in the job definition |
 | `AGENTIC_RUN_TIMEOUT` | seconds from `--timeout` | seconds, in the job definition |
 
-The env file is how our CLI fulfils the contract, not part of it: the contract is the variables in
+A remote job works in a fresh clone and sets no `AGENTIC_WORKTREE` (the bridge refuses it without
+`AGENTIC_BRANCH`). The env file is how our CLI fulfils the contract, not part of it: the contract is the variables in
 the bridge's process plus a writable task directory (`AGENTIC_TASK_DIR`). Env belongs to the bridge
 process, not the container, so a later task in a reused container (`run --in`) gets its own.
 
@@ -182,7 +188,8 @@ API would take as its body.
 - **Summary turn end.** The final agent message of that turn is written to `result.md` in the task
   directory (atomic, redacted, whole message, not the 300-character `summary`). Then, with
   auto-clean, the auto-clean path runs, without its "no open question" condition; without
-  auto-clean the task stops with reason `scheduled-done`. Either way the bridge exits 0.
+  auto-clean the task stops with reason `scheduled-done`. Either way the bridge exits 0. A
+  `result.md` that cannot be written (disk full) is an `error` event; the run still ends.
 - **Timeout.** `AGENTIC_RUN_TIMEOUT` seconds after the first prompt (default 7200, 60 to 86400), a
   running turn is cancelled as `POST /cancel` does, and the summary prompt is sent with a first line
   saying time ran out. If the summary turn has not ended 5 minutes later, the bridge stops the task
@@ -203,6 +210,9 @@ request, and `/task/result.md` when the platform keeps a volume.
 
 ## 7. The result file
 
+The file name and the header carry the firing time (a skipped or interrupted result: the time it
+is written).
+
 ```markdown
 # nightly-deps — 2026-10-16 02:00
 
@@ -219,7 +229,8 @@ request, and `/task/result.md` when the platform keeps a volume.
 ```
 
 - State is one of `stopped (scheduled-done)`, `stopped (timeout)`, `failed (<reason>)`,
-  `skipped (<reason>)`, `refused (<run's message>)`, `interrupted (...)`. Whether auto-clean ran
+  `skipped (<reason>)`, `refused (<run's message>)`, `interrupted (...)`. A run the host's safety
+  net stopped is `stopped (timeout)` whatever the record says. Whether auto-clean ran
   is the record's `cleaned`; it does not change the state text.
 - `Kept` is `no`, or the reason (`--keep`, `--keep-on-failure`, `unpushed work`) and the command
   `agentic clean <id>`.

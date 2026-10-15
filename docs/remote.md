@@ -36,14 +36,14 @@ and hub adapters are not part of this repository; an [overlay](overlay.md) holds
   leave through git and the task record.
 
 A scheduled job is started by the platform's scheduler (nothing here runs one). Give it the
-variables of a detached task plus the two of the scheduled behaviour:
+variables of a detached task plus the two of the scheduled behaviour. It works in a fresh clone,
+so it needs no `AGENTIC_WORKTREE` (which would also need `AGENTIC_BRANCH`):
 
 ```
 command:  agentic-bridge
 env:      AGENTIC_REPO_URL=https://git.example.com/team/orders.git
           AGENTIC_PROMPT=Update the dependencies and open a pull request
           AGENTIC_ALLOWED_ACTIONS=open-pr
-          AGENTIC_WORKTREE=1
           AGENTIC_SCHEDULED=1
           AGENTIC_RUN_TIMEOUT=7200
           AGENTIC_NOTIFY_WEBHOOK=https://hooks.example.com/agentic
