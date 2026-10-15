@@ -224,10 +224,11 @@ Three ways, all standard:
 - **`.env`** for secrets and every setting a tool reads from its environment.
 - **Setup lines** for plugins, marketplaces, MCP servers, skills, agents, files, mounts, volumes
   and extra repositories: [docs/setup.md](docs/setup.md).
-- **Cost tracking**: per task, scheduled run and session, from the recommended cost plugin;
-  `agentic cost` ([docs/cost.md](docs/cost.md)).
 - **Plain Docker** for everything else: `tools:` presets and `tools.apt` in `agentic.yaml`,
   `.agentic/Dockerfile.extra`, or an organisation-wide [overlay](docs/overlay.md) image.
+
+Cost tracking is a recommended plugin: every session's token cost lands in one ledger per project,
+and `agentic cost` sums it ([docs/cost.md](docs/cost.md)).
 
 Running the container on a VM or a managed service: [docs/remote.md](docs/remote.md). Every
 field: [docs/configuration.md](docs/configuration.md). Design:
