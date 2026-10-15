@@ -1,6 +1,6 @@
 # Cost tracking
 
-Status: design, 2026-10-15. Umbrella: `docs/architecture.md`. Builds on tasks (`docs/tasks.md`),
+Status: implemented, 2026-10-15. Umbrella: `docs/architecture.md`. Builds on tasks (`docs/tasks.md`),
 scheduled runs (`docs/specs/2026-10-15-schedule-design.md`) and the setup lines
 (`docs/setup.md`). Pillar 16 of the philosophy: measure.
 

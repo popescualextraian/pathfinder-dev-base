@@ -76,6 +76,9 @@ check "setup lines: plugin for both harnesses, MCP with a reference, narrowed ag
   && test -f ~/.claude/agents/db.md && test ! -e ~/.copilot/agents/db.agent.md \
   && grep -q "smoke instructions" ~/.claude/CLAUDE.md && grep -q "smoke instructions" ~/.copilot/copilot-instructions.md \
   && mountpoint -q /home/dev/.m2'
+check "the cost plugin for both harnesses, and the cost ledger folder mounted" '
+  claude plugin list 2>/dev/null | grep -q cost@agentic && copilot plugin list 2>/dev/null | grep -q cost \
+  && mountpoint -q /cost && test -w /cost'
 echo "-- init --base takes the overlay's recommended lines"
 (t="$(mktemp -d)" && git init -q "$t" && cd "$t" && "$A" init --base agentic-smoke-overlay:local >/dev/null \
   && grep -qF -- '- add mcp overlay-recommended -- true' .agentic/agentic.yaml && rm -rf "$t") \
@@ -245,6 +248,19 @@ ag clean "$id2" >/dev/null || fail "task 2: clean of an unchanged task"
 ag clean "$id3" >/dev/null || fail "task 3: clean"
 [ ! -e "$proj/.worktrees/$id" ] || fail "task: clean left the worktree"
 [ -z "$(docker ps -aq "${mine[@]}")" ] || fail "task: clean left a container"
+
+step "cost: the pinned ccusage reads real transcript shapes; the snapshot and summary.jq agree"
+out="$(docker run --rm --network none -v "$root/tests/fixtures/cost:/fx:ro" -e AGENTIC_COST_FOREGROUND=1 \
+  -e CLAUDE_CONFIG_DIR=/fx/claude-home -e COPILOT_HOME=/fx/copilot-home -e AGENTIC_PROJECT=smoke \
+  -e AGENTIC_TASK_ID=T1 -e AGENTIC_COST_LEDGER_DIR=/tmp/ledger --entrypoint bash "$IMG" -c '
+    mkdir -p /tmp/ledger
+    echo "{\"session_id\":\"11111111-1111-1111-1111-111111111111\"}" | /opt/agentic/cost/snapshot turn claude
+    echo "{\"sessionId\":\"33333333-3333-3333-3333-333333333333\"}" | /opt/agentic/cost/snapshot end copilot
+    jq -n -R -L /opt/agentic/cost --arg project smoke --arg since "" --arg until "" --arg task "" \
+      --arg schedule "" --arg by context -f /opt/agentic/cost/summary.jq < /tmp/ledger/ledger.jsonl')" \
+  || fail "cost: the snapshot failed in the image"
+[ "$(jq -c '[.sessions, .skipped_lines, .totals.input]' <<<"$out")" = "[2,0,$((1015 + 38812))]" ] \
+  || fail "cost: ccusage counts changed (dedup, subagents or the Copilot shutdown): $out"
 
 step "a project with several repositories: run starts in the target"
 mp="$tmp/multi-project"; mkdir -p "$mp"

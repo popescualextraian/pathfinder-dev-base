@@ -15,3 +15,5 @@ setup:
   - add mcp fake --env SMOKE_TOKEN -- true
   - add agent agents/db.md --target claude
   - volume m2 /home/dev/.m2
+  - add marketplace /opt/agentic/marketplace
+  - add plugin cost@agentic

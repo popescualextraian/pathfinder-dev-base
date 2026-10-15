@@ -126,6 +126,7 @@ never a second copy of a base file to keep in sync.
 | Extension | `.env`, `setup:` lines in our own command grammar, plain Docker; no per-technology schema fields or start steps | The project owns its technologies; the shell command and the file line are the same text |
 | Setup lines | Baked into a seed home at build, merged into the mounted harness home at start | Reproducible, offline-capable, and the user's own settings survive |
 | Recommended plugins | Lines written by `agentic init`, deletable; nothing hard-wired | Recommended, not imposed |
+| Cost | A recommended plugin writes cumulative per-session snapshots to one ledger per project; ccusage reads and prices; one summary program for every reader | No per-harness parsing here; versioned contracts let a UI come later |
 | Users | One container per user | Logins, sessions and memory are personal |
 | Mounts | Optional; the image also starts from env alone | Hubs and managed containers have no bind mounts |
 | Docker socket | Off by default; opt-in per project | Guardrail: the socket is host root |

@@ -68,6 +68,17 @@ Items we chose not to do yet. Each names where it was decided.
 - **Other harnesses behind `--target`** – only Claude and Copilot for now. (source:
   `docs/specs/2026-10-14-revamp-design.md` §14)
 
+## Cost
+
+- **Live cost in the bridge** – map ACP `usage_update` (Claude: cumulative USD) and
+  `PromptResponse.usage` to events and serve `GET /cost` with `cost-summary/v1`. (source:
+  `docs/specs/2026-10-15-cost-tracking-design.md` §7)
+- **Cost budgets** – warn or stop a task at a spending limit; needs the live cost. (source:
+  `docs/specs/2026-10-15-cost-tracking-design.md` §7)
+- **A cost UI** – consumes `cost-summary/v1`. (source: `docs/specs/2026-10-15-cost-tracking-design.md` §7)
+- **Remote cost ledger** – on a remote host the ledger stays there until a relay or shared store
+  reads it. (source: `docs/specs/2026-10-15-cost-tracking-design.md` §7)
+
 ## Images
 
 - **`agentic build --push` and registry publishing** – the base image is built locally; pushing to

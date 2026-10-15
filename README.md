@@ -115,6 +115,7 @@ agentic follow T-20261012-a3f1
 agentic answer T-20261012-a3f1 Q1 "Yes, use the staging config" --allow push
 agentic send T-20261012-a3f1 "Also add a test for the logout path"
 agentic status
+agentic cost
 agentic stop T-20261012-a3f1
 agentic clean T-20261012-a3f1
 ```
@@ -223,6 +224,8 @@ Three ways, all standard:
 - **`.env`** for secrets and every setting a tool reads from its environment.
 - **Setup lines** for plugins, marketplaces, MCP servers, skills, agents, files, mounts, volumes
   and extra repositories: [docs/setup.md](docs/setup.md).
+- **Cost tracking**: per task, scheduled run and session, from the recommended cost plugin;
+  `agentic cost` ([docs/cost.md](docs/cost.md)).
 - **Plain Docker** for everything else: `tools:` presets and `tools.apt` in `agentic.yaml`,
   `.agentic/Dockerfile.extra`, or an organisation-wide [overlay](docs/overlay.md) image.
 
