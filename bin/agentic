@@ -45,6 +45,10 @@ agentic <command> [options]          run inside a project repository
   shell ID                           a shell in the running task container
   takeover ID                        stop the task and continue its session interactively
   clean ID [--force]                 remove what the task created: worktree and branch, its container, its files
+  schedule add NAME (--cron "M H DOM MON DOW" | --at "YYYY-MM-DD HH:MM") [--allow A]... [--agent A] [--model M]
+               [--target T] [--no-worktree] [--keep] [--keep-on-failure] [--timeout 2h] "prompt"
+                                     run a detached task from your crontab; it ends with a summary and is cleaned up
+  schedule list [--json] | remove NAME | run NAME | results NAME [--all]
   add marketplace|plugin|mcp|skill|agent|command|workspace ... [--target T] [--no-build] [--yes]
   copy SRC DEST | mount SRC DEST [--readonly] | volume NAME DEST
                                      add a setup line (docs/setup.md), then build
@@ -768,6 +772,20 @@ cmd_clean() {
   echo "$id: removed (remote branches stay)"
 }
 
+cmd_schedule() {
+  need_config
+  local sub="${1:-}"; [ $# -eq 0 ] || shift
+  case "$sub" in
+    add) sched_add "$@" ;;
+    list) sched_list "$@" ;;
+    remove) sched_remove "$@" ;;
+    run) sched_fire "${1:-}" now ;;
+    fire) sched_fire "${1:-}" cron ;;
+    results) sched_show "$@" ;;
+    *) die "usage: agentic schedule add|list|remove|run|results ... (agentic help)" ;;
+  esac
+}
+
 cmd_target() {
   need_config
   local root cfgf layout cur
@@ -796,7 +814,7 @@ main() {
     shell) if [ "$#" -eq 1 ] && valid_task_id "$1" && [ -f "$(task_dir "$1" 2>/dev/null)/state.json" ]; then cmd_task_shell "$1"; else cmd_shell "$@"; fi ;;
     build-base) cmd_build_base "$@" ;;
     # each of these is handled by cmd_<command>
-    init|remove|list|build|login|setup|doctor|dev|target|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean)
+    init|remove|list|build|login|setup|doctor|dev|target|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean|schedule)
       "cmd_$cmd" "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;
