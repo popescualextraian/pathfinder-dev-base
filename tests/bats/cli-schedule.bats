@@ -19,12 +19,15 @@ setup() {
   T="$AGENTIC_WORKSPACES/demo/tasks"
   H="$AGENTIC_DATA/projects/demo/tasks"
   : > "$BATS_TEST_TMPDIR/docker.known"
-  # crontab stand-in: the table lives in $BATS_TEST_TMPDIR/crontab; CRONTAB_FAIL=1 fails a write
+  # crontab stand-in: the table lives in $BATS_TEST_TMPDIR/crontab; CRONTAB_FAIL=1 fails a write;
+  # CRONTAB_WARN=1 adds a warning on stderr to a read; CRONTAB_LOCALE=1 translates "no crontab" unless LC_ALL=C
   cat > "$BATS_TEST_TMPDIR/bin/crontab" <<'EOF'
 #!/usr/bin/env bash
 f="$BATS_TEST_TMPDIR/crontab"
 case "$1" in
   -l) [ -z "${CRONTAB_READ_FAIL:-}" ] || { echo "crontab: cannot open spool" >&2; exit 1; }
+      [ -z "${CRONTAB_WARN:-}" ] || echo "crontab: warning: something odd" >&2
+      if [ ! -f "$f" ] && [ -n "${CRONTAB_LOCALE:-}" ] && [ "${LC_ALL:-}" != C ]; then echo "keine crontab für user" >&2; exit 1; fi
       [ -f "$f" ] || { echo "no crontab for user" >&2; exit 1; }; cat "$f" ;;
   -) [ -z "${CRONTAB_FAIL:-}" ] || exit 1; cat > "$f" ;;
 esac
@@ -184,11 +187,108 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
 }
 
 @test "the task env of a firing has the scheduled settings, worktree and auto-clean" {
-  ag schedule add nightly --cron "0 2 * * *" --timeout 90m --keep "Update"
-  ended stopped scheduled-done "ok"
+  ag schedule add nightly --cron "0 2 * * *" --timeout 90m --keep-on-failure "Update"
+  ended failed "boom"
   ag schedule run nightly
   e="$(ls "$H"/*/env)"
   for l in AGENTIC_SCHEDULED=1 AGENTIC_RUN_TIMEOUT=5400 AGENTIC_WORKTREE=1 AGENTIC_AUTO_CLEAN=1; do grep -qx "$l" "$e"; done
+}
+
+@test "--keep fires without auto-clean, so the bridge keeps the worktree" {
+  ag schedule add nightly --cron "0 2 * * *" --keep "Update"
+  ended stopped scheduled-done "ok"
+  ag schedule run nightly
+  grep -qx AGENTIC_AUTO_CLEAN=0 "$(ls "$H"/*/env)"
+}
+
+# order: "remove" for an exec of worktree.sh remove, "stop" for a docker stop of a task container, in log order.
+order() { awk '/^--- /{ c = $2; next } c == "exec" && $0 == "remove" { print "remove" } c == "stop" && /-task-/ { print "stop" }' "$DOCKER_LOG" | tr '\n' ' '; }
+
+@test "a failed run that is not kept has its worktree removed in the container before the stop" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended failed "agent exited with code 3"
+  ag schedule run a
+  [ "$(order)" = "remove stop " ]
+  docker_call_with exec remove | grep -qx /opt/agentic/task/worktree.sh
+  run ! grep -qx -- --force <<<"$(docker_call_with exec remove)"
+  grep -qx '| Kept | no |' "$(results a)"
+  [ -z "$(ls -A "$T")" ]
+}
+
+@test "a --keep run keeps its worktree" {
+  ag schedule add a --cron "0 2 * * *" --keep "x"
+  ended stopped scheduled-done "ok"
+  ag schedule run a
+  [ "$(order)" = "stop " ]
+  grep -q '| Kept | --keep; agentic clean ' "$(results a)"
+}
+
+@test "a failed run kept with --keep-on-failure keeps its worktree" {
+  ag schedule add b --cron "0 2 * * *" --keep-on-failure "x"
+  ended failed "boom"
+  ag schedule run b
+  [ "$(order)" = "stop " ]
+  grep -q '| Kept | --keep-on-failure; agentic clean ' "$(results b)"
+}
+
+@test "a worktree that cannot be removed keeps the run as unpushed work" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended failed "boom"
+  export DOCKER_WT_ERR="agentic-worktree: has commits on no remote branch"
+  ag schedule run a
+  [ "$(order)" = "remove stop " ]
+  grep -q '| Kept | unpushed work; agentic clean ' "$(results a)"
+  [ -n "$(ls -A "$T")" ]
+}
+
+# waitable ID STATE: a task whose container runs and whose record has STATE, for sched_wait.
+waitable() {
+  mkdir -p "$T/$1" "$H/$1"; jq -n --arg s "$2" '{version:1, state:$s}' > "$T/$1/state.json"
+  echo "agentic-demo-task-$1" >> "$BATS_TEST_TMPDIR/docker.known"
+}
+pgreps() { grep -c '^pgrep$' "$DOCKER_LOG" || true; }
+
+@test "the wait survives one failed bridge check and ends on the second in a row" {
+  waitable T-W running
+  export DOCKER_BRIDGE_RC_SEQ="1 0 1 1" AGENTIC_SCHEDULE_POLL=0
+  run lib sched_wait T-W 3600
+  [ "$status" -eq 0 ]
+  [ "$(pgreps)" = 4 ]
+}
+
+@test "the wait ends when the record says stopped, though a bridge still answers" {
+  waitable T-W stopped
+  export DOCKER_BRIDGE_RC=0 AGENTIC_SCHEDULE_GRACE=0 AGENTIC_SCHEDULE_POLL=0.1
+  run lib sched_wait T-W 0
+  [ "$status" -eq 0 ]
+  [[ "$output" != *overran* ]]
+}
+
+@test "a crontab read that warns on stderr does not write the warning into the table" {
+  printf '# mine\n' > "$CT"
+  CRONTAB_WARN=1 ag schedule add a --cron "0 2 * * *" x
+  run ! grep -q warning "$CT"
+  grep -qx '# mine' "$CT"; grep -q '# agentic:demo:a$' "$CT"
+}
+
+@test "a localized \"no crontab\" is read as an empty table" {
+  CRONTAB_LOCALE=1 LC_ALL=C.UTF-8 ag schedule add a --cron "0 2 * * *" x
+  grep -q '# agentic:demo:a$' "$CT"
+}
+
+@test "a result is named and headed with the firing time it is given" {
+  lib sched_result a "" "skipped (x)" "" "$(date -d '2026-01-02 03:04' +%s)"
+  f="$R/a/20260102-0304-none.md"
+  [ -f "$f" ]
+  grep -qx '# a — 2026-01-02 03:04' "$f"
+}
+
+@test "a fired result's file name and header carry the same time" {
+  ag schedule add a --cron "0 2 * * *" "x"
+  ended stopped scheduled-done "ok"
+  ag schedule run a
+  f="$(results a)"; b="$(basename "$f")"
+  [ "$(sed -n 1p "$f")" = "# a — $(date -d "${b:0:8} ${b:9:2}:${b:11:2}" '+%Y-%m-%d %H:%M')" ]
 }
 
 @test "--no-worktree runs without a worktree" {
@@ -289,6 +389,7 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
   run ag schedule run a
   [ "$status" -eq 0 ]
   grep -q '/stop' "$CURL_LOG"
+  grep -qx '| State | stopped (timeout) |' "$(results a)"
 }
 
 @test "a huge result.md is capped at 64 KiB and the firing still completes" {

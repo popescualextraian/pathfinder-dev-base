@@ -247,7 +247,8 @@ export class Bridge implements ApiTarget {
     this.clearRunTimers();
     this.phase = "done";
     this.resultText = result;
-    this.d.store.writeResult(result);
+    // a result that cannot be written (disk full) must not keep the run alive
+    try { this.d.store.writeResult(result); } catch (err) { this.emit("error", { message: `could not write result.md: ${message(err)}` }); }
     if (this.d.config.autoClean && this.autoClean(reason)) return;
     this.run({ kind: "stop", reason, byUser: false });
   }

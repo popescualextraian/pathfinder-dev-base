@@ -4,6 +4,7 @@
 # DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PS (docker ps ids, space-separated),
 # DOCKER_MOUNTS (inspect .Mounts output, printed as is),
 # DOCKER_BRIDGE_RC (exit code of the `pgrep` that tells whether a bridge runs; default 0, running),
+# DOCKER_BRIDGE_RC_SEQ (exit codes of successive pgrep calls, space-separated; the last one repeats),
 # DOCKER_WT_ERR (makes a worktree.sh exec fail with this message), DOCKER_EXEC_RC (exit code of any other
 # `docker exec`), DOCKER_NO_READY (the hold command never marks its start done).
 # A docker.known file in $BATS_TEST_TMPDIR (one container name per line) makes inspect of a task container
@@ -34,7 +35,14 @@ case "$1" in
   start) echo running > "$BATS_TEST_TMPDIR/docker.status"
     if [ -z "${DOCKER_NO_READY:-}" ] && [ -f "$BATS_TEST_TMPDIR/docker.ready" ]; then : > "$(cat "$BATS_TEST_TMPDIR/docker.ready")"; fi ;;
   exec)
-    if [[ " $* " == *" pgrep "* ]]; then exit "${DOCKER_BRIDGE_RC:-0}"; fi
+    if [[ " $* " == *" pgrep "* ]]; then
+      if [ -n "${DOCKER_BRIDGE_RC_SEQ:-}" ]; then
+        read -ra seq <<<"$DOCKER_BRIDGE_RC_SEQ"; n="$(cat "$BATS_TEST_TMPDIR/pgrep.n" 2>/dev/null || echo 0)"
+        echo $((n + 1)) > "$BATS_TEST_TMPDIR/pgrep.n"
+        [ "$n" -lt "${#seq[@]}" ] || n=$((${#seq[@]} - 1)); exit "${seq[$n]}"
+      fi
+      exit "${DOCKER_BRIDGE_RC:-0}"
+    fi
     if [[ " $* " == *" agentic-task-start "* ]] && [ -n "${DOCKER_START_HOOK:-}" ]; then bash "$DOCKER_START_HOOK"; fi
     if [[ " $* " == *" /opt/agentic/task/worktree.sh "* ]] && [ -n "${DOCKER_WT_ERR:-}" ]; then echo "$DOCKER_WT_ERR" >&2; exit 1; fi
     exit "${DOCKER_EXEC_RC:-0}" ;;

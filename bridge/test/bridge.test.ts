@@ -544,6 +544,19 @@ describe("scheduled runs", () => {
     expect(again.store.readRecord().reason).toBe("scheduled-done");
   });
 
+  it("a result.md that cannot be written still stops the run, with an error event", async () => {
+    const spy = vi.spyOn(Store.prototype, "writeResult").mockImplementation(() => { throw new Error("ENOSPC: no space left on device"); });
+    try {
+      const dir = taskDir("hello");
+      const { store, exits } = await start(dir, { AGENTIC_SCHEDULED: "1" });
+      expect(await exited(exits)).toEqual([0]);
+      expect([store.readRecord().state, store.readRecord().reason]).toEqual(["stopped", "scheduled-done"]);
+      expect(store.readEvents(0).some((e) => e.type === "error" && String(e.data.message).includes("ENOSPC"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("the stopped webhook of a scheduled run carries the result", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const dir = taskDir("hello");

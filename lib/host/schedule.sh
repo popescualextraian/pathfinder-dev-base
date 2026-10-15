@@ -66,11 +66,14 @@ crontab_set() {
   command -v crontab >/dev/null || die "crontab is not installed; scheduled runs need cron"
   # read the table fully before writing it back
   local cur err keep
-  # only "no crontab for" means an empty table; any other read failure must not become a write
-  if ! cur="$(crontab -l 2>&1)"; then
-    [[ "$cur" == *"no crontab for"* ]] || die "could not read the crontab"
+  # only stdout is the table; only "no crontab for" (in the C locale) means an empty one, and any
+  # other read failure must not become a write
+  err="$(mktemp)"
+  if ! cur="$(LC_ALL=C crontab -l 2>"$err")"; then
+    grep -q "no crontab for" "$err" || { rm -f -- "$err"; die "could not read the crontab"; }
     cur=""
   fi
+  rm -f -- "$err"
   keep="$(printf '%s\n' "$cur" | awk -v m="$m" 'substr($0, length($0) - length(m) + 1) != m')"
   { if [ -n "$keep" ]; then printf '%s\n' "$keep"; fi
     if [ -n "${2:-}" ]; then printf '%s\n' "$2"; fi
@@ -220,17 +223,21 @@ sched_lock() {
 }
 sched_unlock() { rm -rf -- "$(sched_dir "$1")/lock"; }
 
-# sched_wait ID SECONDS: until the task's bridge has exited; past SECONDS plus the grace the host
-# stops it (the bridge's own timeout should have ended it).
+# sched_wait ID SECONDS: until the run ended: the container stopped, the record says stopped or
+# failed, or the bridge check failed twice in a row (one failure may be a Docker hiccup). Past
+# SECONDS plus the grace the host stops it (the bridge's own timeout should have ended it) and
+# returns 1.
 sched_wait() {
-  local id="$1" c end; c="$(task_container "$1")"
+  local id="$1" c end miss=0; c="$(task_container "$1")"
   end=$((SECONDS + $2 + ${AGENTIC_SCHEDULE_GRACE:-600}))
-  while [ "$(container_status "$id")" = running ] && bridge_running "$c"; do
+  while [ "$(container_status "$id")" = running ]; do
+    case "$(record_get "$id" .state)" in stopped|failed) return 0 ;; esac
+    if bridge_running "$c"; then miss=0; else miss=$((miss + 1)); [ "$miss" -lt 2 ] || return 0; fi
     if [ "$SECONDS" -ge "$end" ]; then
       say "$id overran its timeout; stopping it"
       bridge_req "$id" POST /stop >/dev/null 2>&1 || true
       wait_bridge_gone "$c" "${AGENTIC_STOP_TIMEOUT:-30}" || docker exec "$c" pkill -f 'bridge/dist/main\.js$' >/dev/null 2>&1 || true
-      return 0
+      return 1
     fi
     sleep "${AGENTIC_SCHEDULE_POLL:-5}"
   done
@@ -244,12 +251,13 @@ sched_read_capped() {
   task_readable "$1" "$2" && dd if="$(task_dir "$1")/$2" iflag=nofollow,nonblock,count_bytes count=65536 status=none 2>/dev/null
 }
 
-# sched_result NAME ID STATE KEPT: the result file of one firing. Agent-written files are read with
-# the safe-read rules and capped.
+# sched_result NAME ID STATE KEPT [AT]: the result file of one firing, named and headed with AT
+# (epoch seconds of the firing; now when not given). Agent-written files are read with the
+# safe-read rules and capped.
 sched_result() {
-  local name="$1" id="$2" state="$3" kept="$4" dir f branch="" allowed="" open="" body=""
+  local name="$1" id="$2" state="$3" kept="$4" at="${5:-$(date +%s)}" dir f branch="" allowed="" open="" body=""
   dir="$(sched_results "$name")"; mkdir -p "$dir"
-  f="$dir/$(date +%Y%m%d-%H%M)-${id:-none}.md"
+  f="$dir/$(date -d "@$at" +%Y%m%d-%H%M)-${id:-none}.md"
   if [ -n "$id" ] && task_readable "$id" state.json; then
     branch="$(record_get "$id" .branch)"
     allowed="$(record_get "$id" '(.allowed_actions // []) | join(", ")')"
@@ -260,7 +268,7 @@ sched_result() {
     fi
   fi
   {
-    printf '# %s — %s\n\n| | |\n|---|---|\n' "$name" "$(date '+%Y-%m-%d %H:%M')"
+    printf '# %s — %s\n\n| | |\n|---|---|\n' "$name" "$(date -d "@$at" '+%Y-%m-%d %H:%M')"
     printf '| Task | %s |\n| State | %s |\n| Branch | %s |\n| Allowed | %s |\n| Open questions | %s |\n| Kept | %s |\n' \
       "$(cell "${id:--}")" "$(cell "$state")" "$(cell "${branch:--}")" "$(cell "${allowed:--}")" "$(cell "${open:-none}")" "$(cell "${kept:-no}")"
     if [ -n "$body" ]; then printf '\n%s\n' "$body"; fi
@@ -271,8 +279,9 @@ sched_result() {
 # sched_fire NAME now|cron: one firing (spec §5). cron: output to fire.log, and a one-off checks its
 # year and removes itself. Exits 0 whenever it wrote a result.
 sched_fire() {
-  local name="${1:-}" mode="$2" d id secs out st reason kept c a args=() allow=()
+  local name="${1:-}" mode="$2" d id secs out st reason kept keep c a at timed=0 args=() allow=()
   valid_sched_name "$name" || die "usage: agentic schedule run NAME"
+  at="$(date +%s)"   # the firing time names the result
   d="$(sched_dir "$name")"
   if [ ! -f "$d/schedule" ]; then
     [ "$mode" = cron ] || die "no schedule $name"
@@ -290,23 +299,31 @@ sched_fire() {
   fi
   id="$(new_task_id)"; echo "$id" > "$d/lock/task"
   secs="$(sched_get "$name" timeout)"
-  args=(--id "$id" --scheduled "$secs" --auto-clean --prompt-file "$d/prompt.md")
+  args=(--id "$id" --scheduled "$secs" --prompt-file "$d/prompt.md")
+  # --keep keeps everything, the worktree too: no auto-clean
+  [ "$(sched_get "$name" keep)" = 1 ] || args+=(--auto-clean)
   [ "$(sched_get "$name" worktree)" != 1 ] || args+=(--worktree)
   for a in agent model target; do if [ -n "$(sched_get "$name" "$a")" ]; then args+=("--$a" "$(sched_get "$name" "$a")"); fi; done
   IFS=, read -ra allow <<<"$(sched_get "$name" allow)"
   for a in ${allow[@]+"${allow[@]}"}; do args+=(--allow "$a"); done
   if ! out="$( (cmd_run "${args[@]}") 2>&1 )"; then
-    sched_result "$name" "$id" "refused ($(tail -n 1 <<<"$out" | sed 's/^agentic: //' | plain))" ""; sched_end "$name" "$mode"; return 0
+    sched_result "$name" "$id" "refused ($(tail -n 1 <<<"$out" | sed 's/^agentic: //' | plain))" "" "$at"; sched_end "$name" "$mode"; return 0
   fi
   echo "$name: started $id"
-  sched_wait "$id" "$secs"
+  sched_wait "$id" "$secs" || timed=1
   st="$(record_get "$id" .state)"; reason="$(record_get "$id" .reason)"
   case "$st" in stopped|failed) st="$st (${reason:-no reason})" ;; *) st="${st:-unknown} (the run did not end)" ;; esac
+  if [ "$timed" = 1 ]; then st="stopped (timeout)"; fi
+  keep=""
+  if [ "$(sched_get "$name" keep)" = 1 ]; then keep="--keep"
+  elif [[ "$st" == failed* ]] && [ "$(sched_get "$name" keep_on_failure)" = 1 ]; then keep="--keep-on-failure"; fi
   kept=""
   c="$(task_container "$id")"
   if task_has_worktree "$id"; then
     if [ "$(container_status "$id")" = running ]; then
-      worktree_cmd "$id" check >/dev/null 2>&1 || kept="unpushed work"
+      # as clean does, in the container before it stops; a kept run keeps its worktree
+      if [ -n "$keep" ]; then worktree_cmd "$id" check >/dev/null 2>&1 || kept="unpushed work"
+      else worktree_cmd "$id" remove >/dev/null 2>&1 || kept="unpushed work"; fi
     else
       # the bridge removes the worktree on a clean auto-clean; a folder left in the checkout is unchecked work
       local work wt; work="$(dotenv_value "$(host_file "$id" env)" AGENTIC_WORK 2>/dev/null || true)"
@@ -315,9 +332,8 @@ sched_fire() {
     fi
   fi
   if [ "$(container_status "$id")" = running ]; then docker stop "$c" >/dev/null 2>&1 || say "could not stop $c"; fi
-  if [ -z "$kept" ] && [ "$(sched_get "$name" keep)" = 1 ]; then kept="--keep"; fi
-  if [ -z "$kept" ] && [[ "$st" == failed* ]] && [ "$(sched_get "$name" keep_on_failure)" = 1 ]; then kept="--keep-on-failure"; fi
-  sched_result "$name" "$id" "$st" "${kept:+$kept; agentic clean $id}"
+  kept="${kept:-$keep}"
+  sched_result "$name" "$id" "$st" "${kept:+$kept; agentic clean $id}" "$at"
   if [ -z "$kept" ]; then rollback_task "$id"; fi
   sched_end "$name" "$mode"
 }
