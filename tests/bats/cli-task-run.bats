@@ -696,6 +696,14 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   [ "$status" -ne 0 ]
 }
 
+@test "only a scheduled run carries the schedule name into its env file" {
+  AGENTIC_SCHEDULE=nightly ag run --id T-N --scheduled 60 "x"
+  grep -qx AGENTIC_SCHEDULE=nightly "$H/T-N/env"
+  AGENTIC_SCHEDULE=leaked ag run --id T-P "x"
+  run grep -q '^AGENTIC_SCHEDULE=' "$H/T-P/env"
+  [ "$status" -ne 0 ]
+}
+
 @test "a scheduled run that already ended when run looks is not rolled back" {
   export DOCKER_BRIDGE_RC=1   # no bridge process: it already exited
   export DOCKER_START_HOOK="$BATS_TEST_TMPDIR/ended.sh"

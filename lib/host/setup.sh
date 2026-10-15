@@ -153,5 +153,6 @@ cmd_list(){
   echo "built-in${t}$AGENTIC_DATA/projects/$p/harness/claude -> /home/dev/.claude"
   echo "built-in${t}$AGENTIC_DATA/projects/$p/harness/copilot -> /home/dev/.copilot"
   echo "built-in${t}$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/repos -> /workspaces/repos"
+  echo "built-in${t}$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/cost -> /cost (the cost ledger: agentic cost)"
   setup_edit list
 }

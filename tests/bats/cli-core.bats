@@ -72,11 +72,21 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
   grep -qx "$PROJ/.agentic:/agentic-config:ro" <<<"$output"
   grep -qx "$AGENTIC_WORKSPACES/demo/repos:/workspaces/repos" <<<"$output"
   [ -d "$AGENTIC_WORKSPACES/demo/repos" ]
+  grep -qx "$AGENTIC_WORKSPACES/demo/cost:/cost" <<<"$output"
+  [ -d "$AGENTIC_WORKSPACES/demo/cost" ]
   # only the clones: never the workspace root, its tasks/ or events/
   [ "$(grep -Ec "^$AGENTIC_WORKSPACES/demo(/tasks|/events)?:" <<<"$output")" -eq 0 ]
   grep -qx "$AGENTIC_DATA/projects/demo/harness/claude:/home/dev/.claude" <<<"$output"
   grep -qx "$AGENTIC_DATA/projects/demo/harness/copilot:/home/dev/.copilot" <<<"$output"
   [ -d "$AGENTIC_DATA/projects/demo/harness/claude" ]
+}
+
+@test "a symlinked cost folder is refused" {
+  mkdir -p "$AGENTIC_WORKSPACES/demo" "$BATS_TEST_TMPDIR/elsewhere"
+  ln -s "$BATS_TEST_TMPDIR/elsewhere" "$AGENTIC_WORKSPACES/demo/cost"
+  run in_project 'build_run_args agentic-demo:local'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cost is a symlink"* ]]
 }
 
 @test "the dev mount of the clones is canonical when the workspace root is a symlink" {

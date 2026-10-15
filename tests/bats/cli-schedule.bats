@@ -252,7 +252,7 @@ results() { find "$R/$1" -type f -name '*.md' | sort; }
   ended failed "boom"
   ag schedule run nightly
   e="$(ls "$H"/*/env)"
-  for l in AGENTIC_SCHEDULED=1 AGENTIC_RUN_TIMEOUT=5400 AGENTIC_WORKTREE=1 AGENTIC_AUTO_CLEAN=1; do grep -qx "$l" "$e"; done
+  for l in AGENTIC_SCHEDULED=1 AGENTIC_SCHEDULE=nightly AGENTIC_RUN_TIMEOUT=5400 AGENTIC_WORKTREE=1 AGENTIC_AUTO_CLEAN=1; do grep -qx "$l" "$e"; done
 }
 
 @test "--keep fires without auto-clean, so the bridge keeps the worktree" {

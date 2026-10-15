@@ -106,18 +106,21 @@ proxy_build_args() {
 # project_run_args IMAGE: what the dev container and every task container get, in RUN_ARGS: the
 # checkout at /work, the workspace clones, the config, and shared_run_args.
 project_run_args() {
-  local root cfg p repos
+  local root cfg p repos cost
   root="$(project_root)"; cfg="$root/.agentic"; p="$(project_name)"
   # the workspace root is canonical; the rest is not resolved, so a symlink below it is seen
   repos="$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/repos"
-  mkdir -p "$repos"
+  cost="$(realpath -m -- "$AGENTIC_WORKSPACES")/$p/cost"
+  mkdir -p "$repos" "$cost"
   bind_src_ok "$repos" || die "$repos is a symlink or goes through one; refused"
-  RUN_ARGS=(--label "agentic.project=$p" -v "$root:/work" -v "$repos:/workspaces/repos" -v "$cfg:/agentic-config:ro")
+  bind_src_ok "$cost" || die "$cost is a symlink or goes through one; refused"
+  RUN_ARGS=(--label "agentic.project=$p" -v "$root:/work" -v "$repos:/workspaces/repos" -v "$cost:/cost"
+    -v "$cfg:/agentic-config:ro")
   shared_run_args "$1"
 }
 
 # build_run_args IMAGE: project_run_args plus the project's harness homes (dev, shell, setup, doctor).
-# The workspace's tasks/ and events/ stay out of interactive containers.
+# The workspace's tasks/ and events/ stay out of interactive containers; cost/ goes into all.
 build_run_args() {
   local data; data="$AGENTIC_DATA/projects/$(project_name)"
   mkdir -p "$data/harness/claude" "$data/harness/copilot"

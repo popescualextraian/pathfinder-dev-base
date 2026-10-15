@@ -181,5 +181,6 @@ edit_call() { docker_sub run | tail -n +2; }
   [[ "$output" == *$'built-in\t'"$AGENTIC_DATA/projects/demo/harness/claude"' -> /home/dev/.claude'* ]]
   [[ "$output" == *$'built-in\t'"$AGENTIC_DATA/projects/demo/harness/copilot"' -> /home/dev/.copilot'* ]]
   [[ "$output" == *$'built-in\t'"$AGENTIC_WORKSPACES/demo/repos"' -> /workspaces/repos'* ]]
+  [[ "$output" == *$'built-in\t'"$AGENTIC_WORKSPACES/demo/cost"' -> /cost (the cost ledger: agentic cost)'* ]]
   [ "${lines[-1]}" = $'build\tadd plugin a@m' ]
 }

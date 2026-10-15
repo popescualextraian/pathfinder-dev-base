@@ -522,7 +522,10 @@ cmd_run() {
     printf 'AGENTIC_WORK=%s\nAGENTIC_TARGET=%s\nAGENTIC_CONTAINER=%s\nAGENTIC_CREATED_CONTAINER=%s\n' "$work" "$tname" "$c" "$created"
     printf 'AGENTIC_ALLOWED_ACTIONS=%s\nAGENTIC_WORKTREE=%s\nAGENTIC_BRANCH=%s\nAGENTIC_AUTO_CLEAN=%s\n' \
       "$(IFS=,; echo "${allow[*]+"${allow[*]}"}")" "$worktree" "$branch" "$autoclean"
-    if [ -n "$sched" ]; then printf 'AGENTIC_SCHEDULED=1\nAGENTIC_RUN_TIMEOUT=%s\n' "$sched"; fi
+    if [ -n "$sched" ]; then
+      printf 'AGENTIC_SCHEDULED=1\nAGENTIC_RUN_TIMEOUT=%s\n' "$sched"
+      if [ -n "${AGENTIC_SCHEDULE:-}" ]; then printf 'AGENTIC_SCHEDULE=%s\n' "$AGENTIC_SCHEDULE"; fi
+    fi
     for v in AGENTIC_IDLE_TIMEOUT AGENTIC_NOTIFY_WEBHOOK AGENTIC_GATE_PROTECTED; do
       if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}"; fi
     done

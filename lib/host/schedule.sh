@@ -338,7 +338,8 @@ sched_fire() {
   for a in agent model target; do if [ -n "$(sched_get "$name" "$a")" ]; then args+=("--$a" "$(sched_get "$name" "$a")"); fi; done
   IFS=, read -ra allow <<<"$(sched_get "$name" allow)"
   for a in ${allow[@]+"${allow[@]}"}; do args+=(--allow "$a"); done
-  if ! out="$( (cmd_run "${args[@]}") 2>&1 )"; then
+  # the name tags the run's cost records (docs/cost.md)
+  if ! out="$( (export AGENTIC_SCHEDULE="$name"; cmd_run "${args[@]}") 2>&1 )"; then
     sched_result "$name" "$id" "refused ($(tail -n 1 <<<"$out" | sed 's/^agentic: //' | plain))" "" "$at"; sched_end "$name" "$mode"; return 0
   fi
   echo "$name: started $id"
