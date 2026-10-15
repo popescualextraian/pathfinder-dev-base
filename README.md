@@ -123,20 +123,22 @@ The CLI only relays: each command goes to the bridge in the task container over 
 WebSocket, and the bridge is the only process that speaks ACP to the agent.
 
 ```mermaid
+%%{init: {"theme": "default", "themeVariables": {"edgeLabelBackground": "#ffffff"}, "flowchart": {"rankSpacing": 70, "nodeSpacing": 40}}}%%
 flowchart LR
   subgraph host["Host"]
-    cli["<b>agentic CLI</b><br/>run · send · resume · answer<br/>cancel · stop · follow"]
+    cli["<b>agentic&nbsp;CLI</b><br/>run<br/>send<br/>resume<br/>answer<br/>cancel<br/>stop<br/>follow"]
   end
   subgraph task["Task container"]
-    bridge["<b>Bridge · HTTP / WS</b><br/>/status · /events · /prompt · /answer<br/>/cancel · /stop · /ask · /gate"]
-    agent["<b>Agent · ACP</b><br/>claude-agent-acp or copilot --acp"]
-    tools["<b>Agent's tools</b><br/>gate.sh · agentic-ask"]
+    bridge["<b>Bridge&nbsp;·&nbsp;HTTP&nbsp;/&nbsp;WS</b><br/>GET&nbsp;/status<br/>GET&nbsp;/events<br/>POST&nbsp;/prompt<br/>POST&nbsp;/answer<br/>POST&nbsp;/cancel<br/>POST&nbsp;/stop<br/>POST&nbsp;/ask<br/>POST&nbsp;/gate"]
+    agent["<b>Agent&nbsp;·&nbsp;ACP</b><br/>claude-agent-acp<br/>copilot&nbsp;--acp"]
+    tools["<b>Agent's&nbsp;tools</b><br/>gate.sh<br/>agentic-ask"]
   end
   cli -- "HTTP / WS" --> bridge
-  bridge -- "initialize, session/new | load,<br/>session/prompt, session/cancel" --> agent
-  agent -- "session/update,<br/>request_permission" --> bridge
+  bridge -- "initialize<br/>session/new | load<br/>session/prompt<br/>session/cancel" --> agent
+  agent -- "session/update<br/>request_permission" --> bridge
   agent --> tools
-  tools -- "POST /ask, /gate" --> bridge
+  tools -- "POST /ask<br/>POST /gate" --> bridge
+  linkStyle default color:#1d2329
 ```
 
 Full guide: [`docs/detached-mode.md`](docs/detached-mode.md). States, API, events, files and
