@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cost-record/v1: a cumulative cost snapshot of one agent session, one line of ledger.jsonl",
+  "type": "object",
+  "required": ["schema", "ts", "project", "harness", "session", "context", "models", "totals"],
+  "properties": {
+    "schema": { "const": "cost-record/v1" },
+    "ts": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+            "description": "When the snapshot was taken, UTC." },
+    "project": { "type": "string" },
+    "harness": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,39}$",
+                 "description": "The collector's name: claude, copilot, or one a project adds." },
+    "session": { "type": "string", "minLength": 1, "maxLength": 200,
+                 "description": "The harness's session id; a later record of the same harness and session replaces this one." },
+    "context": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["task", "scheduled", "dev"] },
+        "task": { "type": "string" },
+        "schedule": { "type": "string" }
+      }
+    },
+    "models": { "type": "array", "items": { "$ref": "#/$defs/model" } },
+    "totals": {
+      "allOf": [{ "$ref": "#/$defs/tokens" }],
+      "required": ["cost"],
+      "properties": { "cost": { "$ref": "#/$defs/costs" } }
+    },
+    "producer": {
+      "type": "object",
+      "properties": { "collector": { "type": "string" }, "ccusage": { "type": "string" } }
+    }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "tokens": {
+      "type": "object",
+      "required": ["input", "output", "cache_read", "cache_write"],
+      "properties": {
+        "input": { "$ref": "#/$defs/count", "description": "Prompt tokens without the cache." },
+        "output": { "$ref": "#/$defs/count" },
+        "cache_read": { "$ref": "#/$defs/count" },
+        "cache_write": { "$ref": "#/$defs/count" }
+      }
+    },
+    "source": {
+      "enum": ["estimate", "billed-credits", "unknown"],
+      "description": "estimate: list price from tokens; billed-credits: AI credits a seat was billed; unknown: tokens without a price. Never summed together."
+    },
+    "costs": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/source" },
+      "additionalProperties": { "type": "number", "minimum": 0 },
+      "description": "USD per kind of cost."
+    },
+    "model": {
+      "allOf": [{ "$ref": "#/$defs/tokens" }],
+      "required": ["model", "cost", "cost_source"],
+      "properties": {
+        "model": { "type": "string" },
+        "cost": { "type": "number", "minimum": 0 },
+        "cost_source": { "$ref": "#/$defs/source" }
+      }
+    }
+  }
+}

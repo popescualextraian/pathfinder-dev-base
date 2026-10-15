@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cost-summary/v1: what agentic cost --json and every other reader of summary.jq return",
+  "type": "object",
+  "required": ["schema", "project", "filter", "groups", "sessions", "totals", "skipped_lines"],
+  "properties": {
+    "schema": { "const": "cost-summary/v1" },
+    "project": { "type": "string" },
+    "filter": {
+      "type": "object",
+      "required": ["since", "until", "task", "schedule", "by"],
+      "properties": {
+        "since": { "type": ["string", "null"], "description": "First day, inclusive." },
+        "until": { "type": ["string", "null"], "description": "Last day, inclusive." },
+        "task": { "type": ["string", "null"] },
+        "schedule": { "type": ["string", "null"] },
+        "by": { "enum": ["context", "model", "day"], "description": "A new value is a compatible change." }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "description": "Newest first.",
+      "items": {
+        "type": "object",
+        "required": ["key", "sessions", "last", "totals", "models"],
+        "properties": {
+          "key": { "type": "object", "description": "The group's identity; its fields depend on filter.by." },
+          "sessions": { "$ref": "#/$defs/count" },
+          "last": { "type": "string", "description": "The latest snapshot in the group." },
+          "totals": { "$ref": "#/$defs/totals" },
+          "models": {
+            "type": "array",
+            "items": {
+              "allOf": [{ "$ref": "#/$defs/totals" }],
+              "required": ["harness", "model"],
+              "properties": { "harness": { "type": "string" }, "model": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "sessions": { "$ref": "#/$defs/count" },
+    "totals": { "$ref": "#/$defs/totals" },
+    "skipped_lines": { "$ref": "#/$defs/count", "description": "Ledger lines that are not a cost-record/v1." }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "totals": {
+      "type": "object",
+      "required": ["input", "output", "cache_read", "cache_write", "cost"],
+      "properties": {
+        "input": { "$ref": "#/$defs/count" },
+        "output": { "$ref": "#/$defs/count" },
+        "cache_read": { "$ref": "#/$defs/count" },
+        "cache_write": { "$ref": "#/$defs/count" },
+        "cost": {
+          "type": "object",
+          "propertyNames": { "enum": ["estimate", "billed-credits", "unknown"] },
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
