@@ -33,7 +33,8 @@ report() {
   local hdr
   hdr="$(mktemp)" || return 0
   [ -z "${AGENTIC_AGENT_TOKEN:-}" ] || printf 'Authorization: Bearer %s\n' "$AGENTIC_AGENT_TOKEN" > "$hdr"
-  jq -cn --arg r "$1" --arg c "$(payload_command "$payload")" '{rule: $r, command: $c}' \
+  jq -cn --arg r "$1" --arg c "$(payload_command "$payload")" --arg s "$(payload_session "$payload")" \
+    '{rule: $r, command: $c} + (if $s == "" then {} else {session: $s} end)' \
     | curl -fsS -m 1 --noproxy '*' -X POST -H "@$hdr" -H 'Content-Type: application/json' \
         --data-binary @- "$AGENTIC_BRIDGE_URL/gate" >/dev/null 2>&1 || true
   rm -f "$hdr"

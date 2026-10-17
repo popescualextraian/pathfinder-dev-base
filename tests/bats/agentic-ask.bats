@@ -15,6 +15,7 @@ default='{"id":"Q3"}'
 printf '%s\n%s' "${ASK_BODY:-$default}" "${ASK_CODE:-201}"
 STUB
   chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+  unset CLAUDE_CODE_SESSION_ID COPILOT_AGENT_SESSION_ID
   export PATH="$BATS_TEST_TMPDIR/bin:$PATH" AGENTIC_BRIDGE_URL=http://127.0.0.1:8765 AGENTIC_AGENT_TOKEN=agent-token-0123456789
 }
 
@@ -34,6 +35,21 @@ STUB
   [ "$(jq -r .text "$BATS_TEST_TMPDIR/curl.body")" = $'Use "pg"\nor $DB?' ]
   [ "$(jq -c .options "$BATS_TEST_TMPDIR/curl.body")" = '[]' ]
   [ "$(jq -c .recommend "$BATS_TEST_TMPDIR/curl.body")" = null ]
+}
+
+@test "sends the Claude session id" {
+  CLAUDE_CODE_SESSION_ID=sess-c COPILOT_AGENT_SESSION_ID= bash "$ASK" "q"
+  [ "$(jq -r .session "$BATS_TEST_TMPDIR/curl.body")" = sess-c ]
+}
+
+@test "sends the Copilot session id" {
+  CLAUDE_CODE_SESSION_ID= COPILOT_AGENT_SESSION_ID=sess-p bash "$ASK" "q"
+  [ "$(jq -r .session "$BATS_TEST_TMPDIR/curl.body")" = sess-p ]
+}
+
+@test "sends no session outside either" {
+  CLAUDE_CODE_SESSION_ID= COPILOT_AGENT_SESSION_ID= bash "$ASK" "q"
+  [ "$(jq 'has("session")' "$BATS_TEST_TMPDIR/curl.body")" = false ]
 }
 
 @test "outside a task it says so" {

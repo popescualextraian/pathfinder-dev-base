@@ -19,8 +19,10 @@ done
 
 # Options go in as a JSON array built from NUL-separated text, so a value may start with "-"
 optjson="$(if [ "${#opts[@]}" -gt 0 ]; then printf '%s\0' "${opts[@]}"; fi | jq -Rs 'split("\u0000")[:-1]')"
-body="$(jq -cn --arg t "$text" --arg r "$rec" --argjson o "$optjson" \
-  '{text: $t, options: $o, recommend: (if $r == "" then null else $r end)}')"
+# Each harness exports its ACP session id to tool shells; the bridge maps it to the session's name
+sid="${CLAUDE_CODE_SESSION_ID:-${COPILOT_AGENT_SESSION_ID:-}}"
+body="$(jq -cn --arg t "$text" --arg r "$rec" --arg s "$sid" --argjson o "$optjson" \
+  '{text: $t, options: $o, recommend: (if $r == "" then null else $r end)} + (if $s == "" then {} else {session: $s} end)')"
 hdr="$(mktemp)"; trap 'rm -f "$hdr"' EXIT
 printf 'Authorization: Bearer %s\n' "$AGENTIC_AGENT_TOKEN" > "$hdr"
 resp="$(printf '%s' "$body" | curl -sS -m 10 --noproxy '*' -X POST -H "@$hdr" -H 'Content-Type: application/json' \

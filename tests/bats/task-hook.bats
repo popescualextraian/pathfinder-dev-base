@@ -75,6 +75,16 @@ STUB
   grep -q '"command":"git push origin HEAD"' "$BATS_TEST_TMPDIR/curl.body"
 }
 
+@test "a block report carries the payload's session id" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/usr/bin/env bash\ncat > "$BATS_TEST_TMPDIR/curl.body"\n' > "$BATS_TEST_TMPDIR/bin/curl"
+  chmod +x "$BATS_TEST_TMPDIR/bin/curl"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH" AGENTIC_BRIDGE_URL=http://127.0.0.1:8765 \
+    run bash "$H" claude pretooluse <<< '{"session_id":"sess-x","tool_name":"Bash","tool_input":{"command":"git push origin HEAD"}}'
+  [ "$status" -eq 2 ]
+  [ "$(jq -r .session "$BATS_TEST_TMPDIR/curl.body")" = sess-x ]
+}
+
 @test "without a bridge nothing is reported and the block still holds" {
   install_cmd_stub curl
   run bash "$H" claude pretooluse < "$F/claude/pretooluse-bash.json"
