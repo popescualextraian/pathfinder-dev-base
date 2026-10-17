@@ -14,6 +14,17 @@ describe("renderEvent sessions", () => {
   });
 });
 
+describe("renderEvent state lines", () => {
+  const st = (name: string | null): TaskEvent => ({ ...e("state", { state: "idle", reason: "" }), name });
+  it("a task with only main shows each state once in the transcript", () => {
+    expect(renderEvent(st("main"))).toBeNull();
+    expect(renderEvent(st(null))).toBe("\n_— idle —_\n");
+  });
+  it("another session's state lines are prefixed", () => {
+    expect(renderEvent(st("plan"))).toBe("\n[plan] _— idle —_\n");
+  });
+});
+
 describe("renderEvent", () => {
   it("quotes user text and prints the final agent message only", () => {
     expect(renderEvent(e("message", { role: "user", text: "Fix it\nplease", final: true }))).toBe("\n> Fix it\n> please\n");

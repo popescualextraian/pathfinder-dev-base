@@ -107,4 +107,20 @@ describe("follow", () => {
     expect(c.t).toBe(0);
     expect(c.out).toBe("[plan] — running\n— stopped\n");
   });
+
+  it("follow --session main shows each main state once", async () => {
+    const r = await run([named("main", "running"), named(null, "running"), named("main", "idle"), named(null, "idle")], "main");
+    expect(r.t).toBe(0);
+    expect(r.out).toBe("— running\n— idle\n");
+  });
+
+  it("a task with only main shows each state once in follow", async () => {
+    const r = await run([named("main", "running"), named(null, "running"), named("main", "idle"), named(null, "idle")], null);
+    expect(r.out).toBe("— running\n— idle\n");
+  });
+
+  it("another session's state lines are prefixed", async () => {
+    const r = await run([named("plan", "running"), named(null, "running"), named("plan", "idle"), named(null, "idle")], null);
+    expect(r.out).toBe("[plan] — running\n— running\n[plan] — idle\n— idle\n");
+  });
 });

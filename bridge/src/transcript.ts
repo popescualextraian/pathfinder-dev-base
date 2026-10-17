@@ -3,8 +3,16 @@ import type { TaskEvent } from "./types.js";
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
+// Each state change is emitted per session and for the task; show it once. session: the one followed, null for all.
+export function showEvent(e: TaskEvent, session: string | null): boolean {
+  if (e.type !== "state") return true;
+  if (session === null) return e.name !== "main";
+  return e.name === session || (e.name === null && ["stopped", "failed", "suspended", "interrupted"].includes(str(e.data.state)));
+}
+
 // Other sessions' entries start with [name] on their first line (later lines stay plain, so quotes and fences hold).
 export function renderEvent(e: TaskEvent): string | null {
+  if (!showEvent(e, null)) return null;
   const out = render(e);
   return out === null || !e.name || e.name === "main" ? out : out.replace(/^(\n*)/, `$1[${e.name}] `);
 }

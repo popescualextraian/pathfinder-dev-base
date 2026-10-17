@@ -1,5 +1,6 @@
 // agentic-bridge follow: prints the task's events readably from the WebSocket (spec §15, follow).
 import WebSocket from "ws";
+import { showEvent } from "./transcript.js";
 import type { TaskEvent } from "./types.js";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -57,7 +58,7 @@ export function follow(o: { url: string; token: string; since: number; raw: bool
       }
       // with a session: its events and the task-level ones; without: all events, but only task-level states count
       if (o.session && e.name !== null && e.name !== o.session) return;
-      o.out(o.raw ? JSON.stringify(e) + "\n" : formatEvent(e, { whole: o.status, midLine: streaming === e.name }));
+      if (showEvent(e, o.session)) o.out(o.raw ? JSON.stringify(e) + "\n" : formatEvent(e, { whole: o.status, midLine: streaming === e.name }));
       streaming = isChunk(e) ? e.name : null;
       if (settled) clearTimeout(settled);
       if (e.type === "state" && (e.name === null || e.name === o.session)) ended = END.has(s(e.data.state));
