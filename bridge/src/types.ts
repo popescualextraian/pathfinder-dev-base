@@ -21,6 +21,7 @@ export interface Question {
   answer?: string;
   grant?: string[];
   answered?: string;
+  session: string;
   permission?: { options: PermissionOption[] };
 }
 
@@ -29,6 +30,23 @@ export interface InboxItem {
   text: string;
   question?: string;
 }
+
+export type SessionState = "starting" | "running" | "waiting" | "idle" | "interrupted" | "failed";
+
+export interface SessionRecord {
+  name: string;
+  session: string | null;
+  model: string | null;
+  state: SessionState;
+  reason: string;
+  inbox: InboxItem[];
+  summary: string;
+  fork_of: string | null;
+  created: string;
+  updated: string;
+}
+
+export interface AgentCaps { fork: boolean }
 
 export interface TaskRecord {
   version: 1;
@@ -51,7 +69,8 @@ export interface TaskRecord {
   updated: string;
   seq: number;
   allowed_actions: string[];
-  inbox: InboxItem[];
+  sessions: SessionRecord[];
+  capabilities: AgentCaps | null;
   summary: string;
   stopped_by_user: boolean;
   scheduled: boolean;
@@ -63,6 +82,7 @@ export interface TaskEvent {
   ts: string;
   task: string;
   session: string | null;
+  name: string | null;
   agent: AgentName;
   type: EventType;
   data: Record<string, unknown>;
