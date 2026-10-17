@@ -25,7 +25,7 @@ back.
 | `agentic schedule add NAME --at "2026-10-16 22:00" [options] "prompt"` | A one-off run, local time, in the future and within a year; the schedule removes itself after it fired. |
 | `agentic schedule list [--json]` | The project's schedules, their last result, whether cron has them, and the task id of a run in progress. |
 | `agentic schedule run NAME` | Fires a schedule now, in your terminal, to try it out. |
-| `agentic schedule follow NAME [--since N] [--raw]` | Streams the run in progress, from wherever cron started it, to its end and its summary. |
+| `agentic schedule follow NAME [--since N] [--raw] [--status]` | Streams the run in progress, from wherever cron started it, to its end and its summary; `--status` only state changes, questions, answers and whole messages. |
 | `agentic schedule results NAME [--all]` | The newest result, or all of them (newest first, with their paths). |
 | `agentic schedule remove NAME` | Removes the schedule. Its results stay. |
 

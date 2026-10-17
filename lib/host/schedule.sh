@@ -208,7 +208,7 @@ sched_running() {
 # summary turn comes after an idle state, so the stream does not stop there (--forever).
 sched_follow() {
   local name="${1:-}" id
-  valid_sched_name "$name" || die "usage: agentic schedule follow NAME [--since N] [--raw]"
+  valid_sched_name "$name" || die "usage: agentic schedule follow NAME [--since N] [--raw] [--status]"
   [ -f "$(sched_dir "$name")/schedule" ] || die "no schedule $name"
   shift
   id="$(sched_running "$name")" || die "$name is not running; agentic schedule results $name shows the last run"

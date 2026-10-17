@@ -203,8 +203,8 @@ lib() { (cd "$PROJ" && source "$A" && "$@"); }
   printf 'AGENTIC_TASK_TOKEN=tok-task-0123456789\nAGENTIC_WORK=/work\n' > "$H/T-RUN/env"
   printf 'agentic-demo-task-T-RUN\n1\nT-RUN\n' > "$H/T-RUN/container"
   echo agentic-demo-task-T-RUN >> "$BATS_TEST_TMPDIR/docker.known"
-  ag schedule follow nightly --since 2
-  [ "$(docker_sub exec | tail -n 6 | tr '\n' ' ')" = "agentic-demo-task-T-RUN agentic-bridge follow --forever --since 2 " ]
+  ag schedule follow nightly --since 2 --status
+  [ "$(docker_sub exec | tail -n 7 | tr '\n' ' ')" = "agentic-demo-task-T-RUN agentic-bridge follow --forever --since 2 --status " ]
   run ag schedule follow nope
   [ "$status" -ne 0 ]
 }

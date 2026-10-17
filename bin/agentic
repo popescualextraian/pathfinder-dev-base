@@ -52,7 +52,7 @@ agentic <command> [options]          run inside a project repository
                [--target T] [--no-worktree] [--keep] [--keep-on-failure] [--timeout 2h] "prompt"
                                      run a detached task from your crontab; it ends with a summary and is cleaned up
   schedule list [--json] | remove NAME | run NAME | results NAME [--all]
-  schedule follow NAME [--since N] [--raw]
+  schedule follow NAME [--since N] [--raw] [--status]
                                      stream the running firing of NAME until its run ends
   cost [--since D] [--until D] [--task ID] [--schedule NAME] [--by context|model|day] [--json]
                                      what the project's sessions spent (docs/cost.md); --json is cost-summary/v1
