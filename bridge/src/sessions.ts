@@ -19,17 +19,23 @@ export function newSession(
   };
 }
 
-// An old record (no sessions array) becomes one main session.
+const KEPT: readonly string[] = ["starting", "running", "waiting", "idle", "interrupted"];
+
+// An old record (no sessions array) becomes one main session. state.json is agent-writable:
+// sessions with a bad name are dropped, and a record left without main gets one rebuilt.
 export function upgradeRecord(raw: unknown): TaskRecord {
   const r = raw as Record<string, unknown> & Partial<TaskRecord> & { inbox?: SessionRecord["inbox"] };
-  if (Array.isArray(r.sessions)) return { ...r, capabilities: r.capabilities ?? null } as TaskRecord;
   const { inbox, ...rest } = r;
-  const state = r.state === "suspended" || r.state === "stopped" || r.state === "failed" ? "idle" : r.state;
-  const main = newSession(MAIN, r.model ?? null, r.created ?? "", {
-    session: r.session ?? null, state: state as SessionState, reason: r.reason ?? "",
-    inbox: inbox ?? [], summary: r.summary ?? "", updated: r.updated ?? r.created ?? "",
+  const main = () => newSession(MAIN, r.model ?? null, r.created ?? "", {
+    session: r.session ?? null, state: (KEPT.includes(String(r.state)) ? r.state : "idle") as SessionState,
+    reason: r.reason ?? "", inbox: Array.isArray(r.sessions) ? [] : inbox ?? [], summary: r.summary ?? "",
+    updated: r.updated ?? r.created ?? "",
   });
-  return { ...rest, sessions: [main], capabilities: null } as TaskRecord;
+  if (!Array.isArray(r.sessions)) return { ...rest, sessions: [main()], capabilities: null } as TaskRecord;
+  const sessions = (r.sessions as unknown[]).filter((s): s is SessionRecord =>
+    typeof (s as SessionRecord | null)?.name === "string" && NAME_RE.test((s as SessionRecord).name));
+  if (!sessions.some((s) => s.name === MAIN)) sessions.unshift(main());
+  return { ...r, sessions, capabilities: r.capabilities ?? null } as TaskRecord;
 }
 
 export function upgradeQuestion(raw: Question): Question {

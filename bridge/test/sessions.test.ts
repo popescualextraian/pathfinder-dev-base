@@ -24,6 +24,20 @@ describe("upgradeRecord", () => {
     for (const s of ["suspended", "stopped", "failed"]) expect(st(s)).toBe("idle");
   });
 
+  it("an unknown old state becomes idle", () => {
+    expect(upgradeRecord(old({ state: "bogus" })).sessions[0]!.state).toBe("idle");
+    expect(upgradeRecord(old({ state: undefined })).sessions[0]!.state).toBe("idle");
+  });
+
+  it("drops sessions with a bad name and keeps a main", () => {
+    const bad = newSession("x\u001b[2Jy", null, "n");
+    const r = upgradeRecord({ ...old({ inbox: undefined }), sessions: [newSession("main", "m1", "n"), bad, newSession("b", null, "n")] });
+    expect(r.sessions.map((s) => s.name)).toEqual(["main", "b"]);
+    const r2 = upgradeRecord({ ...old({ inbox: undefined }), sessions: [bad, { name: 7 }, null, newSession("b", null, "n")] });
+    expect(r2.sessions.map((s) => s.name)).toEqual(["main", "b"]);
+    expect(r2.sessions[0]).toMatchObject({ session: "s1", model: "m1", state: "idle", inbox: [] });
+  });
+
   it("keeps a record that has sessions", () => {
     const raw = { ...old({ inbox: undefined }), sessions: [newSession("main", "m1", "n")], capabilities: { fork: true } };
     expect(upgradeRecord(raw)).toEqual(raw);

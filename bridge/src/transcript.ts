@@ -3,6 +3,10 @@ import type { TaskEvent } from "./types.js";
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
+// Agent-written text must not drive the terminal: control characters other than newline and tab go.
+// eslint-disable-next-line no-control-regex
+export const plain = (t: string): string => t.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, " ");
+
 // Each state change is emitted per session and for the task; show it once. session: the one followed, null for all.
 export function showEvent(e: TaskEvent, session: string | null): boolean {
   if (e.type !== "state") return true;
@@ -14,7 +18,7 @@ export function showEvent(e: TaskEvent, session: string | null): boolean {
 export function renderEvent(e: TaskEvent): string | null {
   if (!showEvent(e, null)) return null;
   const out = render(e);
-  return out === null || !e.name || e.name === "main" ? out : out.replace(/^(\n*)/, `$1[${e.name}] `);
+  return out === null || !e.name || e.name === "main" ? out : out.replace(/^(\n*)/, `$1[${plain(e.name)}] `);
 }
 
 function render(e: TaskEvent): string | null {

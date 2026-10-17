@@ -12,6 +12,10 @@ describe("renderEvent sessions", () => {
     expect(renderEvent(n("main"))).toBe("\nDone.\n");
     expect(renderEvent(e("message", { role: "agent", text: "Done.", final: true }))).toBe("\nDone.\n");
   });
+  it("a session name cannot carry control characters into the transcript", () => {
+    const ev: TaskEvent = { ...e("message", { role: "agent", text: "Done.", final: true }), name: "x\u001b[2Jy" };
+    expect(renderEvent(ev)).toBe("\n[x [2Jy] Done.\n");
+  });
 });
 
 describe("renderEvent state lines", () => {

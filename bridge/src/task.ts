@@ -27,7 +27,7 @@ export type Input =
   | { kind: "addSession"; name: string; model: string | null; fork: string | null; text: string | null }
   | { kind: "agentStarted"; capabilities: AgentCaps }
   | { kind: "sessionReady"; name: string; session: string; seed?: string }
-  | { kind: "sessionLost"; name: string; error: string }
+  | { kind: "sessionLost"; name: string; mode: "new" | "load" | "fork"; error: string }
   | { kind: "turnEnd"; name: string; stopReason: string; summary: string }
   | { kind: "agentExit"; error: string }
   | { kind: "idleTimeout" }
@@ -208,7 +208,8 @@ export class TaskMachine {
         const s = this.find(input.name);
         if (!s || !this.agentLive) return ok;
         this.ls(s.name).opening = false;
-        this.setSession(s, "failed", `its conversation could not be restored: ${input.error}`, fx);
+        const why = input.mode === "load" ? "its conversation could not be restored" : "could not open the session";
+        this.setSession(s, "failed", `${why}: ${input.error}`, fx);
         // its questions can no longer be answered; left open they would block the task
         for (const q of this.openQuestions()) if (q.session === s.name) this.closeQuestion(q.id, "session failed", fx);
         return ok;

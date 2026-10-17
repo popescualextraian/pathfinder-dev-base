@@ -1,21 +1,17 @@
 // agentic-bridge follow: prints the task's events readably from the WebSocket (spec §15, follow).
 import WebSocket from "ws";
-import { showEvent } from "./transcript.js";
+import { plain, showEvent } from "./transcript.js";
 import type { TaskEvent } from "./types.js";
 
 const s = (v: unknown): string => (typeof v === "string" ? v : "");
 const END = new Set(["waiting", "idle", "stopped", "failed", "suspended"]);
-
-// Agent-written text must not drive the terminal: control characters other than newline and tab go.
-// eslint-disable-next-line no-control-regex
-const plain = (t: string): string => t.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, " ");
 
 // Lines of a session other than main start with [name]. whole: the status view sends no chunks, so a
 // final message prints its text; midLine: a streamed chunk continues a line already tagged.
 export function formatEvent(e: TaskEvent, o: { whole?: boolean; midLine?: boolean } = {}): string {
   const out = plain(formatRaw(e, o.whole ?? false));
   if (!e.name || e.name === "main" || out === "" || out === "\n" || (o.midLine && isChunk(e))) return out;
-  return out.replace(/^(?=.)|(?<=\n)(?=.)/g, `[${e.name}] `);
+  return out.replace(/^(?=.)|(?<=\n)(?=.)/g, `[${plain(e.name)}] `);
 }
 
 const isChunk = (e: TaskEvent): boolean => e.type === "message" && e.data.role !== "user" && !e.data.final;

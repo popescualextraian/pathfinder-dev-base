@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -725,6 +725,39 @@ describe("sessions", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+
+  it("a fresh task whose main session cannot open fails and exits 1", async () => {
+    vi.stubEnv("FAKE_NO_NEW", "1");
+    try {
+      const { bridge, exits } = await start(taskDir("hello"));
+      await waitState(bridge, "failed");
+      expect(bridge.status().reason).toMatch(/^agent failed to start: .*session\/new refused/);
+      expect(await exited(exits)).toEqual([1]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("logs each task state once to the events log", async () => {
+    const logs = vi.spyOn(Notifier.prototype, "logState");
+    try {
+      const { bridge } = await start(taskDir("hello"));
+      await waitState(bridge, "idle");
+      expect(logs.mock.calls.map((c) => c[0].state)).toEqual(["starting", "running", "idle"]);
+    } finally {
+      logs.mockRestore();
+    }
+  });
+
+  it("a fork that cannot open says so, not that a conversation could not be restored", async () => {
+    const dir = taskDir("hello");
+    const { bridge } = await start(dir);
+    await waitState(bridge, "idle");
+    rmSync(join(dir, "fake", `${view(bridge, "main")?.session}.json`));
+    add(bridge, "b", null, { fork: "main" });
+    await until(() => view(bridge, "b")?.state === "failed", "b failed");
+    expect(view(bridge, "b")?.reason).toMatch(/^could not open the session: .*not found/);
   });
 
   it("an old record without sessions boots and resumes", async () => {

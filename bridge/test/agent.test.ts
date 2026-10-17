@@ -212,3 +212,17 @@ describe("AgentProcess", () => {
     expect(await Promise.all([p1, p2])).toEqual(["cancelled", "end_turn"]);
   });
 });
+
+describe("copilot harness", () => {
+  it("afterSession sets the model when one is given, and nothing otherwise", async () => {
+    const calls: string[][] = [];
+    const stub = {
+      setMode: async (s: string, m: string) => { calls.push(["mode", s, m]); },
+      setConfigOption: async (s: string, c: string, v: string) => { calls.push(["config", s, c, v]); },
+    };
+    const h = harnessFor("copilot", { model: null, acpCmd: null });
+    await h.afterSession(stub, "s1", "m2");
+    await h.afterSession(stub, "s2", null);
+    expect(calls).toEqual([["config", "s1", "model", "m2"]]);
+  });
+});

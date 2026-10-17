@@ -571,10 +571,17 @@ describe("sessions", () => {
     expect(t.apply({ kind: "addSession", name: "plan", model: null, fork: null, text: null })).toMatchObject({ ok: false, code: "conflict" });
   });
 
+  it("a new or forked session that cannot open says why", () => {
+    const t = running();
+    t.apply({ kind: "addSession", name: "plan", model: "typo", fork: null, text: null });
+    t.apply({ kind: "sessionLost", name: "plan", mode: "new", error: "unknown model" });
+    expect(sess(t, "plan").reason).toBe("could not open the session: unknown model");
+  });
+
   it("a lost session fails alone; prompting it says to add a new session", () => {
     const t = running();
     t.apply({ kind: "addSession", name: "plan", model: null, fork: null, text: "Plan it" });
-    const l = t.apply({ kind: "sessionLost", name: "plan", error: "no such session" });
+    const l = t.apply({ kind: "sessionLost", name: "plan", mode: "load", error: "no such session" });
     expect(sstates(l, "plan")).toEqual(["failed"]);
     expect(sess(t, "plan").reason).toBe("its conversation could not be restored: no such session");
     expect(main(t).state).toBe("running");
@@ -595,7 +602,7 @@ describe("sessions", () => {
     t.apply({ kind: "boot", fresh: false });
     t.apply({ kind: "userPrompt", text: "go", session: "plan" });
     t.apply({ kind: "agentStarted", capabilities: { fork: true } });
-    const l = t.apply({ kind: "sessionLost", name: "plan", error: "gone" });
+    const l = t.apply({ kind: "sessionLost", name: "plan", mode: "load", error: "gone" });
     expect(fx(l)).toContainEqual({ kind: "emit", type: "answer", data: { question: "Q1", text: "session failed", grant: [] }, name: "plan" });
     expect(t.openQuestions().map((x) => x.id)).toEqual(["Q2"]);
     expect(t.apply({ kind: "answer", text: "yes", grant: [] })).toMatchObject({ ok: true });

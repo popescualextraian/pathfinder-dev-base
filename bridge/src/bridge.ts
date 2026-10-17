@@ -378,7 +378,8 @@ export class Bridge implements ApiTarget {
   }
 
   // open: a session's conversation in the live agent. A failed load of main falls back to a new
-  // session seeded with the task history (spec D12); any other failure loses that session alone.
+  // session seeded with the task history (spec D12); main failing to open fails the task, as a
+  // failed start does; any other failure loses that session alone.
   private async open(name: string, mode: "new" | "load" | "fork", from: string | null, model: string | null): Promise<void> {
     const agent = this.agent;
     if (!agent) return;
@@ -392,24 +393,21 @@ export class Bridge implements ApiTarget {
           input = { kind: "sessionReady", name, session: id };
         } catch (err) {
           if (name !== MAIN) throw err;
-          let session: string;
-          try {
-            session = await agent.newSession(model);
-          } catch (again) {
-            // no main to fall back to: the task fails, as a failed start does
-            if (this.agent !== agent) return;
-            this.agent = null;
-            this.track(agent.kill());
-            this.run({ kind: "agentExit", error: `agent failed to start: ${message(again)}` });
-            return;
-          }
+          const session = await agent.newSession(model);
           if (this.agent !== agent) return;
           this.emit("error", { message: `session ${id} could not be loaded (${message(err)}); started a new session with the task history` }, MAIN);
           input = { kind: "sessionReady", name, session, seed: this.seed() };
         }
       } else input = { kind: "sessionReady", name, session: await agent.newSession(model) };
     } catch (err) {
-      input = { kind: "sessionLost", name, error: message(err) };
+      if (name === MAIN) {
+        if (this.agent !== agent) return;
+        this.agent = null;
+        this.track(agent.kill());
+        this.run({ kind: "agentExit", error: `agent failed to start: ${message(err)}` });
+        return;
+      }
+      input = { kind: "sessionLost", name, mode, error: message(err) };
     }
     if (this.agent === agent) this.run(input);
   }
@@ -461,7 +459,7 @@ export class Bridge implements ApiTarget {
     const ev = this.d.store.appendEvent({ ts: this.d.now(), task: m.record.task, session, name, agent: m.record.agent, type, data });
     const md = renderEvent(ev);
     if (md) this.d.store.appendTranscript(md);
-    if (type === "state") this.d.notifier.logState(redactDeep(m.record, this.redact));
+    if (type === "state" && name === null) this.d.notifier.logState(redactDeep(m.record, this.redact));
     for (const fn of this.listeners) {
       try {
         fn(ev);

@@ -35,6 +35,9 @@ describe("formatEvent sessions", () => {
     expect(formatEvent(n("plan", "message", { role: "agent", text: "lo", final: false }), { midLine: true })).toBe("lo");
     expect(formatEvent(n("plan", "message", { role: "agent", text: "lo", final: true }))).toBe("\n");
   });
+  it("a session name cannot carry control characters to the terminal", () => {
+    expect(formatEvent(n("x\u001b[2Jy", "state", { state: "idle", reason: "" }))).toBe("[x [2Jy] — idle\n");
+  });
 });
 
 describe("follow", () => {
