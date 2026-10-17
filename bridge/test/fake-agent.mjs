@@ -6,6 +6,7 @@
 //   PERMISSION:<cmd>  asks the client for permission, replies "permission: <optionId|cancelled>"
 //   SLEEP:<ms>        a tool call that runs until done or cancelled
 //   META              replies with the session's _meta and mode as JSON
+//   MODEL             replies "model: <the session's model|none>"
 //   HISTORY           replies "history: <number of earlier messages>"
 //   CRASH             exits with code 3
 //   anything else     replies "echo: <prompt>"
@@ -54,15 +55,15 @@ function shell(sid, s, command, n) {
   return `ran: ${command} (exit ${r.status})`;
 }
 
-async function ask(text) {
+async function ask(sid, text) {
   if (process.env.FAKE_ASK === "cli") {
-    const r = spawnSync("agentic-ask", [text], { encoding: "utf8" });
+    const r = spawnSync("agentic-ask", [text], { encoding: "utf8", env: { ...process.env, CLAUDE_CODE_SESSION_ID: sid } });
     return (r.stdout.match(/Recorded (Q\d+)/) || [])[1] || `failed: ${r.stderr.trim()}`;
   }
   const res = await fetch(`${process.env.AGENTIC_BRIDGE_URL}/ask`, {
     method: "POST",
     headers: { authorization: `Bearer ${process.env.AGENTIC_AGENT_TOKEN}`, "content-type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, session: sid }),
   });
   return (await res.json()).id;
 }
@@ -75,7 +76,7 @@ async function prompt(sid, text) {
   cancelled.delete(sid);
   let reply = `echo: ${text}`;
   let stopReason = "end_turn";
-  if (text.startsWith("ASK:")) reply = `asked ${await ask(text.slice(4))}`;
+  if (text.startsWith("ASK:")) reply = `asked ${await ask(sid, text.slice(4))}`;
   else if (text.startsWith("SHELL:")) reply = shell(sid, s, text.slice(6), before);
   else if (text.startsWith("Answer to") && s.lastRefused) reply = shell(sid, s, s.lastRefused, before);
   else if (text.startsWith("PERMISSION:")) {
@@ -97,6 +98,7 @@ async function prompt(sid, text) {
     if (cancelled.has(sid)) { stopReason = "cancelled"; reply = ""; }
     else reply = "slept";
   } else if (text === "META") reply = JSON.stringify({ meta: s.meta, mode: s.mode });
+  else if (text === "MODEL") reply = `model: ${s.model ?? "none"}`;
   else if (text === "HISTORY") reply = `history: ${before}`;
   else if (text === "CRASH") process.exit(3);
   if (reply) { say(sid, reply); s.history.push({ role: "agent", text: reply }); }
@@ -109,7 +111,7 @@ async function handle(rpc) {
   const p = rpc.params || {};
   const reply = (result) => send({ id: rpc.id, result });
   switch (rpc.method) {
-    case "initialize": return reply({ protocolVersion: 1, agentCapabilities: { loadSession: true }, authMethods: [] });
+    case "initialize": return reply({ protocolVersion: 1, agentCapabilities: { loadSession: true, ...(process.env.FAKE_NO_FORK ? {} : { sessionCapabilities: { fork: {} } }) }, authMethods: [] });
     case "session/new": {
       const sid = randomUUID();
       save(sid, { history: [], meta: p._meta ?? null, mode: "default", lastRefused: null });
@@ -123,7 +125,16 @@ async function handle(rpc) {
       return reply({});
     }
     case "session/set_mode": { const s = load(p.sessionId); s.mode = p.modeId; save(p.sessionId, s); return reply({}); }
-    case "session/set_config_option": return reply({ configOptions: [] });
+    case "session/fork": {
+      if (!existsSync(file(p.sessionId))) return send({ id: rpc.id, error: { code: -32002, message: `session ${p.sessionId} not found` } });
+      const sid = randomUUID();
+      save(sid, load(p.sessionId));
+      return reply({ sessionId: sid });
+    }
+    case "session/set_config_option": {
+      if (p.configId === "model") { const s = load(p.sessionId); s.model = p.value; save(p.sessionId, s); }
+      return reply({ configOptions: [] });
+    }
     case "session/prompt": return reply(await prompt(p.sessionId, p.prompt.map((b) => b.text ?? "").join("").split("\n\n[scheduled run]\n")[0]));
     case "session/cancel": cancelled.add(p.sessionId); return;
     default: if (rpc.id !== undefined) send({ id: rpc.id, error: { code: -32601, message: `${rpc.method} not supported` } });

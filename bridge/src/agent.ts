@@ -4,48 +4,50 @@ import { Readable, Writable } from "node:stream";
 import * as acp from "@agentclientprotocol/sdk";
 import type { HarnessSpec } from "./harness.js";
 import type { Update } from "./map.js";
-import type { PermissionOption } from "./types.js";
+import type { AgentCaps, PermissionOption } from "./types.js";
 
 export interface PermissionAsk {
+  sessionId: string;
   title: string;
   command: string;
   options: PermissionOption[];
 }
 
 export interface AgentHooks {
-  onUpdate(u: Update): void;
+  onUpdate(sessionId: string, u: Update): void;
   onPermission(req: PermissionAsk): Promise<string | null>;
   onExit(error: string): void;
   onStderr?(chunk: string): void;
 }
 
 export interface AgentLike {
-  start(): Promise<void>;
-  newSession(): Promise<string>;
-  loadSession(id: string): Promise<void>;
-  prompt(text: string): Promise<string>;
-  cancel(): void;
+  start(): Promise<AgentCaps>;
+  newSession(model: string | null): Promise<string>;
+  loadSession(id: string, model: string | null): Promise<void>;
+  forkSession(id: string, model: string | null): Promise<string>; // session/fork, then session/load of the new id
+  prompt(sessionId: string, text: string): Promise<string>;
+  cancel(sessionId: string): void;
   kill(): Promise<void>;
 }
 
 export class AgentProcess implements AgentLike {
   private child: ChildProcess | null = null;
   private conn: acp.ClientConnection | null = null;
-  private sessionId: string | null = null;
-  private loading = false;
+  private loading = new Set<string>(); // sessions whose replay is muted
+  private inFlight = new Set<string>(); // sessions with a turn running
+  private canFork = false;
   private killing = false;
-  private inFlight = false;
   private exitReported = false;
   private spawnError: Error | null = null;
   private exited: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly spec: HarnessSpec,
-    private readonly opts: { cwd: string; env: NodeJS.ProcessEnv; paragraph: string; model: string | null },
+    private readonly opts: { cwd: string; env: NodeJS.ProcessEnv; paragraph: string },
     private readonly hooks: AgentHooks,
   ) {}
 
-  async start(): Promise<void> {
+  async start(): Promise<AgentCaps> {
     const [cmd, ...args] = this.spec.command;
     if (!cmd) throw new Error("empty agent command");
     const child = spawn(cmd, args, { cwd: this.opts.cwd, env: { ...this.opts.env, ...this.spec.env }, stdio: ["pipe", "pipe", "pipe"] });
@@ -75,7 +77,7 @@ export class AgentProcess implements AgentLike {
     this.conn = acp
       .client({ name: "agentic-bridge" })
       .onNotification(acp.methods.client.session.update, (ctx) => {
-        if (!this.loading) this.hooks.onUpdate(ctx.params.update as unknown as Update);
+        if (!this.loading.has(ctx.params.sessionId)) this.hooks.onUpdate(ctx.params.sessionId, ctx.params.update as unknown as Update);
       })
       .onRequest(acp.methods.client.session.requestPermission, async (ctx) => {
         const p = ctx.params;
@@ -84,6 +86,7 @@ export class AgentProcess implements AgentLike {
         let optionId: string | null = null;
         try {
           optionId = await this.hooks.onPermission({
+            sessionId: p.sessionId,
             title: p.toolCall.title ?? "",
             command: typeof raw?.command === "string" ? raw.command : "",
             options,
@@ -96,10 +99,12 @@ export class AgentProcess implements AgentLike {
       })
       .connect(stream);
     try {
-      await this.conn.agent.request(acp.methods.agent.initialize, {
+      const init = await this.conn.agent.request(acp.methods.agent.initialize, {
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       });
+      this.canFork = !!init.agentCapabilities?.sessionCapabilities?.fork;
+      return { fork: this.canFork };
     } catch (err) {
       // A failed spawn surfaces first as a broken pipe; report the real cause.
       await new Promise((r) => setImmediate(r));
@@ -107,43 +112,47 @@ export class AgentProcess implements AgentLike {
     }
   }
 
-  async newSession(): Promise<string> {
+  async newSession(model: string | null): Promise<string> {
     const meta = this.spec.sessionMeta(this.opts.paragraph);
     const r = await this.agent().request(acp.methods.agent.session.new, {
       cwd: this.opts.cwd, mcpServers: [], ...(meta ? { _meta: meta } : {}),
     });
-    this.sessionId = r.sessionId;
-    await this.spec.afterSession(this.calls(), r.sessionId, this.opts.model);
+    await this.spec.afterSession(this.calls(), r.sessionId, model);
     return r.sessionId;
   }
 
-  async loadSession(id: string): Promise<void> {
+  async loadSession(id: string, model: string | null): Promise<void> {
     const meta = this.spec.sessionMeta(this.opts.paragraph);
-    this.loading = true;
+    this.loading.add(id);
     try {
       await this.agent().request(acp.methods.agent.session.load, {
         sessionId: id, cwd: this.opts.cwd, mcpServers: [], ...(meta ? { _meta: meta } : {}),
       });
     } finally {
-      this.loading = false;
+      this.loading.delete(id);
     }
-    this.sessionId = id;
-    await this.spec.afterSession(this.calls(), id, this.opts.model);
+    await this.spec.afterSession(this.calls(), id, model);
   }
 
-  async prompt(text: string): Promise<string> {
-    const sessionId = this.session();
-    this.inFlight = true;
+  async forkSession(id: string, model: string | null): Promise<string> {
+    if (!this.canFork) throw new Error(`${this.spec.name} does not support forking a session`);
+    const r = await this.agent().request(acp.methods.agent.session.fork, { sessionId: id, cwd: this.opts.cwd, mcpServers: [] });
+    await this.loadSession(r.sessionId, model); // a forked id must be loaded before it takes prompts
+    return r.sessionId;
+  }
+
+  async prompt(sessionId: string, text: string): Promise<string> {
+    this.inFlight.add(sessionId);
     try {
       const r = await this.agent().request(acp.methods.agent.session.prompt, { sessionId, prompt: [{ type: "text", text }] });
       return r.stopReason;
     } finally {
-      this.inFlight = false;
+      this.inFlight.delete(sessionId);
     }
   }
 
-  cancel(): void {
-    if (this.conn && this.sessionId && this.inFlight) this.conn.agent.notify(acp.methods.agent.session.cancel, { sessionId: this.sessionId }).catch(() => {}); // the connection may close right after
+  cancel(sessionId: string): void {
+    if (this.conn && this.inFlight.has(sessionId)) this.conn.agent.notify(acp.methods.agent.session.cancel, { sessionId }).catch(() => {}); // the connection may close right after
   }
 
   async kill(): Promise<void> {
@@ -159,11 +168,6 @@ export class AgentProcess implements AgentLike {
   private agent(): acp.ClientContext {
     if (!this.conn) throw new Error("agent not started");
     return this.conn.agent;
-  }
-
-  private session(): string {
-    if (!this.sessionId) throw new Error("no session");
-    return this.sessionId;
   }
 
   private calls() {

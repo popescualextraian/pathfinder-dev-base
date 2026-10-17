@@ -40,6 +40,8 @@ export function harnessFor(name: AgentName, opts: { model: string | null; acpCmd
     env: { COPILOT_AUTO_UPDATE: "false" },
     // Copilot reads the task paragraph from copilot-instructions.md (45-hooks writes it).
     sessionMeta: () => undefined,
-    afterSession: async () => {},
+    afterSession: async (calls, sessionId, model) => {
+      if (model) await calls.setConfigOption(sessionId, "model", model);
+    },
   };
 }
