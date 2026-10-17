@@ -17,6 +17,7 @@ async function serve(stored: TaskEvent[], seen: string[] = []) {
     ready: () => true,
     status: () => ({ state: "idle" }),
     command: (i) => { seen.push(JSON.stringify(i)); return { ok: true, effects: [] }; },
+    sessions: () => [],
     events: (since, limit, keep = () => true) => stored.filter((e) => e.seq > since && keep(e)).slice(0, limit),
   };
   const s = await startServer({ port: 0, host: "127.0.0.1", tokens, access: { hosts: [], origins: [] }, target,
@@ -83,7 +84,7 @@ describe("server", () => {
 
   it("answers 500 instead of crashing when the target throws", async () => {
     const s = await startServer({ port: 0, host: "127.0.0.1", tokens, access: { hosts: [], origins: [] }, subscribe: () => () => undefined,
-      target: { ready: () => true, status: () => { throw new Error("boom"); }, command: () => ({ ok: true, effects: [] }), events: () => [] } });
+      target: { ready: () => true, status: () => { throw new Error("boom"); }, command: () => ({ ok: true, effects: [] }), sessions: () => [], events: () => [] } });
     close = s.close;
     const r = await fetch(`http://127.0.0.1:${s.port}/status`, { headers: { authorization: `Bearer ${tokens.task}` } });
     expect(r.status).toBe(500);
@@ -92,7 +93,7 @@ describe("server", () => {
 
   it("rejects when the port is taken", async () => {
     const { port } = await serve([]);
-    const target: ApiTarget = { ready: () => true, status: () => ({}), command: () => ({ ok: true, effects: [] }), events: () => [] };
+    const target: ApiTarget = { ready: () => true, status: () => ({}), command: () => ({ ok: true, effects: [] }), sessions: () => [], events: () => [] };
     await expect(startServer({ port, host: "127.0.0.1", tokens, access: { hosts: [], origins: [] }, target, subscribe: () => () => undefined })).rejects.toThrow(/EADDRINUSE/);
   });
 

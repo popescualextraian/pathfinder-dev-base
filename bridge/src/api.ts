@@ -2,12 +2,14 @@
 // could serve them over another connection.
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Input, Outcome } from "./task.js";
+import type { SessionView } from "./sessions.js";
 import type { TaskEvent } from "./types.js";
 
 export interface ApiTarget {
   ready(): boolean;
   status(): Record<string, unknown>;
   command(input: Input): Outcome;
+  sessions(): SessionView[];
   events(since: number, limit: number, keep?: (e: TaskEvent) => boolean): TaskEvent[];
 }
 export interface Tokens { task: string; agent: string }
@@ -84,6 +86,12 @@ export function handle(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts:
       return err(400, "bad_request", "body is not JSON");
     }
   }
+  // optStr: a string field that may be absent; anything else is a 400
+  const optStr = (k: string): string | undefined | ApiResponse =>
+    body[k] === undefined || isStr(body[k]) ? (body[k] as string | undefined) : err(400, "bad_request", `${k} must be a string`);
+  const session = optStr("session");
+  if (typeof session === "object") return session;
+  const sess = session === undefined ? {} : { session };
   const status = (): ApiResponse => ({ status: 202, json: target.status() });
   switch (route) {
     case "GET /status":
@@ -94,33 +102,45 @@ export function handle(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts:
       if (!Number.isInteger(since) || since < 0 || !Number.isInteger(limit) || limit < 1 || limit > 1000) {
         return err(400, "bad_request", "since must be an integer >= 0 and limit 1..1000");
       }
-      const keep = eventView(req.query.get("view"));
-      if (!keep) return err(400, "bad_request", "view must be full or status");
+      const view = eventView(req.query.get("view"));
+      if (!view) return err(400, "bad_request", "view must be full or status");
+      const session = req.query.get("session");
+      const keep = session === null ? view : (e: TaskEvent) => e.name === session && view(e);
       return { status: 200, ndjson: target.events(since, limit, keep) };
+    }
+    case "GET /sessions":
+      return { status: 200, json: target.sessions() };
+    case "POST /sessions": {
+      const [model, fork, text] = [optStr("model"), optStr("fork"), optStr("text")];
+      if (!isStr(body.name)) return err(400, "bad_request", "name must be a string");
+      for (const v of [model, fork, text]) if (typeof v === "object") return v;
+      const name = body.name;
+      const o = target.command({ kind: "addSession", name, model: (model as string | undefined) ?? null, fork: (fork as string | undefined) ?? null, text: (text as string | undefined) ?? null });
+      return outcome(o, () => ({ status: 201, json: target.sessions().find((x) => x.name === name) }));
     }
     case "POST /prompt":
       if (!isStr(body.text)) return err(400, "bad_request", "text must be a string");
-      return outcome(target.command({ kind: "userPrompt", text: body.text }), status);
+      return outcome(target.command({ kind: "userPrompt", text: body.text, ...sess }), status);
     case "POST /answer": {
       if (!isStr(body.text)) return err(400, "bad_request", "text must be a string");
       if (body.question !== undefined && !isStr(body.question)) return err(400, "bad_request", "question must be a string");
       if (body.grant !== undefined && !isStrArray(body.grant)) return err(400, "bad_request", "grant must be a list of strings");
-      const input: Input = { kind: "answer", text: body.text, grant: body.grant ?? [], ...(body.question ? { question: body.question } : {}) };
+      const input: Input = { kind: "answer", text: body.text, grant: body.grant ?? [], ...sess, ...(body.question ? { question: body.question } : {}) };
       return outcome(target.command(input), status);
     }
     case "POST /cancel":
-      return outcome(target.command({ kind: "cancel" }), status);
+      return outcome(target.command({ kind: "cancel", ...sess }), status);
     case "POST /stop":
       return outcome(target.command({ kind: "stop" }), status);
     case "POST /ask": {
       if (!isStr(body.text)) return err(400, "bad_request", "text must be a string");
       if (body.options !== undefined && !isStrArray(body.options)) return err(400, "bad_request", "options must be a list of strings");
       if (body.recommend !== undefined && body.recommend !== null && !isStr(body.recommend)) return err(400, "bad_request", "recommend must be a string");
-      const o = target.command({ kind: "ask", text: body.text, options: body.options ?? [], recommend: body.recommend ?? null });
+      const o = target.command({ kind: "ask", text: body.text, options: body.options ?? [], recommend: body.recommend ?? null, ...(session === undefined ? {} : { sessionId: session }) });
       return outcome(o, () => ({ status: 201, json: o.ok ? o.value : undefined }));
     }
     case "POST /gate":
-      target.command({ kind: "gate", rule: isStr(body.rule) ? body.rule : "", command: isStr(body.command) ? body.command : "" });
+      target.command({ kind: "gate", rule: isStr(body.rule) ? body.rule : "", command: isStr(body.command) ? body.command : "", ...(session === undefined ? {} : { sessionId: session }) });
       return { status: 204 };
     default:
       return err(404, "not_found", "no such route");

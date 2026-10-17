@@ -11,7 +11,8 @@ function target(outcome: Outcome = { ok: true, effects: [] }) {
     ready: () => true,
     status: () => ({ state: "idle" }),
     command: (i) => { seen.push(i); return outcome; },
-    events: (since, limit, keep = () => true) => (Array.from({ length: 5 }, (_, k) => ({ seq: k + 1, type: k % 2 ? "tool" : "state", data: {} })) as never as TaskEvent[])
+    sessions: () => [{ name: "plan" }, { name: "main" }] as never,
+    events: (since, limit, keep = () => true) => (Array.from({ length: 5 }, (_, k) => ({ seq: k + 1, type: k % 2 ? "tool" : "state", name: k % 2 ? "plan" : "main", data: {} })) as never as TaskEvent[])
       .filter((e) => e.seq > since && keep(e)).slice(0, limit),
   };
   return { t, seen };
@@ -95,7 +96,7 @@ describe("handle", () => {
 
   it("GET /events returns NDJSON after the cursor, with a limit", () => {
     const { t } = target();
-    expect(handle(req("GET", "/events", undefined, {}, "since=2&limit=2"), t, tokens, access)).toMatchObject({ status: 200, ndjson: [{ seq: 3 }, { seq: 4 }] });
+    expect(handle(req("GET", "/events", undefined, {}, "since=2&limit=2"), t, tokens, access)).toMatchObject({ status: 200, ndjson: [{ seq: 3, name: "main" }, { seq: 4, name: "plan" }] });
     expect(handle(req("GET", "/events", undefined, {}, "since=x"), t, tokens, access)).toMatchObject({ status: 400 });
   });
 
@@ -135,5 +136,63 @@ describe("handle", () => {
     const { t } = target();
     expect(handle(req("GET", "/nope"), t, tokens, access)).toMatchObject({ status: 404 });
     expect(handle(req("GET", "/status"), { ...t, ready: () => false }, tokens, access)).toMatchObject({ status: 503, json: { error: { code: "starting" } } });
+  });
+
+  describe("sessions", () => {
+    it("GET /sessions lists the views", () => {
+      expect(handle(req("GET", "/sessions"), target().t, tokens, access)).toEqual({ status: 200, json: [{ name: "plan" }, { name: "main" }] });
+    });
+    it("POST /sessions adds one (optional fields null) and returns 201 with its view", () => {
+      const { t, seen } = target({ ok: true, effects: [], value: { id: "plan" } });
+      expect(handle(req("POST", "/sessions", { name: "plan" }), t, tokens, access)).toEqual({ status: 201, json: { name: "plan" } });
+      handle(req("POST", "/sessions", { name: "plan", model: "m", fork: "main", text: "go" }), t, tokens, access);
+      expect(seen).toEqual([
+        { kind: "addSession", name: "plan", model: null, fork: null, text: null },
+        { kind: "addSession", name: "plan", model: "m", fork: "main", text: "go" },
+      ]);
+    });
+    it("POST /sessions checks types and passes refusals through", () => {
+      const { t } = target({ ok: false, code: "conflict", message: "exists" });
+      for (const b of [{}, { name: 1 }, { name: "a", model: 1 }, { name: "a", fork: 1 }, { name: "a", text: 1 }]) {
+        expect(handle(req("POST", "/sessions", b), t, tokens, access)).toMatchObject({ status: 400 });
+      }
+      expect(handle(req("POST", "/sessions", { name: "a" }), t, tokens, access)).toMatchObject({ status: 409 });
+    });
+    it("the agent token cannot reach /sessions", () => {
+      const agent = { authorization: `Bearer ${tokens.agent}` };
+      expect(handle(req("POST", "/sessions", { name: "a" }, agent), target().t, tokens, access)).toMatchObject({ status: 403 });
+      expect(handle(req("GET", "/sessions", undefined, agent), target().t, tokens, access)).toMatchObject({ status: 403 });
+    });
+    it("task routes carry session and reject a non-string one", () => {
+      const { t, seen } = target();
+      handle(req("POST", "/prompt", { text: "x", session: "plan" }), t, tokens, access);
+      handle(req("POST", "/answer", { text: "x", session: "plan" }), t, tokens, access);
+      handle(req("POST", "/cancel", { session: "plan" }), t, tokens, access);
+      handle(req("POST", "/ask", { text: "q", session: "acp-1" }, { authorization: `Bearer ${tokens.agent}` }), t, tokens, access);
+      handle(req("POST", "/gate", { rule: "r", command: "c", session: "acp-1" }, { authorization: `Bearer ${tokens.agent}` }), t, tokens, access);
+      expect(seen).toEqual([
+        { kind: "userPrompt", text: "x", session: "plan" },
+        { kind: "answer", text: "x", grant: [], session: "plan" },
+        { kind: "cancel", session: "plan" },
+        { kind: "ask", text: "q", options: [], recommend: null, sessionId: "acp-1" },
+        { kind: "gate", rule: "r", command: "c", sessionId: "acp-1" },
+      ]);
+      for (const [p, b] of [["/prompt", { text: "x" }], ["/answer", { text: "x" }], ["/cancel", {}]] as const) {
+        expect(handle(req("POST", p, { ...b, session: 1 }), t, tokens, access)).toMatchObject({ status: 400 });
+      }
+      expect(handle(req("POST", "/ask", { text: "q", session: 1 }), t, tokens, access)).toMatchObject({ status: 400 });
+    });
+    it("an unknown session name comes back 404", () => {
+      const { t } = target({ ok: false, code: "not_found", message: "no session x" });
+      expect(handle(req("POST", "/prompt", { text: "x", session: "x" }), t, tokens, access)).toMatchObject({ status: 404 });
+    });
+    it("GET /events?session= filters by name", () => {
+      const r = handle(req("GET", "/events", undefined, {}, "session=plan"), target().t, tokens, access);
+      expect((r.ndjson as { name: string }[]).map((e) => e.name)).toEqual(["plan", "plan"]);
+      const both = handle(req("GET", "/events", undefined, {}, "session=plan&view=status"), target().t, tokens, access);
+      expect(both).toEqual({ status: 200, ndjson: [] });
+      const main = handle(req("GET", "/events", undefined, {}, "session=main&view=status"), target().t, tokens, access);
+      expect((main.ndjson as { seq: number }[]).map((e) => e.seq)).toEqual([1, 3, 5]);
+    });
   });
 });
