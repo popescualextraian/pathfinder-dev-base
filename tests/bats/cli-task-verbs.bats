@@ -355,7 +355,7 @@ SESS='[{"name":"main","session":"s1","model":"m1","state":"idle","summary":"did 
   DOCKER_STATUS=exited run ag session list T-1
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "main  idle  m1  t1  did x" ]
-  [ "${lines[1]}" = "rev  running  m2  t2  esc [31m red" ]
+  [ "${lines[1]}" = "rev  interrupted  m2  t2  esc [31m red" ]
   DOCKER_STATUS=exited run ag session list T-1 --json
   [ "$(jq -c '[.[] | {name, inbox, fork_of}]' <<<"$output")" = '[{"name":"main","inbox":2,"fork_of":null},{"name":"rev","inbox":1,"fork_of":"main"}]' ]
 }
@@ -396,7 +396,7 @@ SESS='[{"name":"main","session":"s1","model":"m1","state":"idle","summary":"did 
   DOCKER_STATUS=exited run ag status T-1
   [ "$status" -eq 0 ]
   [[ "$output" == *"session main  idle  m1  did x"* ]]
-  [[ "$output" == *"session rev  running  m2  esc"* ]]
+  [[ "$output" == *"session rev  interrupted  m2  esc"* ]]
   record T-2 idle '[{"name":"main","session":"s1","model":"m1","state":"idle","summary":"","inbox":[]}]'
   DOCKER_STATUS=exited run ag status T-2
   [[ "$output" != *"session main"* ]]
@@ -410,6 +410,42 @@ SESS='[{"name":"main","session":"s1","model":"m1","state":"idle","summary":"did 
   record T-2 idle "$SESS"
   DOCKER_STATUS=exited run ag status T-2 --json
   [ "$(jq .inbox <<<"$output")" = 3 ]
+}
+
+@test "offline status --json shows sessions with inbox counts and the task's terminal state" {
+  record T-1 suspended "$SESS"
+  DOCKER_STATUS=exited run ag status T-1 --json
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '[.sessions[] | {name, state, inbox}]' <<<"$output")" = '[{"name":"main","state":"idle","inbox":2},{"name":"rev","state":"suspended","inbox":1}]' ]
+  DOCKER_STATUS=exited run ag status --all --json
+  [ "$(jq -c '[.[0].sessions[] | .inbox]' <<<"$output")" = '[2,1]' ]
+  DOCKER_STATUS=exited run ag session list T-1 --json
+  [ "$(jq -c '[.[] | .state]' <<<"$output")" = '["idle","suspended"]' ]
+}
+
+@test "an old record without sessions lists main and takeover --session main resumes it" {
+  record T-1 idle
+  DOCKER_STATUS=exited run ag session list T-1
+  [ "$status" -eq 0 ]; [ "$output" = "main  idle    t  " ]
+  AGENTIC_STOP_TIMEOUT=1 run ag takeover T-1 --session main
+  [ "$status" -eq 0 ]
+  grep -qx -- s1 <<<"$(docker_call_with exec claude)"
+}
+
+@test "usage of answer and follow names --session" {
+  run ag answer
+  [[ "$output" == *"--session NAME"* ]]
+  run ag follow
+  [[ "$output" == *"--session NAME"* ]]
+}
+
+@test "status ID names the session of a question that is not main's" {
+  record T-1 waiting "$SESS"
+  printf '%s\n' '{"id":"Q1","source":"ask","text":"Which DB?","status":"open","session":"rev"}' \
+    '{"id":"Q2","source":"ask","text":"Go?","status":"open","session":"main"}' > "$T/T-1/questions.jsonl"
+  DOCKER_STATUS=exited run ag status T-1
+  [[ "$output" == *"Q1 [rev] (ask): Which DB?"* ]]
+  [[ "$output" == *"Q2 (ask): Go?"* ]]
 }
 
 @test "the bridge's 404 for an unknown session is shown" {

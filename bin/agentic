@@ -610,7 +610,7 @@ cmd_status() {
       (if (.sessions | type == "array" and length > 1) then .sessions[] | objects
         | "session \(.name | c)  \(.state | c)  \(.model // "" | c)  \(.summary // "" | c)" else empty end),
       (.ports | to_entries[] | "port \(.key) -> \(.value)"),
-      (qs[] | "\(.id | c) (\(.source | c)): \(.text | c)\(if (opts | length) > 0 then " [" + (opts | map(c) | join(", ")) + "]" else "" end)\(if .recommendation then " recommended: " + (.recommendation | c) else "" end)"),
+      (qs[] | "\(.id | c)\(if (.session // "main") != "main" then " [" + (.session | c) + "]" else "" end) (\(.source | c)): \(.text | c)\(if (opts | length) > 0 then " [" + (opts | map(c) | join(", ")) + "]" else "" end)\(if .recommendation then " recommended: " + (.recommendation | c) else "" end)"),
       (if (qs | length) > 0 then "reply: agentic answer \($id) \(qs[0].id | c) \"…\"" else empty end)' <<<"$st"
     return
   fi
@@ -669,7 +669,7 @@ cmd_answer() {
   case "${#pos[@]}" in
     2) id="${pos[0]}"; text="${pos[1]}" ;;
     3) id="${pos[0]}"; q="${pos[1]}"; text="${pos[2]}" ;;
-    *) die 'usage: agentic answer ID [QID] "text" [--allow A]...' ;;
+    *) die 'usage: agentic answer ID [QID] "text" [--allow A]... [--session NAME]' ;;
   esac
   for g in ${grants[@]+"${grants[@]}"}; do valid_grant "$g" || die "bad grant '$g' (push, open-pr or deploy:TARGET)"; done
   need_task "$id"; ensure_running "$id"
@@ -777,7 +777,7 @@ cmd_logs() {
 
 cmd_follow() {
   need_config
-  local id="${1:-}" envf; [ -n "$id" ] || die "usage: agentic follow ID [--since N] [--raw] [--forever] [--status]"
+  local id="${1:-}" envf; [ -n "$id" ] || die "usage: agentic follow ID [--since N] [--raw] [--forever] [--status] [--session NAME]"
   shift; need_task "$id"
   [ "$(container_status "$id")" = running ] || die "task $id is $(task_state "$id" | plain); agentic logs $id shows its transcript"
   envf="$(host_file "$id" env)" || die "the env file of $id is not a regular file"
@@ -802,7 +802,7 @@ cmd_takeover() {
   esac
   agent="$(record_get "$id" .agent)"; c="$(task_container "$id")"
   if [ -n "$sess" ]; then
-    session="$({ task_read "$id" state.json || true; } | jq -r --arg n "$sess" '[.sessions[]? | objects | select(.name == $n) | .session][0] // empty' 2>/dev/null || true)"
+    session="$({ task_read "$id" state.json || true; } | jq -r --arg n "$sess" '[((.sessions | arrays) // [{name: "main", session}])[] | objects | select(.name == $n) | .session][0] // empty' 2>/dev/null || true)"
     [ -n "$session" ] || die "task $id has no session $(printf '%s' "$sess" | plain)"
   else
     session="$(record_get "$id" .session)"

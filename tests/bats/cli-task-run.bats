@@ -371,11 +371,11 @@ HOOK
   DOCKER_STATUS=exited run ag status T-25 --json
   [ "$status" -eq 0 ]
   off="$output"
-  [ "$(jq -c '.questions' <<<"$off")" = '[{"id":"Q1","source":"ask","text":"Which DB?","options":[],"recommendation":null,"asked":"t1"}]' ]
+  [ "$(jq -c '.questions' <<<"$off")" = '[{"id":"Q1","source":"ask","text":"Which DB?","options":[],"recommendation":null,"asked":"t1","session":"main"}]' ]
   [ "$(jq -r '.inbox | type' <<<"$off")" = number ]
   [ "$(jq -r 'has("open_questions")' <<<"$off")" = false ]
-  # the live shape: the bridge's status() (the record without the inbox texts, plus questions)
-  live="$(jq -c '.inbox = 0 | .questions = []' "$T/T-25/state.json")"
+  # the live shape: the bridge's status() (the record with session views, plus questions)
+  live="$(jq -c '.inbox = 0 | .questions = [] | .sessions = []' "$T/T-25/state.json")"
   CURL_BODY="$live" run ag status T-25 --json
   [ "$(jq -c 'keys' <<<"$output")" = "$(jq -c 'keys' <<<"$off")" ]
   # no questions file: an empty list

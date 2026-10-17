@@ -210,7 +210,7 @@ open_questions() {
   task_readable "$1" questions.jsonl || { echo '[]'; return; }
   out="$(task_read "$1" questions.jsonl | jq -cs 'map(select(type == "object")) | group_by(.id | tostring) | map(last) | map(select(.status == "open"))
     | sort_by(.id | tostring | ltrimstr("Q") | tonumber? // 0)
-    | map({id, source, text, options: (.options | if type == "array" then . else [] end), recommendation, asked})' 2>/dev/null)" || out='[]'
+    | map({id, source, text, options: (.options | if type == "array" then . else [] end), recommendation, asked, session: (.session // "main")})' 2>/dev/null)" || out='[]'
   printf '%s\n' "${out:-[]}"
 }
 
@@ -237,6 +237,14 @@ task_ports() {
 # task_status_json ID: the status object, with the published ports.
 task_status_json() { task_status_record "$1" | jq -c --argjson p "$(task_ports "$1")" '.ports = $p'; }
 
+# SESSION_VIEWS: jq def views($s): the record's sessions as views, the inbox as a count; an old
+# record without sessions is one main (spec D13); with the task state $s terminal, a session
+# recorded live shows $s, as Bridge.sessions() does.
+# shellcheck disable=SC2016 # jq, not shell
+SESSION_VIEWS='def views($s): [((.sessions | arrays) // [{name: "main", session, model, state, reason, summary, inbox, fork_of: null, created, updated}])[]
+  | objects | {name, session, model, reason, summary, fork_of, created, updated, inbox: ((.inbox | arrays | length) // 0),
+    state: (if ($s | IN("stopped", "failed", "suspended", "interrupted")) and (.state | IN("starting", "running", "waiting")) then $s else .state end)}];'
+
 task_status_record() {
   local st
   if [ "$(container_status "$1")" = running ] && bridge_req "$1" GET /status && [ "$BRIDGE_CODE" = 200 ] \
@@ -246,21 +254,19 @@ task_status_record() {
   st="$(task_state "$1")"
   [ "$st" != interrupted ] || note_interrupted "$1"
   { task_read "$1" state.json | jq -cs --arg s "$st" --argjson q "$(open_questions "$1")" \
-    'select(length == 1 and (.[0] | type) == "object") | .[0]
-    | .inbox = (if (.sessions | type) == "array" then [.sessions[] | objects | .inbox | arrays | length] | add // 0
-        else (.inbox | if type == "array" then length else 0 end) end) | .state = $s | .questions = $q' 2>/dev/null; } | grep . \
+    "$SESSION_VIEWS"'select(length == 1 and (.[0] | type) == "object") | .[0]
+    | .sessions = views($s) | .inbox = ([.sessions[].inbox] | add // 0) | .state = $s | .questions = $q' 2>/dev/null; } | grep . \
     || jq -cn --arg id "$1" '{task: $id, state: "unknown", inbox: 0, questions: []}'
 }
 
 # task_sessions_json ID: the task's sessions as an array of views: the bridge's when it answers,
-# else the record's (inbox as a count).
+# else the record's (SESSION_VIEWS).
 task_sessions_json() {
   if [ "$(container_status "$1")" = running ] && bridge_req "$1" GET /sessions && [ "$BRIDGE_CODE" = 200 ] \
     && jq -ce 'select(type == "array")' <<<"$BRIDGE_BODY" 2>/dev/null; then
     return
   fi
-  { task_read "$1" state.json || true; } | jq -c 'objects | [(.sessions | arrays | .[] | objects)
-    | {name, session, model, state, reason, summary, inbox: (.inbox | arrays | length), fork_of, created, updated}]' 2>/dev/null || echo '[]'
+  { task_read "$1" state.json || true; } | jq -c --arg s "$(task_state "$1")" "$SESSION_VIEWS"'objects | views($s)' 2>/dev/null || echo '[]'
 }
 
 # plain: stdin without control characters (terminal escapes) other than newline and tab.
