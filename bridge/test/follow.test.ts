@@ -119,6 +119,15 @@ describe("follow", () => {
     expect(r.out).toBe("— running\n— idle\n");
   });
 
+  it("follow --raw prints every state event, main's per-session ones included", async () => {
+    const evs = [named("main", "running"), named(null, "running"), named("main", "idle"), named(null, "idle")];
+    const s = await serve((ws) => { evs.forEach((x) => ws.send(JSON.stringify(x))); });
+    const out: string[] = [];
+    expect(await follow(opts(s.url, out, { raw: true }))).toBe(0);
+    s.close();
+    expect(out.join("").trim().split("\n").map((l) => JSON.parse(l).name)).toEqual(["main", null, "main", null]);
+  });
+
   it("another session's state lines are prefixed", async () => {
     const r = await run([named("plan", "running"), named(null, "running"), named("plan", "idle"), named(null, "idle")], null);
     expect(r.out).toBe("[plan] — running\n— running\n[plan] — idle\n— idle\n");
