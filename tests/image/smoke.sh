@@ -51,6 +51,11 @@ check "base tools" 'git --version && gh --version && jq --version && yq --versio
   && aws --version && az version >/dev/null && docker --version && uv --version && claude --version \
   && copilot --version && ccusage --version \
   && command -v mcp-server-playwright && test -f /etc/agentic/container && [ "$(id -un)" = dev ]'
+check "the Playwright MCP opens a page in the image's Chromium" '{ printf "%s\n" \
+  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"smoke\",\"version\":\"1\"}}}" \
+  "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}" \
+  "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"browser_navigate\",\"arguments\":{\"url\":\"data:text/html,<title>smoke-ok</title>\"}}}"; sleep 20; } \
+  | timeout 30 mcp-server-playwright --headless --output-dir /tmp/pw-smoke | grep "\"id\":2" | grep -q "Page Title: smoke-ok"'
 check "files keep the host owner" "[ \"\$(id -u)\" = $(id -u) ] && touch /work/.owner-check"
 [ "$(stat -c %u "$proj/.owner-check")" = "$(id -u)" ] || fail "a file written in /work has the wrong owner"
 check "JDKs 8, 17, 21 with 17 as default" 'test -x /opt/java/8/bin/java && test -x /opt/java/21/bin/java \

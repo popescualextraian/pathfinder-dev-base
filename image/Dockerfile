@@ -18,6 +18,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     AGENTIC_DIR=/opt/agentic \
     UV_PYTHON_INSTALL_DIR=/opt/python \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_MCP_BROWSER=chromium \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \

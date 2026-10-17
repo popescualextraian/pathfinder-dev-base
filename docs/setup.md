@@ -76,7 +76,8 @@ Rules the commands enforce:
 - A `copy` of a file that looks like a secret (`.env`, `id_*`, `*.pem`, `*.key`, `credentials`)
   is done, with a warning: the file ends up in the image, readable by anyone who has the image,
   and stays in pushed layers after the line is removed.
-- An MCP server needs its program in the image. The Playwright server is preinstalled; install
+- An MCP server needs its program in the image. The Playwright server is preinstalled and uses
+  the image's Playwright Chromium (`PLAYWRIGHT_MCP_BROWSER=chromium`; there is no Chrome); install
   others in `Dockerfile.extra` (for example `RUN uv tool install mcp-atlassian`).
 - A certificate copied under `/usr/local/share/ca-certificates/` is copied before the tools are
   installed and is trusted by the system, Java, Node, Python and Chromium.
