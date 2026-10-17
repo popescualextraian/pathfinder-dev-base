@@ -222,6 +222,11 @@ ag resume "$id2" >/dev/null
 wait_state "$id2" idle || fail "task 2: resume"
 grep -q 'echo: You were interrupted' "$tasks/$id2/transcript.md" || fail "task 2: resume prompt"
 
+ag session add "$id2" second two >/dev/null || fail "task 2: session add"
+out="$(ag follow "$id2" --session second </dev/null)" || fail "task 2: follow --session failed"
+grep -q 'echo: two' <<<"$out" || fail "task 2: the second session did not answer"
+[ "$(ag session list "$id2" --json | jq length)" = 2 ] || fail "task 2: session list"
+
 ag stop "$id2" >/dev/null
 id3="$(ag run --in "$id2" "third")"
 wait_state "$id3" idle || fail "task 3: --in"

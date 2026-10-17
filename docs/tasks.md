@@ -143,6 +143,24 @@ or answer (the agent is respawned and the session loaded); `stopped` is final.
   rejected prompt included): `failed` with the reason; the bridge exits 1 and the container stays
   for inspection. `resume` may retry.
 
+## Sessions
+
+A task holds one or more named sessions in one container, one worktree and one branch. `main` is
+the first and cannot be removed; `agentic session add ID NAME [--model M] [--fork FROM] [--json]
+["prompt"]` opens another (a name matches `[a-z0-9][a-z0-9_-]{0,31}`; at most 16 per task; a
+scheduled task runs `main` only). Each session has its own context, model and turn state
+(`idle`, `running`, `waiting`, ...), and sessions run in parallel. `--fork FROM` copies the
+conversation of session FROM, which must be idle; Copilot refuses it (`copilot does not support
+forking a session`). The task state is derived: `starting` while the agent starts, `running` while
+any session runs, else `waiting` while any question is open, else `idle`; `suspended`, `stopped`,
+`interrupted` and `failed` apply to the whole task.
+
+`agentic session list ID [--json]` lists them. `send`, `answer`, `cancel`, `follow` and `takeover`
+take `--session NAME` (default `main`; an answer goes to the question's own session). `follow`
+without `--session` shows every session and ends only on task-level states; the transcript
+prefixes lines of other sessions with `[name] `. A question carries the session that asked it
+(`agentic-ask` and the gate name it automatically).
+
 ## API, version 1
 
 ### Transport and authentication
@@ -212,15 +230,17 @@ repositories that tasks should only read.
 
 | Route | Body | Success | Errors |
 |---|---|---|---|
-| `POST /prompt` | `{text}` | 202, status | 400 empty, 409 state |
-| `POST /answer` | `{question?, text, grant?: [..]}` (default: the oldest open question) | 202, status | 400 empty or bad grant, 404 unknown question, 409 nothing open or stopped |
-| `POST /cancel` | none | 202, status | 409 `no turn in progress` |
+| `GET /sessions` | none | 200, list of session objects | none |
+| `POST /sessions` | `{name, model?, fork?, text?}` | 201, the session object | 400 bad name, 404 unknown `fork`, 409 stopped, scheduled, name taken, limit, fork unsupported or busy |
+| `POST /prompt` | `{text, session?}` | 202, status | 400 empty, 404 unknown session, 409 state |
+| `POST /answer` | `{question?, text, grant?: [..], session?}` (default: the oldest open question) | 202, status | 400 empty or bad grant, 404 unknown question, 409 nothing open or stopped |
+| `POST /cancel` | `{session?}` | 202, status | 409 `no turn in progress` |
 | `POST /stop` | none | 202, status | none |
 | `GET /status` | none | 200, status | none |
-| `GET /events?since=SEQ&limit=N&view=V` | none | 200, `application/x-ndjson`, events with `seq > SEQ` in view `V`; `since` defaults to 0, `limit` to 1000 (1 to 1000), `view` to `full` | 400 |
-| `WS /events?since=SEQ&view=V` | none | the backlog, then live events, in view `V`, one JSON object per text frame; ping every 30 s | upgrade refused with 400 (bad target or view), 401, 403 (Host, Origin, or the agent token), 404 (other path) |
-| `POST /ask` (agent token) | `{text, options?, recommend?}` | 201 `{id}` | 400 empty, 409 stopped |
-| `POST /gate` (agent token) | `{rule, command}` | 204 | none |
+| `GET /events?since=SEQ&limit=N&view=V&session=NAME` | none | 200, `application/x-ndjson`, events with `seq > SEQ` in view `V` (of one session with `session`); `since` defaults to 0, `limit` to 1000 (1 to 1000), `view` to `full` | 400 |
+| `WS /events?since=SEQ&view=V` | none | the backlog, then live events, in view `V`, one JSON object per text frame; ping every 30 s (no `session` filter: `follow --session` filters by `name`) | upgrade refused with 400 (bad target or view), 401, 403 (Host, Origin, or the agent token), 404 (other path) |
+| `POST /ask` (agent token) | `{text, options?, recommend?, session?}` | 201 `{id}` | 400 empty, 409 stopped |
+| `POST /gate` (agent token) | `{rule, command, session?}` | 204 | none |
 
 The agent token on any other route gets 403; an unknown route gets 404. Grants: `push`, `open-pr`, `deploy:<target>` (`deploy:[A-Za-z0-9_.-]+`). Errors share one body:
 `{"error":{"code":"<bad_request|unauthorized|forbidden|not_found|conflict|starting|internal>","message":"…"}}`;
@@ -233,14 +253,16 @@ The agent token on any other route gets 403; an unknown route gets 404. Grants: 
 ones: `{id, source, text, options, recommendation, asked}`, and `ports`, the published app ports
 read from Docker (`{"3100": "127.0.0.1:49213"}`, `{}` for none or a stopped container). `agentic status ID --json` prints it
 from the bridge when it is live, else builds the same object from the task files with the state
-derived as described under `status`.
+derived as described under `status`. It also carries `sessions`: `{name, session, model, state,
+reason, summary, inbox, fork_of, created, updated}` per session (`inbox` is a count); the top-level
+`state` is derived from them (see Sessions). `GET /sessions` returns the same list.
 
 ## Events
 
 One JSON object per line in `events.jsonl` and per WebSocket frame:
 
 ```json
-{"seq":42,"ts":"2026-10-12T10:00:00Z","task":"T-20261012-a3f1","session":"52e7…","agent":"claude",
+{"seq":42,"ts":"2026-10-12T10:00:00Z","task":"T-20261012-a3f1","session":"52e7…","name":"main","agent":"claude",
  "type":"tool","data":{"id":"toolu_…","title":"git push origin HEAD","kind":"execute","status":"failed",
  "output_tail":"…"}}
 ```
@@ -257,7 +279,8 @@ One JSON object per line in `events.jsonl` and per WebSocket frame:
 | `error` | `{message}` | bridge and agent errors, a failed notify webhook included |
 
 Not emitted in version 1: thoughts, usage, available commands, config options, session titles, and
-history replayed by `session/load`. `seq` increases by one per event and is the cursor.
+history replayed by `session/load`. `name` is the session's name (`null` for task-level events such
+as the task state). `seq` increases by one per event and is the cursor.
 
 Views (`view=` on `GET` and `WS /events`): `full`, the default, is every event; `status` is only
 `state`, `question`, `answer`, `error` and `message` with `final:true` (both roles, so prompts and
@@ -359,8 +382,9 @@ The gate runs as a `PreToolUse` hook (`hook.sh`, installed by start step `45-hoo
 ### Notify
 
 Every `state` event is appended as one line to `/events/events.jsonl` when `/events` is mounted.
-On `waiting`, `idle`, `failed` and `stopped`, when `AGENTIC_NOTIFY_WEBHOOK` is set, the bridge
-POSTs `{"task","project","state","question":{id,text,options,recommendation}|null,"summary",
+On `idle`, `failed` and `stopped`, and at once on every new question (whatever the task state;
+`waiting` itself no longer notifies), when `AGENTIC_NOTIFY_WEBHOOK` is set, the bridge
+POSTs `{"task","project","state","question":{id,text,options,recommendation}|null,"summary","session":"<name of the asking session>"|null,
 "reply":"agentic answer <ID> Q<n> \"…\"" (or `agentic send <ID> \"…\"` when no question is open),"ts"}` (5 s timeout, one retry). A failure goes to
 `bridge.log` and an `error` event; it never blocks. The host appends `interrupted` when `status`
 first derives it, to its own log `$AGENTIC_DATA/projects/<project>/events.jsonl`, not to the
