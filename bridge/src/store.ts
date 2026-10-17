@@ -5,6 +5,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { redactDeep } from "./redact.js";
+import { upgradeQuestion } from "./sessions.js";
 import type { Question, TaskEvent, TaskRecord } from "./types.js";
 
 export class StoreError extends Error {}
@@ -87,7 +88,7 @@ export class Store {
 
   readQuestions(): Question[] {
     const byId = new Map<string, Question>();
-    for (const q of this.readJsonl<Question>("questions.jsonl")) byId.set(q.id, q);
+    for (const q of this.readJsonl<Question>("questions.jsonl")) byId.set(q.id, upgradeQuestion(q));
     return [...byId.values()];
   }
 

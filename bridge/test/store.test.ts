@@ -4,17 +4,18 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Store, StoreError } from "../src/store.js";
 import { makeRedactor } from "../src/redact.js";
+import { newSession } from "../src/sessions.js";
 import type { TaskRecord, Question } from "../src/types.js";
 
 export function record(over: Partial<TaskRecord> = {}): TaskRecord {
   return {
     version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "starting", reason: "",
-    session: null, branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [], inbox: [],
+    session: null, branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [], sessions: [], capabilities: null,
     summary: "", stopped_by_user: false, scheduled: false, run_timeout: null, ...over,
   };
 }
 const ev = (type: "state" | "message" = "state") =>
-  ({ ts: "t", task: "T-1", session: null, agent: "claude" as const, type, data: { state: "running" } });
+  ({ ts: "t", task: "T-1", session: null, name: null, agent: "claude" as const, type, data: { state: "running" } });
 
 describe("Store", () => {
   let dir: string;
@@ -75,7 +76,7 @@ describe("Store", () => {
     const s = new Store(dir);
     expect(s.appendEvent(ev()).seq).toBe(2);
     expect(s.readEvents(0).map((e) => e.seq)).toEqual([1, 2]);
-    s.appendQuestion({ id: "Q9", source: "ask", text: "x", options: [], recommendation: null, asked: "t", status: "open" });
+    s.appendQuestion({ id: "Q9", source: "ask", text: "x", options: [], recommendation: null, asked: "t", status: "open", session: "main" });
     expect(s.readQuestions().map((q) => q.id)).toEqual(["Q9"]);
   });
 
@@ -98,7 +99,7 @@ describe("Store", () => {
 
   it("keeps the last line per question id", () => {
     const s = new Store(dir);
-    const q: Question = { id: "Q1", source: "ask", text: "Which DB?", options: [], recommendation: null, asked: "t", status: "open" };
+    const q: Question = { id: "Q1", source: "ask", text: "Which DB?", options: [], recommendation: null, asked: "t", status: "open", session: "main" };
     s.appendQuestion(q);
     s.appendQuestion({ ...q, status: "answered", answer: "postgres" });
     s.appendQuestion({ ...q, id: "Q2" });
@@ -109,9 +110,9 @@ describe("Store", () => {
     const s = new Store(dir, makeRedactor(["task-token-0123456789"]));
     const e = s.appendEvent({ ...ev("message"), data: { text: "use task-token-0123456789" } });
     expect(e.data.text).toBe("use [redacted]");
-    s.writeRecord(record({ inbox: [{ kind: "prompt", text: "sk-ant-api03-0123456789abcdef" }] }));
+    s.writeRecord(record({ sessions: [newSession("main", null, "t0", { inbox: [{ kind: "prompt", text: "sk-ant-api03-0123456789abcdef" }] })] }));
     expect(readFileSync(join(dir, "state.json"), "utf8")).not.toContain("sk-ant-api03");
-    s.appendQuestion({ id: "Q1", source: "ask", text: "key task-token-0123456789?", options: [], recommendation: null, asked: "t", status: "open" });
+    s.appendQuestion({ id: "Q1", source: "ask", text: "key task-token-0123456789?", options: [], recommendation: null, asked: "t", status: "open", session: "main" });
     expect(s.readQuestions()[0]?.text).toBe("key [redacted]?");
     s.appendTranscript("token task-token-0123456789\n");
     expect(readFileSync(join(dir, "transcript.md"), "utf8")).toBe("token [redacted]\n");

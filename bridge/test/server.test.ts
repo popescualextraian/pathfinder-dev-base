@@ -7,7 +7,7 @@ import type { ApiTarget } from "../src/api.js";
 import type { TaskEvent } from "../src/types.js";
 
 const tokens = { task: "task-token-0123456789", agent: "agent-token-0123456789" };
-const ev = (seq: number): TaskEvent => ({ seq, ts: "t", task: "T-1", session: null, agent: "claude", type: "state", data: { state: "idle" } });
+const ev = (seq: number): TaskEvent => ({ seq, ts: "t", task: "T-1", session: null, name: null, agent: "claude", type: "state", data: { state: "idle" } });
 let close: (() => Promise<void>) | null = null;
 afterEach(async () => { await close?.(); close = null; });
 

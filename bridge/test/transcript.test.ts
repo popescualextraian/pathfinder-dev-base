@@ -3,7 +3,7 @@ import { renderEvent } from "../src/transcript.js";
 import type { TaskEvent } from "../src/types.js";
 
 const e = (type: TaskEvent["type"], data: Record<string, unknown>): TaskEvent =>
-  ({ seq: 1, ts: "t", task: "T-1", session: null, agent: "claude", type, data });
+  ({ seq: 1, ts: "t", task: "T-1", session: null, name: null, agent: "claude", type, data });
 
 describe("renderEvent", () => {
   it("quotes user text and prints the final agent message only", () => {

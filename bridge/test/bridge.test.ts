@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ import { Notifier } from "../src/notify.js";
 import { makeRedactor } from "../src/redact.js";
 import { startServer } from "../src/server.js";
 import { NO_SUMMARY, SCHEDULED_NOTE, SUMMARY_PROMPT, TIMEOUT_NOTE } from "../src/scheduled.js";
+import { newSession } from "../src/sessions.js";
 import { Store } from "../src/store.js";
 import type { State, TaskEvent } from "../src/types.js";
 
@@ -38,7 +39,7 @@ async function start(dir: string, extra: Record<string, string> = {},
         fetch: (async (_u: unknown, init?: RequestInit) => { bodies.push(JSON.parse(String(init?.body))); return new Response(null, { status: 204 }); }) as typeof fetch }
       : { eventsLog: null, webhook: null, project: "demo", log: () => {} }),
     agentFactory: (hooks, cwd) => { cwds.push(cwd); return new AgentProcess(harnessFor("claude", { model: null, acpCmd: cfg.acpCmd }),
-      { cwd, env: { ...agentEnv, FAKE_AGENT_STATE: join(dir, "fake") }, paragraph: "Use agentic-ask.", model: null }, hooks); },
+      { cwd, env: { ...agentEnv, FAKE_AGENT_STATE: join(dir, "fake") }, paragraph: "Use agentic-ask." }, hooks); },
     worktree: (args) => { wt.push(args); return worktree(args); },
     release: () => { released++; },
     exit: (code) => exits.push(code), now: () => new Date().toISOString(), log: () => {},
@@ -84,7 +85,7 @@ describe("Bridge", () => {
     const dir = taskDir();
     const { bridge, store } = await start(dir);
     await waitState(bridge, "idle");
-    expect(store.readEvents(0).filter((e) => e.type === "state").map((e) => e.data.state)).toEqual(["starting", "running", "idle"]);
+    expect(store.readEvents(0).filter((e) => e.type === "state" && e.name === null).map((e) => e.data.state)).toEqual(["starting", "running", "idle"]);
     expect(finals(store)).toEqual(["echo: Fix the login bug"]);
     expect(bridge.status()).toMatchObject({ state: "idle", summary: "echo: Fix the login bug", inbox: 0, questions: [] });
     expect(readFileSync(join(dir, "transcript.md"), "utf8")).toContain("> Fix the login bug");
@@ -127,7 +128,8 @@ describe("Bridge", () => {
     const a = await start(dir, { AGENTIC_IDLE_TIMEOUT: "0.3" });
     await waitState(a.bridge, "suspended");
     const rec = JSON.parse(readFileSync(join(dir, "state.json"), "utf8"));
-    writeFileSync(join(dir, "state.json"), JSON.stringify({ ...rec, session: "gone" }));
+    rec.sessions[0].session = "gone";
+    writeFileSync(join(dir, "state.json"), JSON.stringify(rec));
     const b = await start(dir);
     b.bridge.command({ kind: "userPrompt", text: "go on" });
     await waitState(b.bridge, "idle");
@@ -196,10 +198,11 @@ class StubAgent implements AgentLike {
   cancels = 0;
   killed = false;
   constructor(readonly hooks: AgentHooks, private readonly script: Array<(text: string) => Promise<string>>) {}
-  async start() {}
+  async start() { return { fork: true }; }
   async newSession() { return "s1"; }
   async loadSession() {}
-  prompt(text: string) { this.prompts.push(text); return (this.script.shift() ?? (async () => "end_turn"))(text); }
+  async forkSession() { return "s2"; }
+  prompt(_session: string, text: string) { this.prompts.push(text); return (this.script.shift() ?? (async () => "end_turn"))(text); }
   cancel() { this.cancels++; }
   async kill() { this.killed = true; }
 }
@@ -235,7 +238,7 @@ describe("Bridge with a scripted agent", () => {
     script.push(() => new Promise<string>((r) => { finish = r; }));
     bridge.boot();
     await waitState(bridge, "running");
-    const ask = { title: "t", command: "git push", options: [{ optionId: "a", name: "Yes", kind: "allow_once" }] };
+    const ask = { sessionId: "s1", title: "t", command: "git push", options: [{ optionId: "a", name: "Yes", kind: "allow_once" }] };
     const pending = agents[0]!.hooks.onPermission(ask);
     expect(bridge.status()).toMatchObject({ state: "waiting", questions: [{ id: "Q1" }] });
     expect(bridge.command({ kind: "cancel" })).toMatchObject({ ok: true });
@@ -251,7 +254,7 @@ describe("Bridge with a scripted agent", () => {
     const { bridge, agents } = await stubbed();
     bridge.boot();
     await waitState(bridge, "idle");
-    const r = await agents[0]!.hooks.onPermission({ title: "t", command: "c", options: [] });
+    const r = await agents[0]!.hooks.onPermission({ sessionId: "s1", title: "t", command: "c", options: [] });
     expect(r).toBeNull();
     expect(bridge.status().questions).toEqual([]);
   });
@@ -264,7 +267,7 @@ describe("Bridge with a scripted agent", () => {
     expect(bridge.command({ kind: "userPrompt", text: "please keep me" })).toMatchObject({ ok: true });
     await waitState(bridge, "failed");
     expect(bridge.status()).toMatchObject({ state: "failed", reason: expect.stringContaining("pipe broke"), inbox: 1 });
-    expect(JSON.parse(readFileSync(join(stubDir, "state.json"), "utf8")).inbox[0].text).toBe("please keep me");
+    expect(JSON.parse(readFileSync(join(stubDir, "state.json"), "utf8")).sessions[0].inbox[0].text).toBe("please keep me");
     expect(await exited(exits)).toEqual([1]);
     expect(agents[0]!.killed).toBe(true);
   });
@@ -339,7 +342,7 @@ describe("Bridge with a scripted agent", () => {
     const now = new Date().toISOString();
     store.writeRecord({ version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "suspended",
       reason: "idle timeout", session: "s1", branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [],
-      inbox: [], summary: "", stopped_by_user: false, scheduled: false, run_timeout: null });
+      sessions: [newSession("main", null, now, { session: "s1" })], capabilities: null, summary: "", stopped_by_user: false, scheduled: false, run_timeout: null });
     bridge.boot();
     await tick(150);
     expect(bridge.command({ kind: "answer", question: "Q9", text: "x", grant: [] })).toMatchObject({ ok: false, code: "not_found" });
@@ -565,5 +568,178 @@ describe("scheduled runs", () => {
     const stopped = bodies.find((b) => b.state === "stopped");
     expect(stopped?.result).toBe(`echo: ${SUMMARY_PROMPT}`);
     expect(bodies.filter((b) => b.state === "idle").every((b) => !("result" in b))).toBe(true);
+  });
+});
+
+const named = (store: Store, name: string) => store.readEvents(0)
+  .filter((e) => e.type === "message" && e.data.role === "agent" && e.data.final && e.name === name).map((e) => e.data.text);
+async function until(cond: () => boolean, what = "condition"): Promise<void> {
+  for (let i = 0; i < 500; i++) { if (cond()) return; await tick(20); }
+  throw new Error(`timeout waiting for ${what}`);
+}
+const view = (bridge: Bridge, name: string) => bridge.sessions().find((s) => s.name === name);
+const add = (bridge: Bridge, name: string, text: string | null, over: { model?: string; fork?: string } = {}) =>
+  bridge.command({ kind: "addSession", name, model: over.model ?? null, fork: over.fork ?? null, text });
+const agentFinal = (e: TaskEvent, name: string) => e.type === "message" && e.data.role === "agent" && !!e.data.final && e.name === name;
+
+describe("sessions", () => {
+  it("two sessions run in parallel and both reach idle", async () => {
+    const { bridge, store } = await start(taskDir("SLEEP:300"));
+    expect(add(bridge, "b", "SLEEP:300")).toMatchObject({ ok: true });
+    await until(() => named(store, "main").length === 1 && named(store, "b").length === 1, "both turns");
+    await waitState(bridge, "idle");
+    const evs = store.readEvents(0);
+    expect(named(store, "main")).toEqual(["slept"]);
+    expect(named(store, "b")).toEqual(["slept"]);
+    // b's tool started before main's turn ended: the turns overlapped
+    const bTool = evs.find((e) => e.type === "tool" && e.name === "b");
+    const mainEnd = evs.find((e) => agentFinal(e, "main"));
+    expect(bTool && mainEnd && bTool.seq < mainEnd.seq).toBe(true);
+    expect(bTool?.session).toBe(view(bridge, "b")?.session);
+    expect(evs.filter((e) => e.type === "state" && e.name === null).map((e) => e.data.state)).toEqual(["starting", "running", "idle"]);
+    expect(bridge.status()).toMatchObject({ state: "idle", inbox: 0, sessions: [{ name: "main", state: "idle" }, { name: "b", state: "idle" }] });
+    const onlyB = bridge.events(0, 1000, (e) => e.name === "b");
+    expect(onlyB.length).toBeGreaterThan(0);
+    expect(onlyB.every((e) => e.name === "b")).toBe(true);
+  });
+
+  it("a second session uses its own model", async () => {
+    const { bridge, store } = await start(taskDir("MODEL"));
+    await waitState(bridge, "idle");
+    add(bridge, "b", "MODEL", { model: "m2" });
+    await until(() => named(store, "b").length === 1, "b's turn");
+    expect(named(store, "b")).toEqual(["model: m2"]);
+    expect(named(store, "main")).toEqual(["model: none"]);
+    expect(view(bridge, "b")?.model).toBe("m2");
+  });
+
+  it("fork copies main's conversation", async () => {
+    const { bridge, store } = await start(taskDir("hello"));
+    await waitState(bridge, "idle");
+    expect(add(bridge, "b", "HISTORY", { fork: "main" })).toMatchObject({ ok: true });
+    await until(() => named(store, "b").length === 1, "the fork's turn");
+    expect(named(store, "b")).toEqual(["history: 2"]);
+    expect(view(bridge, "b")?.fork_of).toBe("main");
+    expect(view(bridge, "b")?.session).not.toBe(view(bridge, "main")?.session);
+  });
+
+  it("fork on an agent without fork is refused with the exact text", async () => {
+    vi.stubEnv("FAKE_NO_FORK", "1");
+    try {
+      const { bridge } = await start(taskDir("hello"));
+      await waitState(bridge, "idle");
+      expect(add(bridge, "b", null, { fork: "main" })).toEqual({ ok: false, code: "conflict", message: "claude does not support forking a session" });
+      expect(bridge.sessions().map((s) => s.name)).toEqual(["main"]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("an ask through agentic-ask's session id reaches the asking session", async () => {
+    const { bridge, store } = await start(taskDir("hello"));
+    await waitState(bridge, "idle");
+    add(bridge, "b", null);
+    await until(() => !!view(bridge, "b")?.session && view(bridge, "b")?.state === "idle", "b open");
+    const sessionId = view(bridge, "b")?.session ?? "";
+    expect(bridge.command({ kind: "ask", text: "Which DB?", options: [], recommend: null, sessionId })).toMatchObject({ ok: true, value: { id: "Q1" } });
+    expect(bridge.status().questions).toMatchObject([{ id: "Q1", session: "b" }]);
+    expect(view(bridge, "b")?.state).toBe("waiting");
+    bridge.command({ kind: "answer", text: "pg", grant: [] });
+    await until(() => named(store, "b").length === 1, "b's answer turn");
+    expect(named(store, "b")).toEqual(["echo: Answer to Q1: pg"]);
+    expect(named(store, "main")).toEqual(["echo: hello"]);
+  });
+
+  it("the webhook fires on a question while another session runs", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const { bridge } = await start(taskDir("SLEEP:20000"), {}, undefined, {}, bodies);
+    add(bridge, "b", "PERMISSION:git push");
+    await until(() => bodies.some((b) => b.question), "the question's webhook");
+    expect(bodies.filter((b) => b.question)).toMatchObject([{ state: "running", question: { id: "Q1" } }]);
+    expect(bridge.status()).toMatchObject({ state: "running", questions: [{ id: "Q1", session: "b", source: "permission" }] });
+    bridge.command({ kind: "cancel", session: "b" });
+    bridge.command({ kind: "cancel" });
+    await waitState(bridge, "idle");
+    await tick(50);
+    expect(bodies.filter((b) => b.question)).toHaveLength(1);
+  });
+
+  it("suspend and resume reload only the prompted session", async () => {
+    const dir = taskDir("hello");
+    const a = await start(dir, { AGENTIC_IDLE_TIMEOUT: "0.3" });
+    add(a.bridge, "b", "hello b");
+    await waitState(a.bridge, "suspended");
+    const ids = Object.fromEntries(a.store.readRecord().sessions.map((s) => [s.name, s.session]));
+    expect(ids.main && ids.b).toBeTruthy();
+    const loads = vi.spyOn(AgentProcess.prototype, "loadSession");
+    try {
+      const b = await start(dir);
+      b.bridge.command({ kind: "userPrompt", text: "HISTORY" });
+      await until(() => named(b.store, "main").length === 2, "main's turn");
+      await waitState(b.bridge, "idle");
+      expect(loads.mock.calls.map((c) => c[0])).toEqual([ids.main]);
+      expect(named(b.store, "main").at(-1)).toBe("history: 2");
+      expect(view(b.bridge, "b")).toMatchObject({ state: "idle", session: ids.b });
+    } finally {
+      loads.mockRestore();
+    }
+  });
+
+  it("a lost non-main session fails alone; main's loss still falls back with the seed", async () => {
+    const dir = taskDir("hello");
+    const a = await start(dir, { AGENTIC_IDLE_TIMEOUT: "0.3" });
+    add(a.bridge, "b", "hello b");
+    await waitState(a.bridge, "suspended");
+    const rec = JSON.parse(readFileSync(join(dir, "state.json"), "utf8"));
+    rec.sessions[0].session = "gone";
+    rec.sessions[1].session = "gone-b";
+    writeFileSync(join(dir, "state.json"), JSON.stringify(rec));
+    const b = await start(dir);
+    b.bridge.command({ kind: "userPrompt", text: "x", session: "b" });
+    await until(() => view(b.bridge, "b")?.state === "failed", "b failed");
+    expect(view(b.bridge, "b")?.reason).toMatch(/^its conversation could not be restored: /);
+    expect(b.bridge.command({ kind: "userPrompt", text: "y", session: "b" })).toMatchObject({ ok: false, code: "conflict" });
+    expect(view(b.bridge, "main")?.state).toBe("idle");
+    b.bridge.command({ kind: "userPrompt", text: "go on" });
+    await until(() => named(b.store, "main").length === 2, "main's turn");
+    expect(String(named(b.store, "main").at(-1))).toMatch(/^echo: Original task:\nhello/);
+    expect(b.store.readEvents(0).some((e) => e.type === "error" && e.name === "main" && String(e.data.message).includes("could not be loaded"))).toBe(true);
+    expect(named(b.store, "b")).toEqual(["echo: hello b"]);
+  });
+
+  it("an old record without sessions boots and resumes", async () => {
+    const dir = taskDir("hello");
+    cpSync(fileURLToPath(new URL("./fixtures/old-task", import.meta.url)), dir, { recursive: true });
+    const old = JSON.parse(readFileSync(join(dir, "state.json"), "utf8"));
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ ...old, work: dir })); // the agent starts in work
+    mkdirSync(join(dir, "fake"));
+    writeFileSync(join(dir, "fake", "old-1.json"), JSON.stringify({ history: [{ role: "user", text: "hi" }, { role: "agent", text: "echo: hi" }], meta: null, mode: "default", lastRefused: null }));
+    const { bridge, store } = await start(dir);
+    expect(bridge.status()).toMatchObject({ state: "suspended", inbox: 0, summary: "did it",
+      sessions: [{ name: "main", session: "old-1", state: "idle", inbox: 0, summary: "did it" }] });
+    bridge.command({ kind: "userPrompt", text: "HISTORY" });
+    await until(() => named(store, "main").length === 1, "main's turn");
+    expect(named(store, "main")).toEqual(["history: 2"]);
+    expect(store.readQuestions()[0]?.session).toBe("main");
+    expect(store.readRecord().sessions[0]?.session).toBe("old-1");
+  });
+
+  it("auto-clean waits until every session is idle", async () => {
+    const { bridge, store, exits } = await start(taskDir("SLEEP:100"), { AGENTIC_AUTO_CLEAN: "1" });
+    add(bridge, "b", "SLEEP:600");
+    expect(await exited(exits)).toEqual([0]);
+    const evs = store.readEvents(0);
+    const bEnd = evs.find((e) => agentFinal(e, "b"));
+    const stopped = evs.find((e) => e.type === "state" && e.name === null && e.data.state === "stopped");
+    expect(bEnd && stopped && bEnd.seq < stopped.seq).toBe(true);
+    expect(store.readRecord().cleaned).toBe(true);
+  });
+
+  it("a stopped task shows no live session state", async () => {
+    const { bridge } = await start(taskDir("SLEEP:20000"));
+    await waitState(bridge, "running");
+    bridge.command({ kind: "stop" });
+    expect(bridge.sessions()[0]?.state).toBe("stopped");
+    expect(bridge.status().sessions).toMatchObject([{ name: "main", state: "stopped" }]);
   });
 });

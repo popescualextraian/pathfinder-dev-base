@@ -34,7 +34,7 @@ async function serve(): Promise<void> {
   const bridge = new Bridge({
     store, config: cfg, paragraph, log, now: () => new Date().toISOString(),
     notifier: new Notifier({ eventsLog, webhook: cfg.webhook, project: cfg.project, log }),
-    agentFactory: (hooks, cwd) => new AgentProcess(spec, { cwd, env, paragraph, model: cfg.model }, hooks),
+    agentFactory: (hooks, cwd) => new AgentProcess(spec, { cwd, env, paragraph }, hooks),
     worktree: (args) => {
       const r = spawnSync("bash", [join(agentic, "task", "worktree.sh"), ...args], { encoding: "utf8" });
       return { ok: r.status === 0, out: r.stdout ?? "", err: r.stderr ?? "" };

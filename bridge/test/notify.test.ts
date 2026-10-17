@@ -6,8 +6,8 @@ import { Notifier, notifyPayload } from "../src/notify.js";
 import type { Question, TaskRecord } from "../src/types.js";
 
 const rec = { version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "waiting", reason: "question Q1",
-  session: "s", branch: "b", target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t", updated: "t", seq: 3, allowed_actions: [], inbox: [], summary: "Need a DB", stopped_by_user: false, scheduled: false, run_timeout: null } as TaskRecord;
-const q: Question = { id: "Q1", source: "ask", text: "Which DB?", options: ["pg"], recommendation: "pg", asked: "t", status: "open" };
+  session: "s", branch: "b", target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t", updated: "t", seq: 3, allowed_actions: [], sessions: [], capabilities: null, summary: "Need a DB", stopped_by_user: false, scheduled: false, run_timeout: null } as TaskRecord;
+const q: Question = { id: "Q1", source: "ask", text: "Which DB?", options: ["pg"], recommendation: "pg", asked: "t", status: "open", session: "main" };
 
 describe("notify", () => {
   it("adds the result, at most 4 KB, only when one is given", () => {

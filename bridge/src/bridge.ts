@@ -10,7 +10,8 @@ import { TaskMachine, type Effect, type Input, type Outcome } from "./task.js";
 import { NO_SUMMARY, SCHEDULED_NOTE, SUMMARY_PROMPT, TIMEOUT_NOTE } from "./scheduled.js";
 import { renderEvent } from "./transcript.js";
 import { makeRedactor, redactDeep } from "./redact.js";
-import type { EventType, Question, TaskEvent, TaskRecord } from "./types.js";
+import { MAIN, newSession, sessionView, upgradeRecord, type SessionView } from "./sessions.js";
+import type { EventType, Question, State, TaskEvent, TaskRecord } from "./types.js";
 
 export class BridgeError extends Error {}
 
@@ -30,10 +31,12 @@ export interface BridgeDeps {
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+const TERMINAL: State[] = ["stopped", "suspended", "failed", "interrupted"];
+const LIVE: State[] = ["starting", "running", "waiting"];
 
 export class Bridge implements ApiTarget {
   private machine: TaskMachine | null = null;
-  private readonly mapper = new UpdateMapper();
+  private readonly mappers = new Map<string, UpdateMapper>(); // per session name
   private agent: AgentLike | null = null;
   private readonly listeners = new Set<(e: TaskEvent) => void>();
   private readonly waiters = new Map<string, (optionId: string | null) => void>();
@@ -83,11 +86,12 @@ export class Bridge implements ApiTarget {
         version: 1, task: config.task, project: config.project, agent: config.agent, model: config.model, state: "starting",
         reason: "", session: null, branch: config.worktree ? config.branch : null,
         target: config.target, work, worktree, container: config.container, created_container: config.createdContainer, auto_clean: config.autoClean, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
-        inbox: [{ kind: "prompt", text: config.scheduled ? `${prompt}${SCHEDULED_NOTE}` : prompt }], summary: "", stopped_by_user: false,
+        sessions: [newSession(MAIN, config.model, now, { inbox: [{ kind: "prompt", text: config.scheduled ? `${prompt}${SCHEDULED_NOTE}` : prompt }] })],
+        capabilities: null, summary: "", stopped_by_user: false,
         scheduled: config.scheduled, run_timeout: config.scheduled ? config.runTimeoutMs / 1000 : null,
       };
     } else {
-      record = store.readRecord();
+      record = upgradeRecord(store.readRecord());
       if (typeof record.work !== "string") record.work = config.work;
       record.cleaned = record.cleaned === true;
       record.created_container = record.created_container === true;
@@ -96,7 +100,7 @@ export class Bridge implements ApiTarget {
     }
     // all questions, answered ones too: the next question id counts them all
     this.machine = new TaskMachine(record, store.readQuestions(), this.d.now);
-    this.flush = setInterval(() => this.emitMapped(this.mapper.flushPartial()), 1000);
+    this.flush = setInterval(() => { for (const [name, mp] of this.mappers) this.emitMapped(name, mp.flushPartial()); }, 1000);
     if (fresh && config.scheduled) {
       this.phase = "work";
       this.runTimer = setTimeout(() => this.onRunTimeout(), config.runTimeoutMs);
@@ -110,12 +114,23 @@ export class Bridge implements ApiTarget {
 
   status(): Record<string, unknown> {
     const m = this.m();
-    const { inbox, ...rest } = m.record;
+    const { sessions, ...rest } = m.record;
     return redactDeep({
       ...rest,
-      inbox: inbox.length,
-      questions: m.openQuestions().map((q) => ({ id: q.id, source: q.source, text: q.text, options: q.options, recommendation: q.recommendation, asked: q.asked })),
+      sessions: this.sessions(),
+      inbox: sessions.reduce((n, s) => n + s.inbox.length, 0),
+      questions: m.openQuestions().map((q) => ({ id: q.id, source: q.source, text: q.text, options: q.options, recommendation: q.recommendation, asked: q.asked, session: q.session })),
     }, this.redact);
+  }
+
+  // sessions: the views; a task in a terminal state shows that state instead of a stale live one
+  sessions(): SessionView[] {
+    const rec = this.m().record;
+    const end = TERMINAL.includes(rec.state);
+    return redactDeep(rec.sessions.map((s) => {
+      const v = sessionView(s);
+      return end && LIVE.includes(v.state) ? { ...v, state: rec.state } : v;
+    }), this.redact);
   }
 
   command(input: Input): Outcome {
@@ -173,15 +188,16 @@ export class Bridge implements ApiTarget {
     this.d.store.writeRecord(m.record);
     if (input.kind !== "idleTimeout") this.touch();
     if (this.phase === "off" && this.cleanable(input)) this.autoClean();
-    if (input.kind === "turnEnd" && (this.phase === "work" || this.phase === "summary")) this.scheduledStep();
+    if (input.kind === "turnEnd" && input.name === MAIN && (this.phase === "work" || this.phase === "summary")) this.scheduledStep();
     return out;
   }
 
-  // cleanable: auto-clean is on and a turn just ended normally with nothing left to do.
+  // cleanable: auto-clean is on and a turn just ended normally with nothing left to do in any session
+  // (a derived idle means no session runs, starts or waits).
   private cleanable(input: Input): boolean {
     const m = this.m();
     return this.d.config.autoClean && input.kind === "turnEnd" && input.stopReason !== "cancelled"
-      && m.record.state === "idle" && m.record.inbox.length === 0 && m.openQuestions().length === 0 && !m.record.cleaned;
+      && m.record.state === "idle" && m.record.sessions.every((s) => s.inbox.length === 0) && m.openQuestions().length === 0 && !m.record.cleaned;
   }
 
   // autoClean: removes the worktree (refusing unpushed work), then stops the task; the exit releases
@@ -191,7 +207,7 @@ export class Bridge implements ApiTarget {
     if (rec.worktree && rec.branch) {
       const r = this.d.worktree(["remove", this.d.config.work, rec.task, rec.branch]);
       if (!r.ok) {
-        this.emit("error", { message: `auto-clean kept the task: ${(r.err || r.out).trim()}` });
+        this.emit("error", { message: `auto-clean kept the task: ${(r.err || r.out).trim()}` }, null);
         return false;
       }
     }
@@ -203,7 +219,7 @@ export class Bridge implements ApiTarget {
   // scheduledStep: after the work turn, the summary prompt; after the summary turn, the end.
   private scheduledStep(): void {
     const m = this.m();
-    if (m.promptOutstanding || m.record.state === "stopped" || m.record.state === "failed") return;
+    if (m.busy(MAIN) || m.record.state === "stopped" || m.record.state === "failed") return;
     if (this.phase === "work") {
       this.phase = "summary";
       this.run({ kind: "userPrompt", text: this.timedOut ? `${TIMEOUT_NOTE}\n\n${SUMMARY_PROMPT}` : SUMMARY_PROMPT });
@@ -218,11 +234,11 @@ export class Bridge implements ApiTarget {
     this.runTimer = null;
     if (this.down || this.phase === "off" || this.phase === "done") return;
     this.timedOut = true;
-    this.emit("error", { message: "the run timed out; asking for the summary" });
+    this.emit("error", { message: "the run timed out; asking for the summary" }, null);
     this.graceTimer = setTimeout(() => this.onGraceEnd(), this.d.config.summaryGraceMs);
     const m = this.m();
     if (this.phase !== "work") return;
-    if (m.promptOutstanding) this.run({ kind: "cancel" });
+    if (m.busy(MAIN)) this.run({ kind: "cancel" });
     else {
       this.phase = "summary";
       this.run({ kind: "userPrompt", text: `${TIMEOUT_NOTE}\n\n${SUMMARY_PROMPT}` });
@@ -248,7 +264,7 @@ export class Bridge implements ApiTarget {
     this.phase = "done";
     this.resultText = result;
     // a result that cannot be written (disk full) must not keep the run alive
-    try { this.d.store.writeResult(result); } catch (err) { this.emit("error", { message: `could not write result.md: ${message(err)}` }); }
+    try { this.d.store.writeResult(result); } catch (err) { this.emit("error", { message: `could not write result.md: ${message(err)}` }, null); }
     if (this.d.config.autoClean && this.autoClean(reason)) return;
     this.run({ kind: "stop", reason, byUser: false });
   }
@@ -263,7 +279,7 @@ export class Bridge implements ApiTarget {
 
   private perform(e: Effect): void {
     switch (e.kind) {
-      case "emit": this.emit(e.type, e.data); break;
+      case "emit": this.emit(e.type, e.data, e.name); break;
       case "question": this.d.store.appendQuestion(e.question); break;
       case "timer": if (e.on) this.armIdle(); else this.disarmIdle(); break;
       case "notify": {
@@ -272,18 +288,19 @@ export class Bridge implements ApiTarget {
         const result = rec.scheduled && this.resultText !== null && (rec.state === "stopped" || rec.state === "failed")
           ? this.redact(this.resultText.trim()) : null;
         const p = this.d.notifier.webhook(redactDeep(rec, this.redact), q, result)
-          .then((ok) => { if (!ok) this.emit("error", { message: "webhook delivery failed after a retry" }); })
+          .then((ok) => { if (!ok) this.emit("error", { message: "webhook delivery failed after a retry" }, null); })
           .catch((err) => this.log(`webhook failed: ${message(err)}`))
           .finally(() => this.webhooks.delete(p));
         this.webhooks.add(p);
         break;
       }
-      case "spawn": void this.spawn(e.mode).catch((err) => this.log(`spawn failed: ${message(err)}`)); break;
+      case "startAgent": void this.startAgent().catch((err) => this.log(`agent start failed: ${message(err)}`)); break;
+      case "open": void this.open(e.name, e.mode, e.from, e.model).catch((err) => this.log(`open failed: ${message(err)}`)); break;
       case "prompt":
-        this.emit("message", { role: "user", text: e.text, final: true });
-        void this.prompt(e.text).catch((err) => this.log(`prompt failed: ${message(err)}`));
+        this.emit("message", { role: "user", text: e.text, final: true }, e.name);
+        void this.prompt(e.name, e.session, e.text).catch((err) => this.log(`prompt failed: ${message(err)}`));
         break;
-      case "cancel": this.agent?.cancel(); break;
+      case "cancel": this.agent?.cancel(e.session); break;
       case "permission": {
         // a recorded request, or the one being raised right now (cancelling: answered, never recorded)
         const w = this.waiters.get(e.question);
@@ -312,7 +329,12 @@ export class Bridge implements ApiTarget {
 
   private hooks(self: () => AgentLike | null): AgentHooks {
     return {
-      onUpdate: (u) => { if (this.agent === self()) this.emitMapped(this.mapper.handle(u)); },
+      onUpdate: (sessionId, u) => {
+        if (this.agent !== self()) return;
+        // an id no session holds (yet) is dropped, never mis-tagged
+        const name = this.m().record.sessions.find((s) => s.session === sessionId)?.name;
+        if (name) this.emitMapped(name, this.mapper(name).handle(u));
+      },
       onPermission: (req) => new Promise((resolve) => {
         // While cancelling, the machine answers at once with a permission effect for a question it
         // does not record; `incoming` lets perform() resolve this very request from that effect.
@@ -338,28 +360,15 @@ export class Bridge implements ApiTarget {
     };
   }
 
-  private async spawn(mode: "new" | "load"): Promise<void> {
+  // startAgent: one agent process for every session; agentStarted makes the machine open them.
+  private async startAgent(): Promise<void> {
     let agent: AgentLike | null = null;
     agent = this.d.agentFactory(this.hooks(() => agent), this.m().record.work);
     this.agent = agent;
-    const rec = this.m().record;
     try {
-      await agent.start();
-      let session: string;
-      if (mode === "load" && rec.session) {
-        try {
-          await agent.loadSession(rec.session);
-          session = rec.session;
-        } catch (err) {
-          this.emit("error", { message: `session ${rec.session} could not be loaded (${message(err)}); started a new session with the task history` });
-          session = await agent.newSession();
-          rec.inbox.unshift({ kind: "prompt", text: this.seed() });
-        }
-      } else {
-        session = await agent.newSession();
-      }
+      const capabilities = await agent.start();
       if (this.agent !== agent) return;
-      this.run({ kind: "agentReady", session });
+      this.run({ kind: "agentStarted", capabilities });
     } catch (err) {
       if (this.agent !== agent) return;
       this.agent = null;
@@ -368,12 +377,37 @@ export class Bridge implements ApiTarget {
     }
   }
 
-  private async prompt(text: string): Promise<void> {
+  // open: a session's conversation in the live agent. A failed load of main falls back to a new
+  // session seeded with the task history (spec D12); any other failure loses that session alone.
+  private async open(name: string, mode: "new" | "load" | "fork", from: string | null, model: string | null): Promise<void> {
+    const agent = this.agent;
+    if (!agent) return;
+    const id = this.m().record.sessions.find((s) => s.name === name)?.session ?? null;
+    let input: Input;
+    try {
+      if (mode === "fork" && from) input = { kind: "sessionReady", name, session: await agent.forkSession(from, model) };
+      else if (mode === "load" && id) {
+        try {
+          await agent.loadSession(id, model);
+          input = { kind: "sessionReady", name, session: id };
+        } catch (err) {
+          if (name !== MAIN) throw err;
+          this.emit("error", { message: `session ${id} could not be loaded (${message(err)}); started a new session with the task history` }, MAIN);
+          input = { kind: "sessionReady", name, session: await agent.newSession(model), seed: this.seed() };
+        }
+      } else input = { kind: "sessionReady", name, session: await agent.newSession(model) };
+    } catch (err) {
+      input = { kind: "sessionLost", name, error: message(err) };
+    }
+    if (this.agent === agent) this.run(input);
+  }
+
+  private async prompt(name: string, session: string, text: string): Promise<void> {
     const agent = this.agent;
     if (!agent) return;
     let stopReason: string;
     try {
-      stopReason = await agent.prompt(text);
+      stopReason = await agent.prompt(session, text);
     } catch (err) {
       // A rejection from a live agent fails the task (spec §6). If the child's exit got here first the
       // agent is already gone and this is ignored; the machine ignores a second agentExit anyway.
@@ -384,10 +418,16 @@ export class Bridge implements ApiTarget {
       return;
     }
     if (this.agent !== agent) return;
-    const { events, summary } = this.mapper.finishTurn();
-    this.emitMapped(events);
-    this.lastTurn = summary;
-    this.run({ kind: "turnEnd", stopReason, summary });
+    const { events, summary } = this.mapper(name).finishTurn();
+    this.emitMapped(name, events);
+    if (name === MAIN) this.lastTurn = summary;
+    this.run({ kind: "turnEnd", name, stopReason, summary });
+  }
+
+  private mapper(name: string): UpdateMapper {
+    let mp = this.mappers.get(name);
+    if (!mp) this.mappers.set(name, mp = new UpdateMapper());
+    return mp;
   }
 
   // seed: the first prompt of a replacement session (spec §6, Resume).
@@ -398,13 +438,15 @@ export class Bridge implements ApiTarget {
     return `Original task:\n${this.d.store.readPrompt() ?? this.d.config.prompt ?? ""}\n\nQuestions and answers so far:\n${qa}\n\nRecent commits:\n${log}\n\nThe earlier session could not be restored. Check git status and continue the task.`;
   }
 
-  private emitMapped(list: Mapped[]): void {
-    for (const e of list) this.emit(e.type, e.data);
+  private emitMapped(name: string, list: Mapped[]): void {
+    for (const e of list) this.emit(e.type, e.data, name);
   }
 
-  private emit(type: EventType, data: Record<string, unknown>): void {
+  // emit: an event of one session (name) or of the task (null); `session` is that session's ACP id.
+  private emit(type: EventType, data: Record<string, unknown>, name: string | null): void {
     const m = this.m();
-    const ev = this.d.store.appendEvent({ ts: this.d.now(), task: m.record.task, session: m.record.session, agent: m.record.agent, type, data });
+    const session = name === null ? null : m.record.sessions.find((s) => s.name === name)?.session ?? null;
+    const ev = this.d.store.appendEvent({ ts: this.d.now(), task: m.record.task, session, name, agent: m.record.agent, type, data });
     const md = renderEvent(ev);
     if (md) this.d.store.appendTranscript(md);
     if (type === "state") this.d.notifier.logState(redactDeep(m.record, this.redact));

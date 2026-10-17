@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { follow, formatEvent } from "../src/follow.js";
 import type { TaskEvent } from "../src/types.js";
 
-const e = (type: TaskEvent["type"], data: Record<string, unknown>): TaskEvent => ({ seq: 7, ts: "t", task: "T-1", session: null, agent: "claude", type, data });
+const e = (type: TaskEvent["type"], data: Record<string, unknown>): TaskEvent => ({ seq: 7, ts: "t", task: "T-1", session: null, name: null, agent: "claude", type, data });
 
 describe("formatEvent", () => {
   it("replaces control characters from the agent, keeping newline and tab", () => {

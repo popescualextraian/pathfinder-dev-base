@@ -1,12 +1,12 @@
 // Named agent sessions of one task: records, names, the upgrade of old records (spec D5, D13).
-import type { Question, SessionRecord, SessionState, TaskRecord } from "./types.js";
+import type { Question, SessionRecord, SessionState, State, TaskRecord } from "./types.js";
 
 export const MAIN = "main";
 export const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 export const MAX_SESSIONS = 16;
 
 export interface SessionView {
-  name: string; session: string | null; model: string | null; state: SessionState; reason: string;
+  name: string; session: string | null; model: string | null; state: State; reason: string;
   summary: string; inbox: number; fork_of: string | null; created: string; updated: string;
 }
 
