@@ -12,6 +12,7 @@
 //   anything else     replies "echo: <prompt>"
 //   A first prompt carries a scheduled note after "\n\n[scheduled run]\n"; it is ignored.
 //   FAKE_SUMMARY_SLEEP=<ms> delays the reply to the summary prompt (scheduled-run tests).
+//   FAKE_NO_NEW=1 refuses session/new (a failed fallback session).
 // Sessions live in $FAKE_AGENT_STATE (default /tmp/fake-agent), so session/load works across processes.
 import { createInterface } from "node:readline";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -113,6 +114,7 @@ async function handle(rpc) {
   switch (rpc.method) {
     case "initialize": return reply({ protocolVersion: 1, agentCapabilities: { loadSession: true, ...(process.env.FAKE_NO_FORK ? {} : { sessionCapabilities: { fork: {} } }) }, authMethods: [] });
     case "session/new": {
+      if (process.env.FAKE_NO_NEW) return send({ id: rpc.id, error: { code: -32603, message: "session/new refused" } });
       const sid = randomUUID();
       save(sid, { history: [], meta: p._meta ?? null, mode: "default", lastRefused: null });
       return reply({ sessionId: sid });

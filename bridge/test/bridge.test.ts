@@ -707,6 +707,26 @@ describe("sessions", () => {
     expect(named(b.store, "b")).toEqual(["echo: hello b"]);
   });
 
+  it("main's fallback failing fails the task", async () => {
+    const dir = taskDir("hello");
+    const a = await start(dir, { AGENTIC_IDLE_TIMEOUT: "0.3" });
+    await waitState(a.bridge, "suspended");
+    const rec = JSON.parse(readFileSync(join(dir, "state.json"), "utf8"));
+    rec.sessions[0].session = "gone";
+    writeFileSync(join(dir, "state.json"), JSON.stringify(rec));
+    vi.stubEnv("FAKE_NO_NEW", "1");
+    try {
+      const b = await start(dir);
+      b.bridge.command({ kind: "userPrompt", text: "go on" });
+      await waitState(b.bridge, "failed");
+      expect(b.bridge.status().reason).toMatch(/^agent failed to start: .*session\/new refused/);
+      expect(await exited(b.exits)).toEqual([1]);
+      expect(b.store.readEvents(0).some((e) => e.type === "error" && String(e.data.message).includes("started a new session"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("an old record without sessions boots and resumes", async () => {
     const dir = taskDir("hello");
     cpSync(fileURLToPath(new URL("./fixtures/old-task", import.meta.url)), dir, { recursive: true });

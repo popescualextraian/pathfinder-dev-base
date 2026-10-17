@@ -392,8 +392,20 @@ export class Bridge implements ApiTarget {
           input = { kind: "sessionReady", name, session: id };
         } catch (err) {
           if (name !== MAIN) throw err;
+          let session: string;
+          try {
+            session = await agent.newSession(model);
+          } catch (again) {
+            // no main to fall back to: the task fails, as a failed start does
+            if (this.agent !== agent) return;
+            this.agent = null;
+            this.track(agent.kill());
+            this.run({ kind: "agentExit", error: `agent failed to start: ${message(again)}` });
+            return;
+          }
+          if (this.agent !== agent) return;
           this.emit("error", { message: `session ${id} could not be loaded (${message(err)}); started a new session with the task history` }, MAIN);
-          input = { kind: "sessionReady", name, session: await agent.newSession(model), seed: this.seed() };
+          input = { kind: "sessionReady", name, session, seed: this.seed() };
         }
       } else input = { kind: "sessionReady", name, session: await agent.newSession(model) };
     } catch (err) {
