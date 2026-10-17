@@ -38,15 +38,19 @@ agentic <command> [options]          run inside a project repository
   run "prompt" [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--allow push|open-pr|deploy:T]... [--publish PORT]... [--id ID] [--json]
                                      start a detached task in a new container (or in task ID's); prints its id
   status [ID] [--all] [--json]       list tasks, or one task with its open questions
-  follow ID [--since N] [--raw] [--status]
+  follow ID [--since N] [--raw] [--status] [--session NAME]
                                      stream a running task's events until it waits, idles or ends
-  send ID "text"                     a new prompt (starts a suspended task)
-  answer ID [QID] "text" [--allow A]...
+  send ID "text" [--session NAME]    a new prompt (starts a suspended task)
+  answer ID [QID] "text" [--allow A]... [--session NAME]
                                      answer the oldest (or the named) open question; grants unblock the gate
-  cancel ID | stop ID | resume ID    end the turn | end the task | continue an interrupted or failed task
+  cancel ID [--session NAME] | stop ID | resume ID
+                                     end the turn | end the task | continue an interrupted or failed task
+  session add ID NAME [--model M] [--fork FROM] [--json] ["prompt"]
+                                     another session in the task (its own context; --fork copies FROM's)
+  session list ID [--json]           the task's sessions: name, state, model, updated, summary
   logs ID [--transcript|--bridge|--start]
   shell ID                           a shell in the running task container
-  takeover ID                        stop the task and continue its session interactively
+  takeover ID [--session NAME]       stop the task and continue its session interactively
   clean ID [--force]                 remove what the task created: worktree and branch, its container, its files
   schedule add NAME (--cron "M H DOM MON DOW" | --at "YYYY-MM-DD HH:MM") [--allow A]... [--agent A] [--model M]
                [--target T] [--no-worktree] [--keep] [--keep-on-failure] [--timeout 2h] "prompt"
@@ -603,6 +607,8 @@ cmd_status() {
       def opts: .options | if type == "array" then . else [] end;
       "\($id)  \(.state | c)\(if (.reason // "") != "" then " (" + (.reason | c) + ")" else "" end)  \(.agent | c)  \(.branch // "" | c)",
       (if (.summary // "") != "" then "summary: " + (.summary | c) else empty end),
+      (if (.sessions | type == "array" and length > 1) then .sessions[] | objects
+        | "session \(.name | c)  \(.state | c)  \(.model // "" | c)  \(.summary // "" | c)" else empty end),
       (.ports | to_entries[] | "port \(.key) -> \(.value)"),
       (qs[] | "\(.id | c) (\(.source | c)): \(.text | c)\(if (opts | length) > 0 then " [" + (opts | map(c) | join(", ")) + "]" else "" end)\(if .recommendation then " recommended: " + (.recommendation | c) else "" end)"),
       (if (qs | length) > 0 then "reply: agentic answer \($id) \(qs[0].id | c) \"…\"" else empty end)' <<<"$st"
@@ -636,18 +642,26 @@ cmd_status() {
 
 cmd_send() {
   need_config
-  [ $# -eq 2 ] || die 'usage: agentic send ID "text"'
-  need_task "$1"; ensure_running "$1"
-  bridge_post "$1" /prompt "$(jq -cn --arg t "$2" '{text: $t}')"
+  local pos=() sess=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) optval "$@"; sess="$2"; shift 2 ;;
+      *) pos+=("$1"); shift ;;
+    esac
+  done
+  [ "${#pos[@]}" -eq 2 ] || die 'usage: agentic send ID "text" [--session NAME]'
+  need_task "${pos[0]}"; ensure_running "${pos[0]}"
+  bridge_post "${pos[0]}" /prompt "$(jq -cn --arg t "${pos[1]}" --arg s "$sess" '{text: $t} + (if $s == "" then {} else {session: $s} end)')"
 }
 
 cmd_answer() {
   need_config
-  local id="" q="" text="" pos=() grants=() g
+  local id="" q="" text="" pos=() grants=() g sess=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --) shift; pos+=("$@"); break ;;
       --allow) optval "$@"; grants+=("$2"); shift 2 ;;
+      --session) optval "$@"; sess="$2"; shift 2 ;;
       -*) die "unknown option $1" ;;
       *) pos+=("$1"); shift ;;
     esac
@@ -659,13 +673,59 @@ cmd_answer() {
   esac
   for g in ${grants[@]+"${grants[@]}"}; do valid_grant "$g" || die "bad grant '$g' (push, open-pr or deploy:TARGET)"; done
   need_task "$id"; ensure_running "$id"
-  bridge_post "$id" /answer "$(jq -cn --arg q "$q" --arg t "$text" \
-    '{text: $t, grant: $ARGS.positional} + (if $q == "" then {} else {question: $q} end)' --args ${grants[@]+"${grants[@]}"})"
+  bridge_post "$id" /answer "$(jq -cn --arg q "$q" --arg t "$text" --arg s "$sess" \
+    '{text: $t, grant: $ARGS.positional} + (if $q == "" then {} else {question: $q} end) + (if $s == "" then {} else {session: $s} end)' --args ${grants[@]+"${grants[@]}"})"
 }
 
 cmd_cancel() {
   need_config; need_task "${1:-}"; need_running "$1"
-  bridge_post "$1" /cancel
+  local id="$1" sess=""; shift
+  case "${1:-}" in
+    --session) optval "$@"; sess="$2" ;;
+    "") ;;
+    *) die 'usage: agentic cancel ID [--session NAME]' ;;
+  esac
+  bridge_post "$id" /cancel "$([ -z "$sess" ] || jq -cn --arg s "$sess" '{session: $s}')"
+}
+
+cmd_session() {
+  local sub="${1:-}"; [ $# -eq 0 ] || shift
+  case "$sub" in
+    add|list) "session_$sub" "$@" ;;
+    *) die 'usage: agentic session add|list ID ...' ;;
+  esac
+}
+
+session_add() {
+  need_config
+  local pos=() model="" fork="" json=0 out
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --model) optval "$@"; model="$2"; shift 2 ;;
+      --fork) optval "$@"; fork="$2"; shift 2 ;;
+      --json) json=1; shift ;;
+      -*) die "unknown option $1" ;;
+      *) pos+=("$1"); shift ;;
+    esac
+  done
+  { [ "${#pos[@]}" -ge 2 ] && [ "${#pos[@]}" -le 3 ]; } || die 'usage: agentic session add ID NAME [--model M] [--fork FROM] [--json] ["prompt"]'
+  need_task "${pos[0]}"; ensure_running "${pos[0]}"
+  bridge_call "${pos[0]}" POST /sessions "$(jq -cn --arg n "${pos[1]}" --arg m "$model" --arg f "$fork" --arg t "${pos[2]:-}" \
+    '{name: $n} + (if $m == "" then {} else {model: $m} end) + (if $f == "" then {} else {fork: $f} end) + (if $t == "" then {} else {text: $t} end)')"
+  [[ "$BRIDGE_CODE" == 2* ]] || bridge_result "${pos[0]}"
+  if [ "$json" = 1 ]; then printf '%s\n' "$BRIDGE_BODY"; return; fi
+  out="$(jq -er '.name | tostring | gsub("[[:cntrl:]]"; " ")' <<<"$BRIDGE_BODY" 2>/dev/null)" || die "the bridge answered HTTP $BRIDGE_CODE with a body that is not a session"
+  printf '%s\n' "$out"
+}
+
+session_list() {
+  need_config
+  local id="" json=0 a
+  for a in "$@"; do case "$a" in --json) json=1 ;; -*) die "unknown option $a" ;; *) id="$a" ;; esac; done
+  need_task "$id"
+  if [ "$json" = 1 ]; then task_sessions_json "$id"; return; fi
+  task_sessions_json "$id" | jq -r 'def c: tostring | gsub("[[:cntrl:]]"; " ");
+    .[] | "\(.name | c)  \(.state | c)  \(.model // "" | c)  \(.updated // "" | c)  \(.summary // "" | c)"'
 }
 
 cmd_stop() {
@@ -733,8 +793,20 @@ cmd_task_shell() {
 
 cmd_takeover() {
   need_config; need_task "${1:-}"
-  local id="$1" agent session c envf work argv=() tty=(-i)
-  agent="$(record_get "$id" .agent)"; session="$(record_get "$id" .session)"; c="$(task_container "$id")"
+  local id="$1" agent session c envf work argv=() tty=(-i) sess=""
+  shift
+  case "${1:-}" in
+    --session) optval "$@"; sess="$2" ;;
+    "") ;;
+    *) die 'usage: agentic takeover ID [--session NAME]' ;;
+  esac
+  agent="$(record_get "$id" .agent)"; c="$(task_container "$id")"
+  if [ -n "$sess" ]; then
+    session="$({ task_read "$id" state.json || true; } | jq -r --arg n "$sess" '[.sessions[]? | objects | select(.name == $n) | .session][0] // empty' 2>/dev/null || true)"
+    [ -n "$session" ] || die "task $id has no session $(printf '%s' "$sess" | plain)"
+  else
+    session="$(record_get "$id" .session)"
+  fi
   envf="$(host_file "$id" env)" || die "the env file of $id is not a regular file"
   [ -n "$session" ] || die "task $id has no session yet"
   case "$agent" in
@@ -842,7 +914,7 @@ main() {
     shell) if [ "$#" -eq 1 ] && valid_task_id "$1" && [ -f "$(task_dir "$1" 2>/dev/null)/state.json" ]; then cmd_task_shell "$1"; else cmd_shell "$@"; fi ;;
     build-base) cmd_build_base "$@" ;;
     # each of these is handled by cmd_<command>
-    init|remove|list|build|login|setup|doctor|dev|target|run|status|send|answer|cancel|stop|resume|logs|follow|takeover|clean|schedule|cost)
+    init|remove|list|build|login|setup|doctor|dev|target|run|status|send|answer|cancel|session|stop|resume|logs|follow|takeover|clean|schedule|cost)
       "cmd_$cmd" "$@" ;;
     help|-h|--help) usage ;;
     *) usage >&2; exit 2 ;;

@@ -247,8 +247,20 @@ task_status_record() {
   [ "$st" != interrupted ] || note_interrupted "$1"
   { task_read "$1" state.json | jq -cs --arg s "$st" --argjson q "$(open_questions "$1")" \
     'select(length == 1 and (.[0] | type) == "object") | .[0]
-    | .inbox = (.inbox | if type == "array" then length else 0 end) | .state = $s | .questions = $q' 2>/dev/null; } | grep . \
+    | .inbox = (if (.sessions | type) == "array" then [.sessions[] | objects | .inbox | arrays | length] | add // 0
+        else (.inbox | if type == "array" then length else 0 end) end) | .state = $s | .questions = $q' 2>/dev/null; } | grep . \
     || jq -cn --arg id "$1" '{task: $id, state: "unknown", inbox: 0, questions: []}'
+}
+
+# task_sessions_json ID: the task's sessions as an array of views: the bridge's when it answers,
+# else the record's (inbox as a count).
+task_sessions_json() {
+  if [ "$(container_status "$1")" = running ] && bridge_req "$1" GET /sessions && [ "$BRIDGE_CODE" = 200 ] \
+    && jq -ce 'select(type == "array")' <<<"$BRIDGE_BODY" 2>/dev/null; then
+    return
+  fi
+  { task_read "$1" state.json || true; } | jq -c 'objects | [(.sessions | arrays | .[] | objects)
+    | {name, session, model, state, reason, summary, inbox: (.inbox | arrays | length), fork_of, created, updated}]' 2>/dev/null || echo '[]'
 }
 
 # plain: stdin without control characters (terminal escapes) other than newline and tab.

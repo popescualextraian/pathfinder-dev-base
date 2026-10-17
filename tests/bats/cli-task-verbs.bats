@@ -26,6 +26,8 @@ record() {
   jq -n --arg id "$1" --arg s "$2" '{version:1, task:$id, project:"demo", agent:"claude", state:$s, reason:"",
     session:"s1", branch:("agentic/" + $id), created:"2026-10-12T10:00:00Z", updated:"t", seq:1,
     allowed_actions:[], summary:"", stopped_by_user:false}' > "$T/$1/state.json"
+  # an optional 3rd argument: a sessions array
+  if [ -n "${3:-}" ]; then jq --argjson s "$3" '.sessions = $s' "$T/$1/state.json" > "$T/$1/s.tmp" && mv "$T/$1/s.tmp" "$T/$1/state.json"; fi
   printf 'AGENTIC_TASK_TOKEN=tok-task-0123456789\nAGENTIC_AGENT_TOKEN=tok-agent-0123456789\n' > "$H/$1/env"
   printf 'agentic-demo-task-%s\n1\n%s\n' "$1" "$1" > "$H/$1/container"
   printf 'AGENTIC_WORK=/work\n' >> "$H/$1/env"
@@ -324,4 +326,94 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   CURL_GET_CODE=401 CURL_CODE=401 run ag stop T-1
   [ "$status" -eq 1 ]
   [ -z "$(docker_sub stop)" ]
+}
+
+SESS='[{"name":"main","session":"s1","model":"m1","state":"idle","summary":"did x","inbox":[1,2],"updated":"t1"},
+  {"name":"rev","session":"s2","model":"m2","state":"running","summary":"esc\u001b[31m red","inbox":[3],"updated":"t2","fork_of":"main"}]'
+
+@test "session add posts name, model, fork and text and prints the name" {
+  record T-1 idle
+  CURL_CODE=201 CURL_BODY='{"name":"rev","state":"idle"}' run ag session add T-1 rev --model m2 --fork main "review it"
+  [ "$status" -eq 0 ]; [ "$output" = rev ]
+  [[ "$(posted)" == *"/sessions"* ]]
+  [ "$(curl_body 1 | jq -cS .)" = '{"fork":"main","model":"m2","name":"rev","text":"review it"}' ]
+  CURL_CODE=201 CURL_BODY='{"name":"x"}' ag session add T-1 x
+  [ "$(curl_body 2 | jq -c .)" = '{"name":"x"}' ]
+}
+
+@test "session add --json prints the bridge's object" {
+  record T-1 idle
+  CURL_CODE=201 CURL_BODY='{"name":"rev","state":"idle"}' run ag session add T-1 rev --json
+  [ "$status" -eq 0 ]; [ "$output" = '{"name":"rev","state":"idle"}' ]
+}
+
+@test "session list reads the bridge, or state.json when the task is not running" {
+  record T-1 idle "$SESS"
+  CURL_BODY='[{"name":"main","state":"idle","model":"m9","updated":"u","summary":"s"}]' run ag session list T-1
+  [ "$status" -eq 0 ]; [ "$output" = "main  idle  m9  u  s" ]
+  [[ "$(posted)" == *"/sessions"* ]]
+  DOCKER_STATUS=exited run ag session list T-1
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "main  idle  m1  t1  did x" ]
+  [ "${lines[1]}" = "rev  running  m2  t2  esc [31m red" ]
+  DOCKER_STATUS=exited run ag session list T-1 --json
+  [ "$(jq -c '[.[] | {name, inbox, fork_of}]' <<<"$output")" = '[{"name":"main","inbox":2,"fork_of":null},{"name":"rev","inbox":1,"fork_of":"main"}]' ]
+}
+
+@test "send, answer and cancel pass --session; without it the body has no session" {
+  record T-1 idle
+  ag send T-1 "hi" --session rev
+  [ "$(curl_body 1 | jq -c .)" = '{"text":"hi","session":"rev"}' ]
+  ag send T-1 "hi"
+  [ "$(curl_body 2 | jq -c .)" = '{"text":"hi"}' ]
+  ag answer T-1 Q1 "ok" --session rev
+  [ "$(curl_body 3 | jq -c .)" = '{"text":"ok","grant":[],"question":"Q1","session":"rev"}' ]
+  ag cancel T-1 --session rev
+  [ "$(curl_body 4 | jq -c .)" = '{"session":"rev"}' ]
+  ag cancel T-1
+  [ -z "$(curl_body 5)" ]
+}
+
+@test "follow --session passes the name to the follow client" {
+  record T-1 idle
+  ag follow T-1 --session rev
+  call="$(docker_call_with exec follow)"
+  [ "$(tail -n 4 <<<"$call" | tr '\n' ' ')" = "agentic-bridge follow --session rev " ]
+}
+
+@test "takeover --session resumes that session's id; an unknown name is refused" {
+  record T-1 idle "$SESS"
+  AGENTIC_STOP_TIMEOUT=1 run ag takeover T-1 --session rev
+  [ "$status" -eq 0 ]
+  ex="$(docker_call_with exec claude)"
+  grep -qx -- s2 <<<"$ex"
+  run ag takeover T-1 --session 'x") | .session'
+  [ "$status" -eq 1 ]; [[ "$output" == *"task T-1 has no session"* ]]
+}
+
+@test "status ID lists sessions when there are several" {
+  record T-1 idle "$SESS"
+  DOCKER_STATUS=exited run ag status T-1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"session main  idle  m1  did x"* ]]
+  [[ "$output" == *"session rev  running  m2  esc"* ]]
+  record T-2 idle '[{"name":"main","session":"s1","model":"m1","state":"idle","summary":"","inbox":[]}]'
+  DOCKER_STATUS=exited run ag status T-2
+  [[ "$output" != *"session main"* ]]
+}
+
+@test "status of an old record without sessions still counts its inbox" {
+  record T-1 idle
+  jq '.inbox = [1,2,3]' "$T/T-1/state.json" > "$T/x" && mv "$T/x" "$T/T-1/state.json"
+  DOCKER_STATUS=exited run ag status T-1 --json
+  [ "$(jq .inbox <<<"$output")" = 3 ]
+  record T-2 idle "$SESS"
+  DOCKER_STATUS=exited run ag status T-2 --json
+  [ "$(jq .inbox <<<"$output")" = 3 ]
+}
+
+@test "the bridge's 404 for an unknown session is shown" {
+  record T-1 idle
+  CURL_CODE=404 CURL_BODY='{"error":{"code":"not_found","message":"no session nope"}}' run ag send T-1 x --session nope
+  [ "$status" -eq 1 ]; [ "$output" = "agentic: no session nope (HTTP 404)" ]
 }
