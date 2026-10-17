@@ -239,8 +239,8 @@ repositories that tasks should only read.
 | `GET /status` | none | 200, status | none |
 | `GET /events?since=SEQ&limit=N&view=V&session=NAME` | none | 200, `application/x-ndjson`, events with `seq > SEQ` in view `V` (of one session with `session`); `since` defaults to 0, `limit` to 1000 (1 to 1000), `view` to `full` | 400 |
 | `WS /events?since=SEQ&view=V` | none | the backlog, then live events, in view `V`, one JSON object per text frame; ping every 30 s (no `session` filter: `follow --session` filters by `name`) | upgrade refused with 400 (bad target or view), 401, 403 (Host, Origin, or the agent token), 404 (other path) |
-| `POST /ask` (agent token) | `{text, options?, recommend?, session?}` | 201 `{id}` | 400 empty, 409 stopped |
-| `POST /gate` (agent token) | `{rule, command, session?}` | 204 | none |
+| `POST /ask` (agent token) | `{text, options?, recommend?, session?}` (`session` is the agent's ACP session id, not a name; unknown or absent means `main`) | 201 `{id}` | 400 empty, 409 stopped |
+| `POST /gate` (agent token) | `{rule, command, session?}` (`session` as for `/ask`) | 204 | none |
 
 The agent token on any other route gets 403; an unknown route gets 404. Grants: `push`, `open-pr`, `deploy:<target>` (`deploy:[A-Za-z0-9_.-]+`). Errors share one body:
 `{"error":{"code":"<bad_request|unauthorized|forbidden|not_found|conflict|starting|internal>","message":"…"}}`;
@@ -250,7 +250,7 @@ The agent token on any other route gets 403; an unknown route gets 404. Grants: 
 ### The status object
 
 `state.json` (see Files) without `inbox` items (their count instead) plus `questions`, the open
-ones: `{id, source, text, options, recommendation, asked}`, and `ports`, the published app ports
+ones: `{id, source, text, options, recommendation, asked, session}` (`session` is the asking session's name), and `ports`, the published app ports
 read from Docker (`{"3100": "127.0.0.1:49213"}`, `{}` for none or a stopped container). `agentic status ID --json` prints it
 from the bridge when it is live, else builds the same object from the task files with the state
 derived as described under `status`. It also carries `sessions`: `{name, session, model, state,
