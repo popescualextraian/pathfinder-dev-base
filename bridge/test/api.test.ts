@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { handle, checkAccess, type ApiTarget, type ApiRequest } from "../src/api.js";
+import { handle, checkAccess, eventView, type ApiTarget, type ApiRequest } from "../src/api.js";
+import type { TaskEvent } from "../src/types.js";
 import type { Input, Outcome } from "../src/task.js";
 
 const tokens = { task: "task-token-0123456789", agent: "agent-token-0123456789" };
@@ -10,7 +11,8 @@ function target(outcome: Outcome = { ok: true, effects: [] }) {
     ready: () => true,
     status: () => ({ state: "idle" }),
     command: (i) => { seen.push(i); return outcome; },
-    events: (since, limit) => Array.from({ length: 5 }, (_, k) => ({ seq: k + 1 })).filter((e) => e.seq > since).slice(0, limit) as never,
+    events: (since, limit, keep = () => true) => (Array.from({ length: 5 }, (_, k) => ({ seq: k + 1, type: k % 2 ? "tool" : "state", data: {} })) as never as TaskEvent[])
+      .filter((e) => e.seq > since && keep(e)).slice(0, limit),
   };
   return { t, seen };
 }
@@ -93,8 +95,27 @@ describe("handle", () => {
 
   it("GET /events returns NDJSON after the cursor, with a limit", () => {
     const { t } = target();
-    expect(handle(req("GET", "/events", undefined, {}, "since=2&limit=2"), t, tokens, access)).toEqual({ status: 200, ndjson: [{ seq: 3 }, { seq: 4 }] });
+    expect(handle(req("GET", "/events", undefined, {}, "since=2&limit=2"), t, tokens, access)).toMatchObject({ status: 200, ndjson: [{ seq: 3 }, { seq: 4 }] });
     expect(handle(req("GET", "/events", undefined, {}, "since=x"), t, tokens, access)).toMatchObject({ status: 400 });
+  });
+
+  it("GET /events?view=status leaves out the noise before the limit; view=full is the default; another view is 400", () => {
+    const { t } = target();
+    const seqs = (q: string) => (handle(req("GET", "/events", undefined, {}, q), t, tokens, access).ndjson as TaskEvent[]).map((e) => e.seq);
+    expect(seqs("view=status&since=1&limit=2")).toEqual([3, 5]);
+    expect(seqs("view=full&since=1&limit=2")).toEqual([2, 3]);
+    expect(handle(req("GET", "/events", undefined, {}, "view=chat"), t, tokens, access)).toMatchObject({ status: 400 });
+  });
+
+  it("the status view keeps state, question, answer, error and final messages", () => {
+    const keep = eventView("status");
+    if (!keep) throw new Error("no status view");
+    const e = (type: string, data: Record<string, unknown> = {}) => ({ seq: 1, ts: "t", task: "T", session: null, agent: "claude", type, data }) as TaskEvent;
+    expect(["state", "question", "answer", "error"].every((type) => keep(e(type)))).toBe(true);
+    expect(keep(e("message", { role: "user", text: "hi", final: true }))).toBe(true);
+    expect([e("message", { final: false }), e("tool"), e("plan"), e("gate")].some(keep)).toBe(false);
+    expect(eventView(null)).toBeTypeOf("function");
+    expect(eventView("chat")).toBeNull();
   });
 
   it("the agent token may only ask and report gate refusals", () => {

@@ -17,7 +17,7 @@ async function serve(stored: TaskEvent[], seen: string[] = []) {
     ready: () => true,
     status: () => ({ state: "idle" }),
     command: (i) => { seen.push(JSON.stringify(i)); return { ok: true, effects: [] }; },
-    events: (since, limit) => stored.filter((e) => e.seq > since).slice(0, limit),
+    events: (since, limit, keep = () => true) => stored.filter((e) => e.seq > since && keep(e)).slice(0, limit),
   };
   const s = await startServer({ port: 0, host: "127.0.0.1", tokens, access: { hosts: [], origins: [] }, target,
     subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); } });
@@ -132,5 +132,29 @@ describe("server", () => {
     await new Promise<void>((resolve) => ws.on("message", (frame) => { got.push(JSON.parse(frame.toString()).seq); if (got.length === 2500) resolve(); }));
     ws.close();
     expect(got[2499]).toBe(2500);
+  });
+
+  it("serves the status view over HTTP and WebSocket: same seq, backlog and live filtered, resumable, unknown view refused", async () => {
+    const tool = (seq: number): TaskEvent => ({ ...ev(seq), type: "tool", data: { status: "running" } });
+    const { port, push } = await serve([ev(1), tool(2), ev(3), tool(4)]);
+    const auth = { authorization: `Bearer ${tokens.task}` };
+    const http = await fetch(`http://127.0.0.1:${port}/events?view=status`, { headers: auth });
+    expect((await http.text()).trim().split("\n").map((l) => JSON.parse(l).seq)).toEqual([1, 3]);
+    expect((await fetch(`http://127.0.0.1:${port}/events?view=chat`, { headers: auth })).status).toBe(400);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/events?since=1&view=status`, { headers: auth });
+    const got: number[] = [];
+    await new Promise<void>((resolve) => {
+      ws.on("message", (frame) => {
+        got.push(JSON.parse(frame.toString()).seq);
+        if (got.length === 1) { push(tool(5)); push(ev(6)); }
+        if (got.length === 2) resolve();
+      });
+    });
+    ws.close();
+    expect(got).toEqual([3, 6]);
+
+    const bad = new WebSocket(`ws://127.0.0.1:${port}/events?view=chat`, { headers: auth });
+    expect(await new Promise<number>((resolve) => bad.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0)))).toBe(400);
   });
 });

@@ -123,9 +123,9 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
 
 @test "follow runs the follow client in the container; a task that is not running points to logs" {
   record T-11 idle
-  ag follow T-11 --since 3
+  ag follow T-11 --since 3 --status
   call="$(docker_sub exec)"
-  [ "$(tail -n 5 <<<"$call" | tr '\n' ' ')" = "agentic-demo-task-T-11 agentic-bridge follow --since 3 " ]
+  [ "$(tail -n 6 <<<"$call" | tr '\n' ' ')" = "agentic-demo-task-T-11 agentic-bridge follow --since 3 --status " ]
   DOCKER_STATUS=exited run ag follow T-11
   [ "$status" -eq 1 ]; [[ "$output" == *"agentic logs T-11"* ]]
 }

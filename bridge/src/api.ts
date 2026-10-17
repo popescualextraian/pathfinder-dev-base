@@ -8,7 +8,7 @@ export interface ApiTarget {
   ready(): boolean;
   status(): Record<string, unknown>;
   command(input: Input): Outcome;
-  events(since: number, limit: number): TaskEvent[];
+  events(since: number, limit: number, keep?: (e: TaskEvent) => boolean): TaskEvent[];
 }
 export interface Tokens { task: string; agent: string }
 export interface AccessOptions { hosts: string[]; origins: string[] }
@@ -24,6 +24,15 @@ export interface ApiResponse { status: number; json?: unknown; ndjson?: unknown[
 export const MAX_BODY = 1048576;
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const STATUS = { conflict: 409, not_found: 404, bad_request: 400 } as const;
+
+const STATUS_TYPES = new Set(["state", "question", "answer", "error"]);
+// eventView: the filter for an events `view` query value (absent means full), or null if unknown.
+// Filtered views keep the full stream's seq numbers, with gaps.
+export function eventView(view: string | null): ((e: TaskEvent) => boolean) | null {
+  if (view === null || view === "full") return () => true;
+  if (view === "status") return (e) => STATUS_TYPES.has(e.type) || (e.type === "message" && e.data.final === true);
+  return null;
+}
 
 const err = (status: number, code: string, message: string): ApiResponse => ({ status, json: { error: { code, message } } });
 // hostname: the lower-case name of a Host header or list entry without its port, or null if malformed.
@@ -85,7 +94,9 @@ export function handle(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts:
       if (!Number.isInteger(since) || since < 0 || !Number.isInteger(limit) || limit < 1 || limit > 1000) {
         return err(400, "bad_request", "since must be an integer >= 0 and limit 1..1000");
       }
-      return { status: 200, ndjson: target.events(since, limit) };
+      const keep = eventView(req.query.get("view"));
+      if (!keep) return err(400, "bad_request", "view must be full or status");
+      return { status: 200, ndjson: target.events(since, limit, keep) };
     }
     case "POST /prompt":
       if (!isStr(body.text)) return err(400, "bad_request", "text must be a string");

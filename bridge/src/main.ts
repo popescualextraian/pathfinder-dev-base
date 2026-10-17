@@ -69,20 +69,22 @@ async function followCmd(args: string[]): Promise<void> {
   let since = 0;
   let raw = false;
   let forever = false;
+  let status = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--since") since = Number(args[++i]);
     else if (a === "--raw") raw = true;
     else if (a === "--forever") forever = true;
-    else die(`unknown option ${a}; usage: agentic-bridge follow [--since N] [--raw] [--forever]`);
+    else if (a === "--status") status = true;
+    else die(`unknown option ${a}; usage: agentic-bridge follow [--since N] [--raw] [--forever] [--status]`);
   }
   if (!Number.isInteger(since) || since < 0) die("--since needs a number >= 0");
   const token = process.env.AGENTIC_TASK_TOKEN ?? die("AGENTIC_TASK_TOKEN is not set (run follow inside the task container)");
   const port = process.env.AGENTIC_BRIDGE_PORT ?? "8765";
-  process.exit(await follow({ url: `ws://127.0.0.1:${port}`, token, since, raw, forever, out: (s) => process.stdout.write(s) }));
+  process.exit(await follow({ url: `ws://127.0.0.1:${port}`, token, since, raw, forever, status, out: (s) => process.stdout.write(s) }));
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "follow") await followCmd(rest);
 else if (cmd === undefined) await serve().catch((e: Error) => die(e.message));
-else die(`unknown command ${cmd}; usage: agentic-bridge [follow [--since N] [--raw] [--forever]]`);
+else die(`unknown command ${cmd}; usage: agentic-bridge [follow [--since N] [--raw] [--forever] [--status]]`);

@@ -38,7 +38,8 @@ agentic <command> [options]          run inside a project repository
   run "prompt" [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--allow push|open-pr|deploy:T]... [--publish PORT]... [--id ID] [--json]
                                      start a detached task in a new container (or in task ID's); prints its id
   status [ID] [--all] [--json]       list tasks, or one task with its open questions
-  follow ID [--since N] [--raw]      stream a running task's events until it waits, idles or ends
+  follow ID [--since N] [--raw] [--status]
+                                     stream a running task's events until it waits, idles or ends
   send ID "text"                     a new prompt (starts a suspended task)
   answer ID [QID] "text" [--allow A]...
                                      answer the oldest (or the named) open question; grants unblock the gate
@@ -716,7 +717,7 @@ cmd_logs() {
 
 cmd_follow() {
   need_config
-  local id="${1:-}" envf; [ -n "$id" ] || die "usage: agentic follow ID [--since N] [--raw] [--forever]"
+  local id="${1:-}" envf; [ -n "$id" ] || die "usage: agentic follow ID [--since N] [--raw] [--forever] [--status]"
   shift; need_task "$id"
   [ "$(container_status "$id")" = running ] || die "task $id is $(task_state "$id" | plain); agentic logs $id shows its transcript"
   envf="$(host_file "$id" env)" || die "the env file of $id is not a regular file"

@@ -25,7 +25,7 @@ This guide is how to use it. The full contract (states, API, events, files, ever
 |---|---|
 | `agentic run "prompt" [options]` | Starts a task in a new container and prints its id, for example `T-20261013-a6ec`. |
 | `agentic status [ID] [--all] [--json]` | Lists this project's tasks; with an id, the task, its open questions and how to reply. |
-| `agentic follow ID [--raw] [--forever]` | Streams what the agent does until the task waits, idles or ends. `Ctrl-c` only stops watching. |
+| `agentic follow ID [--raw] [--forever] [--status]` | Streams what the agent does until the task waits, idles or ends; `--status` only state changes, questions, answers and whole messages. `Ctrl-c` only stops watching. |
 | `agentic answer ID [QID] "text" [--allow A]` | Answers the oldest (or the named) open question; `--allow` grants an action at the same time. |
 | `agentic send ID "text"` | A new prompt: more work, a correction. It wakes a suspended task. |
 | `agentic cancel ID` | Ends the current turn; the task stays and takes the next prompt. |
@@ -131,6 +131,10 @@ Set `AGENTIC_NOTIFY_WEBHOOK` (on the host when you run, or in `.agentic/.env`) t
 task waits, idles, fails or stops, the bridge POSTs a small JSON message with the question and a
 ready `agentic answer ...` reply line. Every state change is also appended to
 `~/agentic-workspaces/<project>/events/events.jsonl`, which any tool can watch.
+
+A UI or orchestrator watching many tasks can subscribe to `WS /events?view=status` on each bridge:
+state changes, questions, answers, errors and whole messages at the end of a turn, without the
+message chunks and tool updates of the full stream (see Views in [`tasks.md`](tasks.md#events)).
 
 ## Safety in brief
 

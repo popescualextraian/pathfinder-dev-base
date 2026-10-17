@@ -25,9 +25,10 @@ question. A text that starts with `-` goes after `--`. `send ID "text"` is a new
 [--transcript|--bridge|--start]` shows the files; `shell ID` opens a shell in the container;
 `takeover ID` stops the task and continues its session interactively.
 
-`follow ID [--since N] [--raw] [--forever]` streams the events after `N` (default: from the start)
+`follow ID [--since N] [--raw] [--forever] [--status]` streams the events after `N` (default: from the start)
 over the WebSocket; `--raw` prints the JSON objects, `--forever` keeps streaming instead of
-exiting once the task waits, idles, stops or fails. `status [ID] [--all] [--json]` lists the tasks
+exiting once the task waits, idles, stops or fails, `--status` follows the status view (see Events):
+state changes, questions, answers, errors and whole messages. `status [ID] [--all] [--json]` lists the tasks
 of this project (`--all`: every project; `--json`: one JSON object, or an array for a list).
 
 `run [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--model M] [--allow GRANT]...
@@ -216,8 +217,8 @@ repositories that tasks should only read.
 | `POST /cancel` | none | 202, status | 409 `no turn in progress` |
 | `POST /stop` | none | 202, status | none |
 | `GET /status` | none | 200, status | none |
-| `GET /events?since=SEQ&limit=N` | none | 200, `application/x-ndjson`, events with `seq > SEQ`; `since` defaults to 0, `limit` to 1000 (1 to 1000) | 400 |
-| `WS /events?since=SEQ` | none | the backlog, then live events, one JSON object per text frame; ping every 30 s | upgrade refused with 400 (bad target), 401, 403 (Host, Origin, or the agent token), 404 (other path) |
+| `GET /events?since=SEQ&limit=N&view=V` | none | 200, `application/x-ndjson`, events with `seq > SEQ` in view `V`; `since` defaults to 0, `limit` to 1000 (1 to 1000), `view` to `full` | 400 |
+| `WS /events?since=SEQ&view=V` | none | the backlog, then live events, in view `V`, one JSON object per text frame; ping every 30 s | upgrade refused with 400 (bad target or view), 401, 403 (Host, Origin, or the agent token), 404 (other path) |
 | `POST /ask` (agent token) | `{text, options?, recommend?}` | 201 `{id}` | 400 empty, 409 stopped |
 | `POST /gate` (agent token) | `{rule, command}` | 204 | none |
 
@@ -257,6 +258,14 @@ One JSON object per line in `events.jsonl` and per WebSocket frame:
 
 Not emitted in version 1: thoughts, usage, available commands, config options, session titles, and
 history replayed by `session/load`. `seq` increases by one per event and is the cursor.
+
+Views (`view=` on `GET` and `WS /events`): `full`, the default, is every event; `status` is only
+`state`, `question`, `answer`, `error` and `message` with `final:true` (both roles, so prompts and
+whole turns are there), for a watcher of many tasks. A view keeps the full stream's `seq`, with
+gaps, so a client can switch views or resume with `since` without losing or repeating an event;
+the backlog is filtered the same way and `limit` counts the events kept. Any other view is 400.
+Bridges before the `view` parameter ignore it and send every event; `GET /events?view=x`
+answering 400 shows a bridge has it.
 `agentic follow` strips control characters from what it prints.
 
 ## Files

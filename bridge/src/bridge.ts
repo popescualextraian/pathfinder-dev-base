@@ -122,8 +122,8 @@ export class Bridge implements ApiTarget {
     return this.run(input);
   }
 
-  events(since: number, limit: number): TaskEvent[] {
-    return this.d.store.readEvents(since, limit);
+  events(since: number, limit: number, keep?: (e: TaskEvent) => boolean): TaskEvent[] {
+    return this.d.store.readEvents(since, limit, keep);
   }
 
   subscribe(fn: (e: TaskEvent) => void): () => void {

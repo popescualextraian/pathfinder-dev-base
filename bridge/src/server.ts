@@ -2,7 +2,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
-import { checkAccess, handle, MAX_BODY, type AccessOptions, type ApiResponse, type ApiTarget, type Tokens } from "./api.js";
+import { checkAccess, eventView, handle, MAX_BODY, type AccessOptions, type ApiResponse, type ApiTarget, type Tokens } from "./api.js";
 import type { TaskEvent } from "./types.js";
 
 export interface ServerOptions {
@@ -87,17 +87,19 @@ export function startServer(o: ServerOptions): Promise<{ port: number; close(): 
     if (access.scope !== "task") return refuse(403);
     if (url.pathname !== "/events") return refuse(404);
     const since = Number(url.searchParams.get("since") ?? "0");
-    wss.handleUpgrade(req, socket, head, (ws) => follow(ws, Number.isInteger(since) && since >= 0 ? since : 0));
+    const keep = eventView(url.searchParams.get("view"));
+    if (!keep) return refuse(400);
+    wss.handleUpgrade(req, socket, head, (ws) => follow(ws, Number.isInteger(since) && since >= 0 ? since : 0, keep));
   });
 
   // follow: the backlog after SINCE in pages, then live events; events arriving during the backlog are
   // queued. A client that falls MAX_BUFFERED behind is dropped.
-  function follow(ws: WebSocket, since: number): void {
+  function follow(ws: WebSocket, since: number, keep: (e: TaskEvent) => boolean): void {
     let last = since;
     let live = false;
     const queue: TaskEvent[] = [];
     const sendEvent = (e: TaskEvent) => {
-      if (e.seq <= last || ws.readyState !== ws.OPEN) return;
+      if (e.seq <= last || !keep(e) || ws.readyState !== ws.OPEN) return;
       ws.send(JSON.stringify(e));
       last = e.seq;
       if (ws.bufferedAmount > MAX_BUFFERED) ws.terminate();
@@ -108,7 +110,7 @@ export function startServer(o: ServerOptions): Promise<{ port: number; close(): 
     ws.on("close", () => { clearInterval(ping); unsubscribe(); });
     try {
       for (;;) {
-        const page = o.target.events(last, BACKLOG_PAGE);
+        const page = o.target.events(last, BACKLOG_PAGE, keep);
         page.forEach(sendEvent);
         if (page.length < BACKLOG_PAGE || ws.readyState !== ws.OPEN) break;
       }

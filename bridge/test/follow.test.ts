@@ -15,6 +15,7 @@ describe("formatEvent", () => {
     expect(formatEvent(e("state", { state: "waiting", reason: "question Q1" }))).toBe("— waiting (question Q1)\n");
     expect(formatEvent(e("message", { role: "agent", text: "Hel", final: false }))).toBe("Hel");
     expect(formatEvent(e("message", { role: "agent", text: "Hello", final: true }))).toBe("\n");
+    expect(formatEvent(e("message", { role: "agent", text: "Hello", final: true }), true)).toBe("Hello\n");
     expect(formatEvent(e("message", { role: "user", text: "Fix it", final: true }))).toBe("> Fix it\n");
     expect(formatEvent(e("tool", { title: "npm test", status: "failed" }))).toBe("▸ npm test — failed\n");
     expect(formatEvent(e("question", { id: "Q1", text: "Which DB?", options: ["pg"], recommendation: "pg" }))).toBe("? Q1 Which DB? [pg] (recommended: pg)\n");
@@ -25,13 +26,13 @@ describe("formatEvent", () => {
 });
 
 describe("follow", () => {
-  async function serve(onConn: (ws: import("ws").WebSocket) => void) {
+  async function serve(onConn: (ws: import("ws").WebSocket, req: import("node:http").IncomingMessage) => void) {
     const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
     await new Promise((r) => wss.on("listening", r));
     wss.on("connection", onConn);
     return { url: `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`, close: () => { wss.clients.forEach((c) => c.terminate()); wss.close(); } };
   }
-  const opts = (url: string, out: string[], over = {}) => ({ url, token: "t", since: 0, raw: false, forever: false, out: (s: string) => out.push(s), ...over });
+  const opts = (url: string, out: string[], over = {}) => ({ url, token: "t", since: 0, raw: false, forever: false, status: false, out: (s: string) => out.push(s), ...over });
 
   it("skips a bad frame, prints events, and ends 0 on a final state", async () => {
     const s = await serve((ws) => {
@@ -55,5 +56,19 @@ describe("follow", () => {
     expect(await follow(opts(b.url, out))).toBe(1);
     expect(out.join("")).toContain("connection lost");
     b.close();
+  });
+
+  it("--status asks for the status view and prints whole messages", async () => {
+    let asked = "";
+    const s = await serve((ws, req) => {
+      asked = req.url ?? "";
+      ws.send(JSON.stringify(e("message", { role: "agent", text: "Done.", final: true })));
+      ws.send(JSON.stringify(e("state", { state: "idle", reason: "" })));
+    });
+    const out: string[] = [];
+    expect(await follow(opts(s.url, out, { since: 4, status: true }))).toBe(0);
+    expect(asked).toBe("/events?since=4&view=status");
+    expect(out.join("")).toBe("Done.\n— idle\n");
+    s.close();
   });
 });

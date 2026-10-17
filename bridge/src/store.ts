@@ -77,8 +77,8 @@ export class Store {
     return out;
   }
 
-  readEvents(since: number, limit = 1000): TaskEvent[] {
-    return this.readJsonl<TaskEvent>("events.jsonl").filter((e) => e.seq > since).slice(0, limit);
+  readEvents(since: number, limit = 1000, keep: (e: TaskEvent) => boolean = () => true): TaskEvent[] {
+    return this.readJsonl<TaskEvent>("events.jsonl").filter((e) => e.seq > since && keep(e)).slice(0, limit);
   }
 
   appendQuestion(q: Question): void {

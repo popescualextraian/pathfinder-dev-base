@@ -49,6 +49,7 @@ describe("Store", () => {
     expect(b.appendEvent(ev()).seq).toBe(3);
     expect(b.readEvents(1).map((e) => e.seq)).toEqual([2, 3]);
     expect(b.readEvents(0, 1).map((e) => e.seq)).toEqual([1]);
+    expect(b.readEvents(0, 1, (e) => e.seq > 1).map((e) => e.seq)).toEqual([2]);
   });
 
   it("skips a torn or corrupt line in events and questions", () => {
