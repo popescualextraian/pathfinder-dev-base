@@ -9,10 +9,15 @@ const END = new Set(["waiting", "idle", "stopped", "failed", "suspended"]);
 // eslint-disable-next-line no-control-regex
 const plain = (t: string): string => t.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, " ");
 
-// whole: the status view sends no chunks, so a final message prints its text.
-export function formatEvent(e: TaskEvent, whole = false): string {
-  return plain(formatRaw(e, whole));
+// Lines of a session other than main start with [name]. whole: the status view sends no chunks, so a
+// final message prints its text; midLine: a streamed chunk continues a line already tagged.
+export function formatEvent(e: TaskEvent, o: { whole?: boolean; midLine?: boolean } = {}): string {
+  const out = plain(formatRaw(e, o.whole ?? false));
+  if (!e.name || e.name === "main" || out === "" || out === "\n" || (o.midLine && isChunk(e))) return out;
+  return out.replace(/^(?=.)|(?<=\n)(?=.)/g, `[${e.name}] `);
 }
+
+const isChunk = (e: TaskEvent): boolean => e.type === "message" && e.data.role !== "user" && !e.data.final;
 
 function formatRaw(e: TaskEvent, whole: boolean): string {
   const d = e.data;
@@ -35,12 +40,13 @@ function formatRaw(e: TaskEvent, whole: boolean): string {
   }
 }
 
-export function follow(o: { url: string; token: string; since: number; raw: boolean; forever: boolean; status: boolean; out: (s: string) => void }): Promise<number> {
+export function follow(o: { url: string; token: string; since: number; raw: boolean; forever: boolean; status: boolean; session: string | null; out: (s: string) => void }): Promise<number> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`${o.url}/events?since=${o.since}${o.status ? "&view=status" : ""}`, { headers: { authorization: `Bearer ${o.token}` } });
     // A state event ends the stream only once the backlog is through: the stored events are sent first.
     let settled: NodeJS.Timeout | null = null;
     let ended = false; // a final state was seen: the bridge closing the socket afterwards is normal
+    let streaming: string | null = null; // session whose partial message is mid-line
     ws.on("message", (m) => {
       let e: TaskEvent;
       try {
@@ -49,10 +55,12 @@ export function follow(o: { url: string; token: string; since: number; raw: bool
         o.out("agentic-bridge: skipped a frame that is not JSON\n");
         return;
       }
-      o.out(o.raw ? JSON.stringify(e) + "\n" : formatEvent(e, o.status));
+      // with a session: its events and the task-level ones; without: all events, but only task-level states count
+      if (o.session && e.name !== null && e.name !== o.session) return;
+      o.out(o.raw ? JSON.stringify(e) + "\n" : formatEvent(e, { whole: o.status, midLine: streaming === e.name }));
+      streaming = isChunk(e) ? e.name : null;
       if (settled) clearTimeout(settled);
-      if (e.type === "state" && END.has(s(e.data.state))) ended = true;
-      else if (e.type === "state") ended = false;
+      if (e.type === "state" && (e.name === null || e.name === o.session)) ended = END.has(s(e.data.state));
       if (!o.forever && ended) settled = setTimeout(() => { ws.close(); resolve(0); }, 300);
     });
     ws.on("unexpected-response", (_req, res) => { o.out(`agentic-bridge: follow refused (HTTP ${res.statusCode})\n`); resolve(1); });

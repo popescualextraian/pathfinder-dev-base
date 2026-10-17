@@ -5,6 +5,15 @@ import type { TaskEvent } from "../src/types.js";
 const e = (type: TaskEvent["type"], data: Record<string, unknown>): TaskEvent =>
   ({ seq: 1, ts: "t", task: "T-1", session: null, name: null, agent: "claude", type, data });
 
+describe("renderEvent sessions", () => {
+  it("the transcript prefixes other sessions' lines with [name], main's lines unchanged", () => {
+    const n = (name: string): TaskEvent => ({ ...e("message", { role: "agent", text: "Done.", final: true }), name });
+    expect(renderEvent(n("plan"))).toBe("\n[plan] Done.\n");
+    expect(renderEvent(n("main"))).toBe("\nDone.\n");
+    expect(renderEvent(e("message", { role: "agent", text: "Done.", final: true }))).toBe("\nDone.\n");
+  });
+});
+
 describe("renderEvent", () => {
   it("quotes user text and prints the final agent message only", () => {
     expect(renderEvent(e("message", { role: "user", text: "Fix it\nplease", final: true }))).toBe("\n> Fix it\n> please\n");

@@ -19,8 +19,13 @@ describe("notify", () => {
   it("builds the payload with a reply hint", () => {
     expect(notifyPayload(rec, q, "now")).toEqual({ task: "T-1", project: "demo", state: "waiting",
       question: { id: "Q1", text: "Which DB?", options: ["pg"], recommendation: "pg" }, summary: "Need a DB",
-      reply: 'agentic answer T-1 Q1 "…"', ts: "now" });
+      reply: 'agentic answer T-1 Q1 "…"', ts: "now", session: "main" });
     expect(notifyPayload({ ...rec, state: "idle" }, null, "now")).toMatchObject({ question: null, reply: 'agentic send T-1 "…"' });
+  });
+
+  it("the webhook payload names the question's session", () => {
+    expect(notifyPayload(rec, q, "t").session).toBe("main");
+    expect(notifyPayload(rec, null, "t").session).toBeNull();
   });
 
   it("appends every state change to the project events log as one line", () => {

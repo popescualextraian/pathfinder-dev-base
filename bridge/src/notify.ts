@@ -19,6 +19,7 @@ export function notifyPayload(rec: TaskRecord, q: Question | null, ts: string, r
     question: q ? { id: q.id, text: q.text, options: q.options, recommendation: q.recommendation } : null,
     summary: rec.summary,
     ...(result !== null ? { result: result.slice(0, 4096) } : {}),
+    session: q?.session ?? null,
     reply: q ? `agentic answer ${rec.task} ${q.id} "…"` : `agentic send ${rec.task} "…"`,
     ts,
   };

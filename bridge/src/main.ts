@@ -11,6 +11,7 @@ import { harnessFor } from "./harness.js";
 import { Notifier } from "./notify.js";
 import { parseHoldPid } from "./release.js";
 import { makeRedactor } from "./redact.js";
+import { NAME_RE } from "./sessions.js";
 import { startServer } from "./server.js";
 import { Store } from "./store.js";
 
@@ -70,21 +71,24 @@ async function followCmd(args: string[]): Promise<void> {
   let raw = false;
   let forever = false;
   let status = false;
+  let session: string | null = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--since") since = Number(args[++i]);
     else if (a === "--raw") raw = true;
     else if (a === "--forever") forever = true;
     else if (a === "--status") status = true;
-    else die(`unknown option ${a}; usage: agentic-bridge follow [--since N] [--raw] [--forever] [--status]`);
+    else if (a === "--session") session = args[++i] ?? "";
+    else die(`unknown option ${a}; usage: agentic-bridge follow [--since N] [--raw] [--forever] [--status] [--session NAME]`);
   }
   if (!Number.isInteger(since) || since < 0) die("--since needs a number >= 0");
+  if (session !== null && !NAME_RE.test(session)) die(`--session needs a session name (${NAME_RE})`);
   const token = process.env.AGENTIC_TASK_TOKEN ?? die("AGENTIC_TASK_TOKEN is not set (run follow inside the task container)");
   const port = process.env.AGENTIC_BRIDGE_PORT ?? "8765";
-  process.exit(await follow({ url: `ws://127.0.0.1:${port}`, token, since, raw, forever, status, out: (s) => process.stdout.write(s) }));
+  process.exit(await follow({ url: `ws://127.0.0.1:${port}`, token, since, raw, forever, status, session, out: (s) => process.stdout.write(s) }));
 }
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "follow") await followCmd(rest);
 else if (cmd === undefined) await serve().catch((e: Error) => die(e.message));
-else die(`unknown command ${cmd}; usage: agentic-bridge [follow [--since N] [--raw] [--forever] [--status]]`);
+else die(`unknown command ${cmd}; usage: agentic-bridge [follow [--since N] [--raw] [--forever] [--status] [--session NAME]]`);

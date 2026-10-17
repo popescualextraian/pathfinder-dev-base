@@ -3,7 +3,13 @@ import type { TaskEvent } from "./types.js";
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
+// Other sessions' entries start with [name] on their first line (later lines stay plain, so quotes and fences hold).
 export function renderEvent(e: TaskEvent): string | null {
+  const out = render(e);
+  return out === null || !e.name || e.name === "main" ? out : out.replace(/^(\n*)/, `$1[${e.name}] `);
+}
+
+function render(e: TaskEvent): string | null {
   const d = e.data;
   switch (e.type) {
     case "message":
