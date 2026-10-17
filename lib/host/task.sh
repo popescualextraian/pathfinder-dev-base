@@ -228,7 +228,16 @@ note_interrupted() {
 # task_status_json ID: the live status when the bridge answers with an object, else the same shape
 # from the task files: the record with the derived state, the inbox as a count and the open
 # questions. A record that is not a JSON object (the agent can write it) gives the id and unknown.
-task_status_json() {
+# task_ports ID: the published app ports of the task's container as {"3100": "127.0.0.1:49213"}, {} for none.
+task_ports() {
+  { docker port "$(task_container "$1")" 2>/dev/null || true; } | jq -Rnc --arg b "$TASK_PORT" \
+    '[inputs | capture("^(?<p>[0-9]+)/tcp -> (?<h>[0-9.]+:[0-9]+)$")? | select(.p != $b) | {(.p): .h}] | add // {}'
+}
+
+# task_status_json ID: the status object, with the published ports.
+task_status_json() { task_status_record "$1" | jq -c --argjson p "$(task_ports "$1")" '.ports = $p'; }
+
+task_status_record() {
   local st
   if [ "$(container_status "$1")" = running ] && bridge_req "$1" GET /status && [ "$BRIDGE_CODE" = 200 ] \
     && jq -cse 'select(length == 1 and (.[0] | type) == "object") | .[0]' <<<"$BRIDGE_BODY" 2>/dev/null; then

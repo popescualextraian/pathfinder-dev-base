@@ -39,7 +39,8 @@ This guide is how to use it. The full contract (states, API, events, files, ever
 `run` options: `--prompt-file F` (a long prompt from a file), `--agent claude|copilot`,
 `--model M`, `--allow push|open-pr|deploy:<target>` (repeatable), `--target T` (multi layout: the
 repository to work in), `--in ID` (run in that task's container, one task at a time),
-`--worktree` (own worktree and branch), `--auto-clean` (clean up after a normal end), `--id ID`,
+`--worktree` (own worktree and branch), `--auto-clean` (clean up after a normal end),
+`--publish PORT` (repeatable: open an app the task runs, see below), `--id ID`,
 `--keep-on-failure`, `--json`.
 
 ## A typical task
@@ -103,6 +104,11 @@ outside world:
   the result back. Your machine never runs git on the project; the credentials the container
   uses are the ones your project already passes in dev mode.
 - `--in ID` runs a new task in the container of task `ID`, one task at a time.
+- `--publish 3100` lets you open an app the task starts on port 3100: `agentic status ID` shows
+  `port 3100 -> 127.0.0.1:49213`, so you browse `http://127.0.0.1:49213`. The app must listen on
+  `0.0.0.0` inside the container (many dev servers default to `localhost`). The port is reachable
+  from your machine only, with no authentication added. The host port changes when the container
+  restarts, and ports cannot be added later (`--in` refuses `--publish`).
 - A container is kept after its task ends, so you can look at it. `clean` removes it; with
   `--auto-clean` a task that ends normally cleans up by itself.
 - `clean` refuses while the worktree has uncommitted changes or commits on no remote branch;

@@ -73,7 +73,7 @@ record() {
 @test "--worktree passes the branch to the bridge; --json names the target and the branch" {
   run --separate-stderr ag run --id T-2 --worktree --json "Fix it"
   [ "$status" -eq 0 ]
-  [ "$(jq -c . <<<"$output")" = '{"task":"T-2","container":"agentic-demo-task-T-2","port":"49153","target":null,"branch":"agentic/T-2-fix-it"}' ]
+  [ "$(jq -c . <<<"$output")" = '{"task":"T-2","container":"agentic-demo-task-T-2","port":"49153","ports":{},"target":null,"branch":"agentic/T-2-fix-it"}' ]
   grep -qx AGENTIC_WORKTREE=1 "$H/T-2/env"
   grep -qx AGENTIC_BRANCH=agentic/T-2-fix-it "$H/T-2/env"
 }
@@ -724,4 +724,42 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   export DOCKER_STATUS=exited
   ag status >/dev/null
   [ -e "$T/T-C/state.json" ]
+}
+
+@test "--publish PORT publishes it on loopback; run --json and status show the mapping" {
+  export DOCKER_PORTS='8765/tcp -> 127.0.0.1:49153\n3100/tcp -> 127.0.0.1:49213\n8080/tcp -> 127.0.0.1:49214'
+  run --separate-stderr ag run --id T-30 --publish 3100 --publish 8080 --json "serve the app"
+  [ "$status" -eq 0 ]
+  want='{"3100":"127.0.0.1:49213","8080":"127.0.0.1:49214"}'
+  [ "$(jq -c .ports <<<"$output")" = "$want" ]
+  call="$(docker_run_with agentic-task-hold)"
+  grep -qx -- 127.0.0.1::3100 <<<"$call"; grep -qx -- 127.0.0.1::8080 <<<"$call"
+  record T-30 idle   # the state.json the stub bridge does not write
+  export CURL_BODY='{"task":"T-30","agent":"claude","state":"idle","inbox":0,"questions":[]}'
+  run ag status T-30 --json
+  [ "$(jq -c .ports <<<"$output")" = "$want" ]
+  run ag status T-30
+  grep -qx 'port 3100 -> 127.0.0.1:49213' <<<"$output"
+  grep -qx 'port 8080 -> 127.0.0.1:49214' <<<"$output"
+}
+
+@test "status --json shows no ports for a task without any, also when its container is gone" {
+  record T-31 suspended
+  DOCKER_PORTS='8765/tcp -> 127.0.0.1:49153' run ag status T-31 --json
+  [ "$(jq -c .ports <<<"$output")" = '{}' ]
+  DOCKER_STATUS=exited run ag status T-31 --json
+  [ "$(jq -c .ports <<<"$output")" = '{}' ]
+}
+
+@test "--publish refuses what is not a port, the bridge port and --in, before creating anything" {
+  record T-1 idle
+  for p in abc 0 65536 8765 127.0.0.1:3100 0.0.0.0:3100:3100 ""; do
+    run ag run --id T-32 --publish "$p" "x"
+    [ "$status" -eq 1 ]
+    [ ! -e "$T/T-32" ]
+  done
+  DOCKER_BRIDGE_RC=1 run ag run --id T-32 --in T-1 --publish 3100 "x"
+  [ "$status" -eq 1 ]; [[ "$output" == *"fixed when the container is created"* ]]
+  [ ! -e "$T/T-32" ]
+  run ! grep -q -- '--- run' "$DOCKER_LOG"
 }

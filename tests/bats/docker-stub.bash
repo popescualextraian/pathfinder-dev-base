@@ -1,7 +1,7 @@
 # A docker stand-in. Every call is logged to $DOCKER_LOG ("--- <subcommand>" then one argument per line).
 # Controls: DOCKER_LABEL (image inspect -f output), DOCKER_IMAGE_EXISTS (1/0),
 # DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output),
-# DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PS (docker ps ids, space-separated),
+# DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PORTS (docker port without a port), DOCKER_PS (docker ps ids, space-separated),
 # DOCKER_MOUNTS (inspect .Mounts output, printed as is),
 # DOCKER_BRIDGE_RC (exit code of the `pgrep` that tells whether a bridge runs; default 0, running),
 # DOCKER_BRIDGE_RC_SEQ (exit codes of successive pgrep calls, space-separated; the last one repeats),
@@ -46,7 +46,10 @@ case "$1" in
     if [[ " $* " == *" agentic-task-start "* ]] && [ -n "${DOCKER_START_HOOK:-}" ]; then bash "$DOCKER_START_HOOK"; fi
     if [[ " $* " == *" /opt/agentic/task/worktree.sh "* ]] && [ -n "${DOCKER_WT_ERR:-}" ]; then echo "$DOCKER_WT_ERR" >&2; exit 1; fi
     exit "${DOCKER_EXEC_RC:-0}" ;;
-  port) [ -n "${DOCKER_PORT:-}" ] || exit 1; echo "127.0.0.1:$DOCKER_PORT" ;;
+  port)
+    # without a port: every mapping, from DOCKER_PORTS (\n separated) when set
+    if [ $# -eq 2 ] && [ -n "${DOCKER_PORTS:-}" ]; then printf '%b\n' "$DOCKER_PORTS"; exit 0; fi
+    [ -n "${DOCKER_PORT:-}" ] || exit 1; echo "127.0.0.1:$DOCKER_PORT" ;;
   ps) [ -z "${DOCKER_PS:-}" ] || printf '%s\n' $DOCKER_PS ;;
   run)
     if [[ " $* " == *" agentic-task-hold "* ]] && [ -z "${DOCKER_NO_READY:-}" ]; then

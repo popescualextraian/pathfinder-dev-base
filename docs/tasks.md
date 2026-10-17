@@ -31,7 +31,7 @@ exiting once the task waits, idles, stops or fails. `status [ID] [--all] [--json
 of this project (`--all`: every project; `--json`: one JSON object, or an array for a list).
 
 `run [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--model M] [--allow GRANT]...
-[--id ID] [--prompt-file F] [--keep-on-failure] [--json] "prompt"`. `run` validates before it
+[--publish PORT]... [--id ID] [--prompt-file F] [--keep-on-failure] [--json] "prompt"`. `run` validates before it
 creates anything and rolls back what it created on any failure.
 
 - `--target T`: in a multi-repository project, the repository the agent works in (a direct
@@ -41,6 +41,10 @@ creates anything and rolls back what it created on any failure.
 - `--worktree`: the task gets its own worktree and branch, made in the container. Its git metadata
   uses container paths (`/work/...`), so host git cannot open `.worktrees/<id>`, and a host
   `git worktree prune` would drop its metadata; work on it inside the container.
+- `--publish PORT`: publish container port `PORT` on a random host port on `127.0.0.1`, like the
+  bridge port. `run --json` and `status` show the mapping (`ports`). It is refused with `--in`:
+  ports are fixed when the container is created. The app must listen on `0.0.0.0` in the
+  container; no authentication is added.
 - `--auto-clean`: when the task ends normally, the bridge removes its worktree, stops, and ends
   the container the task created; the next `run` or `status` removes the leftovers.
 
@@ -225,7 +229,8 @@ The agent token on any other route gets 403; an unknown route gets 404. Grants: 
 ### The status object
 
 `state.json` (see Files) without `inbox` items (their count instead) plus `questions`, the open
-ones: `{id, source, text, options, recommendation, asked}`. `agentic status ID --json` prints it
+ones: `{id, source, text, options, recommendation, asked}`, and `ports`, the published app ports
+read from Docker (`{"3100": "127.0.0.1:49213"}`, `{}` for none or a stopped container). `agentic status ID --json` prints it
 from the bridge when it is live, else builds the same object from the task files with the state
 derived as described under `status`.
 

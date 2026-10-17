@@ -35,7 +35,7 @@ agentic <command> [options]          run inside a project repository
   dev [stop|recreate|status] [--host-profile wsl|none]
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
   target [NAME]                      the default repository of a multi-repository project
-  run "prompt" [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--allow push|open-pr|deploy:T]... [--id ID] [--json]
+  run "prompt" [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--allow push|open-pr|deploy:T]... [--publish PORT]... [--id ID] [--json]
                                      start a detached task in a new container (or in task ID's); prints its id
   status [ID] [--all] [--json]       list tasks, or one task with its open questions
   follow ID [--since N] [--raw]      stream a running task's events until it waits, idles or ends
@@ -437,7 +437,7 @@ run_cleanup() {
 
 cmd_run() {
   need_config
-  local prompt="" pfile="" agent="" model="" target="" in="" worktree=0 autoclean=0 id="" keep=0 json=0 sched="" allow=() a
+  local prompt="" pfile="" agent="" model="" target="" in="" worktree=0 autoclean=0 id="" keep=0 json=0 sched="" allow=() publish=() a
   while [ $# -gt 0 ]; do
     case "$1" in
       --prompt-file) optval "$@"; pfile="$2"; shift 2 ;;
@@ -448,6 +448,7 @@ cmd_run() {
       --worktree) worktree=1; shift ;;
       --auto-clean) autoclean=1; shift ;;
       --allow) optval "$@"; allow+=("$2"); shift 2 ;;
+      --publish) optval "$@"; publish+=("$2"); shift 2 ;;
       --id) optval "$@"; id="$2"; shift 2 ;;
       --keep-on-failure) keep=1; shift ;;
       --json) json=1; shift ;;
@@ -470,6 +471,13 @@ cmd_run() {
   agent="${agent:-claude}"
   case "$agent" in claude|copilot) ;; *) die "--agent must be claude or copilot" ;; esac
   for a in ${allow[@]+"${allow[@]}"}; do valid_grant "$a" || die "unknown --allow $a (push, open-pr, deploy:<target>)"; done
+  # only a bare port: a host address would publish beyond loopback
+  for a in ${publish[@]+"${publish[@]}"}; do
+    if ! { [[ "$a" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$a" -le 65535 ] && [ "$a" != "$TASK_PORT" ]; }; then
+      die "--publish takes a container port (1-65535, not the bridge port $TASK_PORT)"
+    fi
+  done
+  [ -z "$in" ] || [ "${#publish[@]}" = 0 ] || die "--publish cannot be used with --in: ports are fixed when the container is created"
   [ -n "$id" ] || id="$(new_task_id)"
   valid_task_id "$id" || die "the task id must match [A-Za-z0-9._-]+"
   if [ -e "$(task_dir "$id")" ] || [ -L "$(task_dir "$id")" ]; then die "task $id exists"; fi
@@ -541,6 +549,7 @@ cmd_run() {
       if [ -f "$data/$v" ] && [ ! -L "$data/$v" ]; then (umask 077; set -o noclobber; read_agent_file "$data/$v" > "$dir/home/$v"); fi
     done
     read -ra extra <<<"${AGENTIC_TASK_DOCKER_ARGS:-}"
+    for v in ${publish[@]+"${publish[@]}"}; do extra+=(-p "127.0.0.1::$v"); done
     rm -f "$dir/.ready"
     docker run -d --init --name "$c" --cap-drop ALL --security-opt no-new-privileges --label agentic.kind=task --label "agentic.task=$id" \
       -p "127.0.0.1::$TASK_PORT" "${RUN_ARGS[@]}" -v "$ws/tasks:/tasks" -v "$ws/events:/events" -e "AGENTIC_TASK_DIR=/tasks/$id" \
@@ -564,8 +573,8 @@ cmd_run() {
   RUN_ROLLBACK_ID=""; trap - EXIT INT TERM
   port="$(task_port "$id" || true)"   # none when the container already exited (auto-clean)
   if [ "$json" = 1 ]; then
-    jq -cn --arg t "$id" --arg c "$c" --arg p "$port" --arg tg "$tname" --arg b "$branch" \
-      '{task: $t, container: $c, port: $p, target: (if $tg == "" then null else $tg end), branch: (if $b == "" then null else $b end)}'
+    jq -cn --arg t "$id" --arg c "$c" --arg p "$port" --arg tg "$tname" --arg b "$branch" --argjson ps "$(task_ports "$id")" \
+      '{task: $t, container: $c, port: $p, ports: $ps, target: (if $tg == "" then null else $tg end), branch: (if $b == "" then null else $b end)}'
   else
     echo "$id"
   fi
@@ -593,6 +602,7 @@ cmd_status() {
       def opts: .options | if type == "array" then . else [] end;
       "\($id)  \(.state | c)\(if (.reason // "") != "" then " (" + (.reason | c) + ")" else "" end)  \(.agent | c)  \(.branch // "" | c)",
       (if (.summary // "") != "" then "summary: " + (.summary | c) else empty end),
+      (.ports | to_entries[] | "port \(.key) -> \(.value)"),
       (qs[] | "\(.id | c) (\(.source | c)): \(.text | c)\(if (opts | length) > 0 then " [" + (opts | map(c) | join(", ")) + "]" else "" end)\(if .recommendation then " recommended: " + (.recommendation | c) else "" end)"),
       (if (qs | length) > 0 then "reply: agentic answer \($id) \(qs[0].id | c) \"…\"" else empty end)' <<<"$st"
     return
