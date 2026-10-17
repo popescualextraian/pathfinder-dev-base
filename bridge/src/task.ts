@@ -136,7 +136,7 @@ export class TaskMachine {
         l.cancelling = true;
         for (const id of l.pending) {
           fx.push({ kind: "permission", question: id, optionId: null });
-          this.closeCancelled(id, fx);
+          this.closeQuestion(id, "cancelled", fx);
         }
         l.pending.clear();
         fx.push({ kind: "cancel", session: s.session });
@@ -209,6 +209,8 @@ export class TaskMachine {
         if (!s || !this.agentLive) return ok;
         this.ls(s.name).opening = false;
         this.setSession(s, "failed", `its conversation could not be restored: ${input.error}`, fx);
+        // its questions can no longer be answered; left open they would block the task
+        for (const q of this.openQuestions()) if (q.session === s.name) this.closeQuestion(q.id, "session failed", fx);
         return ok;
       }
 
@@ -361,17 +363,17 @@ export class TaskMachine {
     l.pending.clear();
   }
 
-  // closeCancelled: a permission question whose request was cancelled can no longer be answered; close it,
-  // or the session would wait on it after the turn ends.
-  private closeCancelled(id: string, fx: Effect[]): void {
+  // closeQuestion: a question that can no longer be answered (its request cancelled, its session failed);
+  // close it, or the session would wait on it after the turn ends.
+  private closeQuestion(id: string, text: string, fx: Effect[]): void {
     const q = this.questions.find((x) => x.id === id);
     if (!q || q.status !== "open") return;
     q.status = "answered";
-    q.answer = "cancelled";
+    q.answer = text;
     q.grant = [];
     q.answered = this.now();
     fx.push({ kind: "question", question: { ...q } });
-    fx.push({ kind: "emit", type: "answer", data: { question: id, text: "cancelled", grant: [] }, name: q.session });
+    fx.push({ kind: "emit", type: "answer", data: { question: id, text, grant: [] }, name: q.session });
     const s = this.find(q.session);
     if (s?.state === "waiting") this.setSession(s, "running", "", fx);
   }

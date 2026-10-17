@@ -586,6 +586,25 @@ describe("sessions", () => {
     });
   });
 
+  it("a failed session's open questions are closed: answer without an id reaches the next session's question and the task can go idle", () => {
+    const q = (id: string, session: string): Question => ({ id, source: "ask", text: id, options: [], recommendation: null, asked: "t", status: "open", session });
+    const t = m({
+      state: "suspended", session: "s1",
+      sessions: [newSession("main", null, "t0", { session: "s1" }), newSession("plan", null, "t0", { session: "s2" })],
+    }, [q("Q1", "plan"), q("Q2", "main")]);
+    t.apply({ kind: "boot", fresh: false });
+    t.apply({ kind: "userPrompt", text: "go", session: "plan" });
+    t.apply({ kind: "agentStarted", capabilities: { fork: true } });
+    const l = t.apply({ kind: "sessionLost", name: "plan", error: "gone" });
+    expect(fx(l)).toContainEqual({ kind: "emit", type: "answer", data: { question: "Q1", text: "session failed", grant: [] }, name: "plan" });
+    expect(t.openQuestions().map((x) => x.id)).toEqual(["Q2"]);
+    expect(t.apply({ kind: "answer", text: "yes", grant: [] })).toMatchObject({ ok: true });
+    expect(main(t).inbox).toEqual([{ kind: "answer", question: "Q2", text: "Answer to Q2: yes" }]);
+    t.apply({ kind: "sessionReady", name: "main", session: "s1" });
+    t.apply({ kind: "turnEnd", name: "main", stopReason: "end_turn", summary: "" });
+    expect(t.record.state).toBe("idle");
+  });
+
   it("agent exit with two turns outstanding requeues both texts and interrupts both", () => {
     const t = two();
     t.apply({ kind: "agentExit", error: "boom" });
