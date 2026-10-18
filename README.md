@@ -240,7 +240,7 @@ the platform's own scheduler starts the image with `AGENTIC_SCHEDULED=1`; the sc
 lives in the bridge, so it is the same in both places. Guide:
 [`docs/scheduled-runs.md`](docs/scheduled-runs.md).
 
-## Cost tracking
+## Cost tracking (WIP)
 
 What the agents of a project spend, per task, scheduled run and interactive session. A recommended
 plugin, added by `agentic init`, writes a snapshot of every Claude and Copilot session after each
