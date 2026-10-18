@@ -186,6 +186,32 @@ flowchart LR
   linkStyle default color:#1d2329
 ```
 
+Sessions can also run one after another. The hand-off is yours: `follow --session` returns when that
+session waits or goes idle, and you (or a script) prompt the next one with what it needs.
+
+```bash
+agentic follow T-20261012-a3f1 --session plan     # returns when plan is done
+agentic send T-20261012-a3f1 --session impl "Implement PLAN.md"
+agentic follow T-20261012-a3f1 --session impl
+agentic send T-20261012-a3f1 --session review "Review the diff against PLAN.md"
+```
+
+```mermaid
+%%{init: {"theme": "default", "themeVariables": {"edgeLabelBackground": "#ffffff"}}}%%
+flowchart LR
+  you["<b>You&nbsp;or&nbsp;a&nbsp;script</b><br/>follow&nbsp;--session<br/>send&nbsp;--session"]
+  subgraph agent["Agent&nbsp;process&nbsp;(ACP),&nbsp;chained"]
+    direction LR
+    plan["<b>plan</b><br/>writes&nbsp;PLAN.md"]
+    impl["<b>impl</b><br/>implements&nbsp;it"]
+    review["<b>review</b><br/>reviews&nbsp;the&nbsp;diff"]
+  end
+  you -. "drives each step" .-> agent
+  plan -- "idle → next prompt" --> impl
+  impl -- "idle → next prompt" --> review
+  linkStyle default color:#1d2329
+```
+
 This is a mechanism, not a workflow: roles such as plan, implement and review, and any handoff
 between sessions, are yours to build with the CLI or the API. Sessions share the task's worktree,
 so keep parallel sessions out of each other's files. Details: [`docs/tasks.md`](docs/tasks.md#sessions).
