@@ -163,6 +163,29 @@ agentic follow T-20261012-a3f1 --session impl
 agentic send T-20261012-a3f1 --session review "Also check the error handling"
 ```
 
+```mermaid
+%%{init: {"theme": "default", "themeVariables": {"edgeLabelBackground": "#ffffff"}}}%%
+flowchart LR
+  cli["<b>agentic&nbsp;CLI</b><br/>send&nbsp;/&nbsp;follow&nbsp;/&nbsp;answer<br/>--session&nbsp;NAME"]
+  subgraph task["Task container · one task ID"]
+    bridge["<b>Bridge</b><br/>task&nbsp;state&nbsp;·&nbsp;gate<br/>questions&nbsp;Q1,&nbsp;Q2…"]
+    subgraph agent["Agent process (ACP)"]
+      main["<b>main</b><br/>model&nbsp;A"]
+      impl["<b>impl</b><br/>model&nbsp;B"]
+      review["<b>review</b><br/>fork&nbsp;of&nbsp;main"]
+    end
+    work["<b>/work</b><br/>checkout&nbsp;or&nbsp;worktree<br/>one&nbsp;branch"]
+    home["<b>Task&nbsp;home</b><br/>saved&nbsp;conversations"]
+  end
+  cli -- "HTTP / WS" --> bridge
+  bridge --> main
+  bridge -- "by session name" --> impl
+  bridge --> review
+  main & impl & review --> work
+  agent -. "load / save" .- home
+  linkStyle default color:#1d2329
+```
+
 This is a mechanism, not a workflow: roles such as plan, implement and review, and any handoff
 between sessions, are yours to build with the CLI or the API. Sessions share the task's worktree,
 so keep parallel sessions out of each other's files. Details: [`docs/tasks.md`](docs/tasks.md#sessions).
