@@ -33,6 +33,9 @@ NAME` keeps the runs of one schedule.
 - **+?** marks tokens of a model without a price; `--by model` shows which. Add a price in
   `.agentic/cost/ccusage.json` (below).
 - A session counts once, with its latest snapshot, in the window of that snapshot's day.
+- A task counts every session of its container, not only the main one; **SESSIONS** says how many.
+- Subagents count in the session that started them (ccusage adds them to their parent); there is no
+  line per subagent.
 
 The ledger is `$AGENTIC_WORKSPACES/<project>/cost/ledger.jsonl` on the host (`/cost` in every
 container). It survives `clean` and recreation. It only grows: when `agentic cost` refuses it as
