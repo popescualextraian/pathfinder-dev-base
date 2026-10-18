@@ -240,6 +240,24 @@ the platform's own scheduler starts the image with `AGENTIC_SCHEDULED=1`; the sc
 lives in the bridge, so it is the same in both places. Guide:
 [`docs/scheduled-runs.md`](docs/scheduled-runs.md).
 
+## Cost tracking
+
+What the agents of a project spend, per task, scheduled run and interactive session. A recommended
+plugin, added by `agentic init`, writes a snapshot of every Claude and Copilot session after each
+turn into one ledger per project (`$AGENTIC_WORKSPACES/<project>/cost/ledger.jsonl`, `/cost` in
+the container); it survives `clean` and recreation. `agentic cost` sums it.
+
+```bash
+agentic cost                              # one line per task run, scheduled run and dev
+agentic cost --since 2026-10-01 --by model
+agentic cost --schedule nightly-deps
+agentic cost --json                       # cost-summary/v1, for a UI
+```
+
+The USD figures are the list price of the tokens (ccusage, offline), an estimate: a subscription
+bills differently. Install in an existing project, prices, other harnesses and the contracts:
+[`docs/cost.md`](docs/cost.md).
+
 ## Project wiki (WIP)
 
 > **Work in progress:** the wiki skill is not finished yet; commands and page layout may change.
@@ -294,9 +312,6 @@ Three ways, all standard:
   and extra repositories: [docs/setup.md](docs/setup.md).
 - **Plain Docker** for everything else: `tools:` presets and `tools.apt` in `agentic.yaml`,
   `.agentic/Dockerfile.extra`, or an organisation-wide [overlay](docs/overlay.md) image.
-
-Cost tracking is a recommended plugin: every session's token cost lands in one ledger per project,
-and `agentic cost` sums it ([docs/cost.md](docs/cost.md)).
 
 Running the container on a VM or a managed service: [docs/remote.md](docs/remote.md). Every
 field: [docs/configuration.md](docs/configuration.md). Design:
