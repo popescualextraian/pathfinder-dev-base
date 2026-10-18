@@ -99,9 +99,7 @@ installed by hand inside the container do not. `claude --continue` brings a conv
 Parallel agents that change code each need their own git worktree. Full guide:
 [`docs/dev-mode.md`](docs/dev-mode.md).
 
-## Detached tasks (WIP)
-
-> **Work in progress:** detached tasks are not finished yet; commands and behaviour may change.
+## Detached tasks
 
 `agentic run` starts an unattended task in a container set up like the dev
 container, with your checkout at `/work` (`--worktree` adds a worktree of its own); Claude Code or
@@ -147,6 +145,27 @@ flowchart LR
 
 Full guide: [`docs/detached-mode.md`](docs/detached-mode.md). States, API, events, files and
 environment: [`docs/tasks.md`](docs/tasks.md).
+
+## Sessions
+
+A task can hold several named conversations with its agent: one container, one checkout or
+worktree, one branch, and as many sessions as the work needs. The first is `main`; every command
+without `--session` uses it. Each session has its own context and, if you want, its own model,
+and sessions can run at the same time. On Claude a session can start as a fork of another.
+Questions, events, `follow` and the transcript say which session they come from.
+
+```bash
+agentic run --worktree "Plan the move of the auth module to the new API; write the plan to PLAN.md"
+agentic session add T-20261012-a3f1 impl --model sonnet "Implement PLAN.md step by step"
+agentic session add T-20261012-a3f1 review --fork main "Review the diff against the plan"
+agentic session list T-20261012-a3f1
+agentic follow T-20261012-a3f1 --session impl
+agentic send T-20261012-a3f1 --session review "Also check the error handling"
+```
+
+This is a mechanism, not a workflow: roles such as plan, implement and review, and any handoff
+between sessions, are yours to build with the CLI or the API. Sessions share the task's worktree,
+so keep parallel sessions out of each other's files. Details: [`docs/tasks.md`](docs/tasks.md#sessions).
 
 ## Scheduled runs
 
