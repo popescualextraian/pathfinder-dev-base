@@ -239,6 +239,26 @@ ag status >/dev/null
 [ ! -e "$tasks/$id4" ] || fail "task 4: auto-clean left the record"
 [ -z "$(docker ps -aq --filter "name=agentic-smoke-project-task-$id4")" ] || fail "task 4: auto-clean left the container"
 
+step "an app in a task: listed, reachable inside, logs, stopped"
+id5="$(ag run "apps")"
+wait_state "$id5" idle || fail "app task: first turn"
+c5="agentic-smoke-project-task-$id5"
+bport="$(docker port "$c5" 8765/tcp | head -n1 | sed 's/.*://')"
+apphdr="$tmp/app-hdr"
+(umask 077; printf 'Authorization: Bearer %s\n' "$(sed -n 's/^AGENTIC_TASK_TOKEN=//p' "$AGENTIC_DATA/projects/smoke-project/tasks/$id5/env")" > "$apphdr")
+app_api() { curl -fsS --noproxy '*' -m 60 -H "@$apphdr" -X "$1" "http://127.0.0.1:$bport$2"; }
+app_state() { app_api GET /apps | jq -r '.[] | select(.name == "web") | .state'; }
+[ "$(app_state)" = stopped ] || fail "app: not listed as stopped"
+app_api POST /apps/web/start >/dev/null || fail "app: start"
+[ "$(app_state)" = running ] || fail "app: not running after start"
+for _ in $(seq 1 30); do docker exec "$c5" curl -fsS --noproxy '*' -o /dev/null http://127.0.0.1:8099/ 2>/dev/null && break; sleep 1; done
+docker exec "$c5" curl -fsS --noproxy '*' -o /dev/null http://127.0.0.1:8099/ || fail "app: not reachable inside the container"
+app_api GET '/apps/web/logs?lines=50' | jq -r '.lines[]' | grep -q 'Serving HTTP' || fail "app: no server line in the logs"
+app_api POST /apps/web/stop >/dev/null || fail "app: stop"
+[ "$(app_state)" = stopped ] || fail "app: still running after stop"
+ag stop "$id5" >/dev/null
+ag clean "$id5" >/dev/null || fail "app task: clean"
+
 step "a scheduled run: summary, result, nothing left"
 mkdir -p "$tmp/bin"; printf '#!/bin/sh\n[ "$1" = -l ] && cat "%s/crontab" 2>/dev/null; [ "$1" = - ] && cat > "%s/crontab"; exit 0\n' "$tmp" "$tmp" > "$tmp/bin/crontab"
 chmod +x "$tmp/bin/crontab"
