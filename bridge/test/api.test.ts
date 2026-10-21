@@ -247,6 +247,8 @@ describe("handle", () => {
         expect(handle(req("POST", "/app", b, agent), t, tokens, access)).toMatchObject({ status: 400 });
       }
       expect(seen).toHaveLength(2);
+      const refused = target({ ok: false, code: "bad_request", message: "unknown app api" }).t;
+      expect(handle(req("POST", "/app", { name: "api", action: "started" }, agent), refused, tokens, access)).toEqual({ status: 400, json: { error: { code: "bad_request", message: "unknown app api" } } });
     });
     it("the agent token cannot reach the control routes", async () => {
       const { t, appCalls } = target();

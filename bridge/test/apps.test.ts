@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { Apps, autostartNames, cleanText, spawnRunner, type RunResult } from "../src/apps.js";
+import { appNames, Apps, autostartNames, cleanText, spawnRunner, type RunResult } from "../src/apps.js";
 
 const web = { name: "web", state: "stopped", ports: [3000], url: "/", since: null, exit_code: null };
 const ok = (out: string): RunResult => ({ code: 0, out, err: "", timedOut: false });
@@ -34,7 +34,7 @@ describe("Apps", () => {
     expect(calls.map((c) => c.args)).toEqual([["list", "--json"]]);
   });
 
-  it("start and restart run with the long timeout that covers prepare; stop with the short one; the app comes back", async () => {
+  it("start covers prepare, stop covers teardown, restart covers both; the app comes back", async () => {
     const running = { ...web, state: "running", since: 1 };
     let after = false;
     const { apps, calls } = fake(() => { after = true; return ok(""); }, () => ok(JSON.stringify([after ? running : web])));
@@ -43,8 +43,8 @@ describe("Apps", () => {
     await apps.act("/w", "web", "stop");
     expect(calls.filter((c) => c.args[0] !== "list")).toEqual([
       { args: ["start", "web"], timeout: 660_000, work: "/w" },
-      { args: ["restart", "web"], timeout: 660_000, work: "/w" },
-      { args: ["stop", "web"], timeout: 10_000, work: "/w" },
+      { args: ["restart", "web"], timeout: 840_000, work: "/w" },
+      { args: ["stop", "web"], timeout: 180_000, work: "/w" },
     ]);
   });
 
@@ -53,6 +53,7 @@ describe("Apps", () => {
     expect(await act(fail("agentic-app: app web is preparing; start it again when that ends\n"))).toMatchObject({ status: 409, code: "conflict" });
     expect(await act(fail("agentic-app: unknown app web\n"))).toMatchObject({ status: 404, code: "not_found" });
     expect(await act({ code: null, out: "", err: "", timedOut: true })).toMatchObject({ status: 504, code: "app_timeout" });
+    expect(await act({ code: null, out: "", err: "", timedOut: false, tooLarge: true })).toMatchObject({ status: 502, code: "app_failed", message: "agentic-app output too large" });
     const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`).join("\n");
     const r = await act(fail(`agentic-app: prepare of web failed (exit 2); its last lines:\n${lines}\n\u001b[31mred\u0007`));
     expect(r).toMatchObject({ ok: false, status: 502, code: "app_failed" });
@@ -86,6 +87,10 @@ describe("autostartNames", () => {
   it("is empty for no apps or a config that is no JSON object", () => {
     for (const s of ["{}", "", "nope", "[]", '{"apps":[1]}', "null"]) expect(autostartNames(s)).toEqual([]);
   });
+  it("appNames names every configured app with a valid name", () => {
+    expect(appNames(JSON.stringify({ apps: { web: { autostart: true }, db: {}, "Bad;x": {}, n: 1 } }))).toEqual(["web", "db"]);
+    expect(appNames("nope")).toEqual([]);
+  });
 });
 
 describe("spawnRunner", () => {
@@ -109,6 +114,12 @@ describe("spawnRunner", () => {
     const { p } = script("setTimeout(() => {}, 10000);");
     const r = await spawnRunner(p, process.env)([], 200, "/w");
     expect(r.timedOut).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("output over the buffer is too large, not a timeout", async () => {
+    const { p } = script("process.stdout.write(\"x\".repeat(9 * 1024 * 1024));");
+    const r = await spawnRunner(p, process.env)([], 5000, "/w");
+    expect(r).toMatchObject({ timedOut: false, tooLarge: true });
   });
 
   it("a missing program is a failed run, not a throw", async () => {

@@ -209,7 +209,7 @@ class StubAgent implements AgentLike {
 }
 
 let stubDir = "";
-async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch; dir?: string; apps?: Apps; autostart?: () => string[] } = {}) {
+async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch; dir?: string; apps?: Apps; autostart?: () => string[]; appNames?: () => string[] } = {}) {
   const dir = opts.dir ?? taskDir();
   stubDir = dir;
   const cfg: Config = { ...loadConfig({ AGENTIC_TASK_TOKEN: "task-token-0123456789", AGENTIC_AGENT_TOKEN: "agent-token-0123456789",
@@ -227,6 +227,7 @@ async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch; dir?: stri
     worktree: () => ({ ok: true, out: "", err: "" }), release: () => {},
     exit: (c) => exits.push(c), now: () => new Date().toISOString(), log: () => {},
     ...(opts.apps ? { apps: opts.apps } : {}), ...(opts.autostart ? { autostart: opts.autostart } : {}),
+    ...(opts.appNames ? { appNames: opts.appNames } : {}),
   });
   running.push({ bridge, close: async () => {} });
   return { bridge, store, agents, exits, bodies, script };
@@ -860,11 +861,27 @@ describe("apps in the bridge", () => {
     expect(await bridge.appAction("web", "start")).toMatchObject({ ok: false, status: 404 });
   });
 
-  it("an app report becomes an app event of the task", async () => {
-    const { bridge, store } = await stubbed();
+  it("an app report of a configured app becomes an app event of the task; another name is refused", async () => {
+    const { bridge, store } = await stubbed({ appNames: () => ["web"] });
     bridge.boot();
     await waitState(bridge, "idle");
-    bridge.command({ kind: "app", name: "web", action: "started", exitCode: null });
+    expect(bridge.command({ kind: "app", name: "web", action: "started", exitCode: null })).toMatchObject({ ok: true });
+    expect(bridge.command({ kind: "app", name: "api", action: "started", exitCode: null })).toMatchObject({ ok: false, code: "bad_request" });
     expect(store.readEvents(0).filter((e) => e.type === "app")).toMatchObject([{ name: null, data: { name: "web", action: "started", exit_code: null } }]);
+    const none = await stubbed();
+    none.bridge.boot();
+    await waitState(none.bridge, "idle");
+    expect(none.bridge.command({ kind: "app", name: "web", action: "started", exitCode: null })).toMatchObject({ ok: false, code: "bad_request" });
+  });
+
+  it("an app report does not restart the idle timer", async () => {
+    const { bridge, exits } = await stubbed({ idleMs: 300, appNames: () => ["web"] });
+    bridge.boot();
+    await waitState(bridge, "idle");
+    await tick(180);
+    bridge.command({ kind: "app", name: "web", action: "exited", exitCode: 1 });
+    await tick(200);
+    expect(bridge.status().state).toBe("suspended");
+    expect(exits).toEqual([0]);
   });
 });

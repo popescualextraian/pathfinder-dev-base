@@ -34,6 +34,8 @@ export interface BridgeDeps {
   apps?: Apps;
   // the apps to start once per task, from the resolved config
   autostart?(): string[];
+  // the configured app names (resolved config): the only names an app report may carry
+  appNames?(): string[];
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -141,6 +143,9 @@ export class Bridge implements ApiTarget {
   }
 
   command(input: Input): Outcome {
+    if (input.kind === "app" && !(this.d.appNames?.() ?? []).includes(input.name)) {
+      return { ok: false, code: "bad_request", message: `unknown app ${input.name}` };
+    }
     return this.run(input);
   }
 
@@ -227,14 +232,16 @@ export class Bridge implements ApiTarget {
   private run(input: Input): Outcome {
     const m = this.m();
     const out = m.apply(input);
-    // any input counts as activity: the machine only emits timer effects on state changes
-    if (input.kind !== "idleTimeout") this.touch();
+    // any input counts as activity but an app report (an app's crash keeps no container alive); the
+    // machine only emits timer effects on state changes
+    const activity = input.kind !== "idleTimeout" && input.kind !== "app";
+    if (activity) this.touch();
     if (!out.ok) return out;
     // the record first: the gate reads allowed_actions from it before the agent retries
     this.d.store.writeRecord(m.record);
     for (const e of out.effects) this.perform(e);
     this.d.store.writeRecord(m.record);
-    if (input.kind !== "idleTimeout") this.touch();
+    if (activity) this.touch();
     if (this.phase === "off" && this.cleanable(input)) this.autoClean();
     if (input.kind === "turnEnd" && input.name === MAIN && (this.phase === "work" || this.phase === "summary")) this.scheduledStep();
     return out;

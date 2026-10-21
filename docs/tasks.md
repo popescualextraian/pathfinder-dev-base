@@ -247,6 +247,15 @@ The agent token on any other route gets 403; an unknown route gets 404. Grants: 
 401 carries the code `unauthorized` and no detail; 500 `internal` for an unexpected failure; 503
 `starting` until the bridge can take commands.
 
+### Apps (note)
+
+The app routes (`GET /apps`, `POST /apps/NAME/start|stop|restart`, `GET /apps/NAME/logs`) and
+`POST /app` (agent token, configured app names only; an app report does not restart the idle timer)
+run `agentic-app` in the container. `autostart` apps are started once per task, on the first boot
+of the bridge after the checkout is ready, also when that boot is a lazy one. The marker
+`apps-autostarted` in the task directory is written before the starts finish, so a start that
+fails or is cut short is not tried again on a later boot; a failure shows as an `error` event.
+
 ### The status object
 
 `state.json` (see Files) without `inbox` items (their count instead) plus `questions`, the open

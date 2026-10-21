@@ -185,8 +185,8 @@ export function handle(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts:
       if (!action) return err(400, "bad_request", `action must be one of ${APP_ACTIONS.join(", ")}`);
       const code = body.exit_code;
       if (code !== undefined && code !== null && !Number.isInteger(code)) return err(400, "bad_request", "exit_code must be an integer");
-      target.command({ kind: "app", name: body.name, action, exitCode: typeof code === "number" ? code : null });
-      return { status: 204 };
+      // the target refuses a name that is no configured app
+      return outcome(target.command({ kind: "app", name: body.name, action, exitCode: typeof code === "number" ? code : null }), () => ({ status: 204 }));
     }
     default:
       return err(404, "not_found", "no such route");
