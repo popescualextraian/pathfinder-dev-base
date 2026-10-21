@@ -199,3 +199,73 @@ setup:
   [ "$status" -eq 1 ]
   [[ "$output" == *"overlay defaults cannot hold setup:"* ]]
 }
+
+APPS_OK=$'version: 2\nproject: demo\napps:\n  web:\n    run: npm start\n    ports: [3000, 3001]\n    url: /app\n    dir: web\n    env: {NODE_ENV: development}\n    env_files:\n      - {from: env/web.env, to: web/.env}\n    prepare: npm ci\n    teardown: rm -rf tmp\n    autostart: true\n    idle_stop: 30m\n  api:\n    run: ./serve\n    ports: [8080]'
+
+@test "valid apps pass" {
+  write "$P/agentic.yaml" "$APPS_OK"
+  run "$AC" validate "$P"
+  [ "$status" -eq 0 ]
+}
+
+@test "an app needs run, and unknown app keys are refused" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  web:\n    ports: [3000]\n    foo: 1'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps.web.run: is required"* ]]
+  [[ "$output" == *".apps.web.foo: unknown key"* ]]
+}
+
+@test "a bad app name is refused with its path" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  "Web App":\n    run: x'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps.Web App: app name must match"* ]]
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  "web;x":\n    run: x'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+}
+
+@test "a port out of range is refused with its path" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    ports: [3000, 70000]'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps.web.ports[1]: port 70000 is out of range"* ]]
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    ports: [0]'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps.web.ports[0]"* ]]
+}
+
+@test "a port used by two apps is refused" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  a:\n    run: x\n    ports: [3000]\n  b:\n    run: y\n    ports: [3000]'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps: port 3000 is used by a, b"* ]]
+}
+
+@test "an app env key that names a token, key, secret or password is refused, any case" {
+  for k in API_TOKEN db_password MY_SECRET API_KEY; do
+    write "$P/agentic.yaml" "$(printf 'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    env: {%s: v}' "$k")"
+    run "$AC" validate "$P"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *".apps.web.env.$k:"* ]]
+  done
+}
+
+@test "env_files.from must be relative and stay inside .agentic" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    env_files:\n      - {from: ../.env, to: .env}\n      - {from: /etc/passwd, to: .env}\n      - {from: ok.env, to: ../x}'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps.web.env_files[0].from: must be a relative path"* ]]
+  [[ "$output" == *".apps.web.env_files[1].from: must be a relative path"* ]]
+  [[ "$output" == *".apps.web.env_files[2].to: must be a relative path"* ]]
+}
+
+@test "idle_stop and url have a form" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    url: app\n    idle_stop: soon'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps.web.url: does not match"* ]]
+  [[ "$output" == *".apps.web.idle_stop: does not match"* ]]
+}

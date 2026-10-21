@@ -31,5 +31,5 @@ RUN ["agentic-apply","--finish"]
 USER root
 RUN agentic-inventory > /opt/agentic/inventory.txt
 USER dev
-LABEL agentic.project="demo" agentic.config.hash="HASH" agentic.docker_socket="true" agentic.harness="claude" agentic.run="bW91bnQJfi8uYXdzCS9ob21lL2Rldi8uYXdzCXJvCW1vdW50IH4vLmF3cyAvaG9tZS9kZXYvLmF3cyAtLXJlYWRvbmx5CnZvbHVtZQltMgkvaG9tZS9kZXYvLm0yCQl2b2x1bWUgbTIgL2hvbWUvZGV2Ly5tMgo="
+LABEL agentic.project="demo" agentic.config.hash="HASH" agentic.docker_socket="true" agentic.harness="claude" agentic.run="bW91bnQJfi8uYXdzCS9ob21lL2Rldi8uYXdzCXJvCW1vdW50IH4vLmF3cyAvaG9tZS9kZXYvLmF3cyAtLXJlYWRvbmx5CnZvbHVtZQltMgkvaG9tZS9kZXYvLm0yCQl2b2x1bWUgbTIgL2hvbWUvZGV2Ly5tMgo=" agentic.apps="e30="
 WORKDIR /work
