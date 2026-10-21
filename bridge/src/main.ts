@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentProcess } from "./agent.js";
+import { Apps, autostartNames, spawnRunner } from "./apps.js";
 import { Bridge } from "./bridge.js";
 import { agentEnvironment, loadConfig } from "./config.js";
 import { follow } from "./follow.js";
@@ -49,6 +50,9 @@ async function serve(): Promise<void> {
         log(`release failed: ${(e as Error).message}`);
       }
     },
+    // agentic-app gets what the agent gets (the agent token for its event posts, never the task token)
+    apps: new Apps(spawnRunner(join(agentic, "bin", "agentic-app"), env)),
+    autostart: () => { try { return autostartNames(readFileSync(join(stateDir, "config.json"), "utf8")); } catch { return []; } },
     exit: (code) => { log(`exit ${code}`); void bridge.shutdownAgent().then(() => close?.()).finally(() => process.exit(code)); },
   });
   const server = await startServer({ port: cfg.port, host: "0.0.0.0", tokens: cfg.tokens, access: { hosts: cfg.hosts, origins: cfg.origins },

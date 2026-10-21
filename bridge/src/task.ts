@@ -1,6 +1,7 @@
 // The task state machine (spec §6), one turn state per session (sessions spec D5–D16).
 // Pure: inputs in, effects out; bridge.ts performs the effects.
 import { MAIN, MAX_SESSIONS, NAME_RE, deriveState, newSession } from "./sessions.js";
+import type { AppAction } from "./apps.js";
 import type { AgentCaps, EventType, PermissionOption, Question, SessionRecord, SessionState, State, TaskRecord } from "./types.js";
 
 export type Effect =
@@ -31,7 +32,8 @@ export type Input =
   | { kind: "turnEnd"; name: string; stopReason: string; summary: string }
   | { kind: "agentExit"; error: string }
   | { kind: "idleTimeout" }
-  | { kind: "gate"; rule: string; command: string; sessionId?: string };
+  | { kind: "gate"; rule: string; command: string; sessionId?: string }
+  | { kind: "app"; name: string; action: AppAction; exitCode: number | null };
 
 export type Outcome =
   | { ok: true; effects: Effect[]; value?: { id: string } }
@@ -252,6 +254,10 @@ export class TaskMachine {
       case "gate":
         fx.push({ kind: "emit", type: "gate", data: { rule: input.rule, command: input.command },
           name: input.sessionId === undefined ? null : this.byId(input.sessionId).name });
+        return ok;
+
+      case "app":
+        fx.push({ kind: "emit", type: "app", data: { name: input.name, action: input.action, exit_code: input.exitCode }, name: null });
         return ok;
     }
   }

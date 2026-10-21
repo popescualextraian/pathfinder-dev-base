@@ -1,6 +1,8 @@
 // The orchestrator: feeds inputs to the state machine and performs its effects (spec §6).
 import { spawnSync } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import type { ApiTarget } from "./api.js";
+import type { AppOutcome, Apps, AppVerb, AppView } from "./apps.js";
 import type { AgentHooks, AgentLike } from "./agent.js";
 import type { Config } from "./config.js";
 import { UpdateMapper, type Mapped } from "./map.js";
@@ -28,6 +30,10 @@ export interface BridgeDeps {
   exit(code: number): void;
   now(): string;
   log(line: string): void;
+  // the task's apps (agentic-app); none when absent
+  apps?: Apps;
+  // the apps to start once per task, from the resolved config
+  autostart?(): string[];
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -106,6 +112,7 @@ export class Bridge implements ApiTarget {
       this.runTimer = setTimeout(() => this.onRunTimeout(), config.runTimeoutMs);
     }
     this.run({ kind: "boot", fresh });
+    this.autostart();
   }
 
   ready(): boolean {
@@ -139,6 +146,47 @@ export class Bridge implements ApiTarget {
 
   events(since: number, limit: number, keep?: (e: TaskEvent) => boolean): TaskEvent[] {
     return this.d.store.readEvents(since, limit, keep);
+  }
+
+  async apps(): Promise<AppOutcome<AppView[]>> {
+    if (!this.d.apps) return { ok: true, value: [] };
+    return this.masked(await this.d.apps.list(this.m().record.work));
+  }
+
+  async appAction(name: string, verb: AppVerb): Promise<AppOutcome<AppView>> {
+    const rec = this.m().record;
+    if (rec.state === "stopped" || rec.cleaned) return { ok: false, status: 409, code: "conflict", message: "the task is stopped" };
+    if (!this.d.apps) return { ok: false, status: 404, code: "not_found", message: `unknown app ${name}` };
+    return this.masked(await this.d.apps.act(rec.work, name, verb));
+  }
+
+  async appLogs(name: string, lines: number): Promise<AppOutcome<string[]>> {
+    if (!this.d.apps) return { ok: false, status: 404, code: "not_found", message: `unknown app ${name}` };
+    return this.masked(await this.d.apps.logs(this.m().record.work, name, lines));
+  }
+
+  // masked: an app's output and refusals leave the bridge with the tokens masked
+  private masked<T>(o: AppOutcome<T>): AppOutcome<T> {
+    return redactDeep(o, this.redact);
+  }
+
+  // autostart: once per task (a marker in the task dir), after the boot made the checkout ready; one
+  // app after the other, a failure is an error event.
+  private autostart(): void {
+    const apps = this.d.apps;
+    if (!apps || !this.d.autostart) return;
+    const marker = this.d.store.path("apps-autostarted");
+    if (existsSync(marker) || this.m().record.state === "stopped") return;
+    const names = this.d.autostart();
+    writeFileSync(marker, names.map((n) => `${n}\n`).join(""));
+    const work = this.m().record.work;
+    void (async () => {
+      for (const name of names) {
+        if (this.down) return;
+        const r = await apps.act(work, name, "start");
+        if (!r.ok && !this.down) this.emit("error", { message: `autostart of app ${name} failed: ${r.message}` }, null);
+      }
+    })().catch((err) => this.log(`autostart failed: ${message(err)}`));
   }
 
   subscribe(fn: (e: TaskEvent) => void): () => void {

@@ -1,6 +1,7 @@
 // Routes of API version 1 as plain functions (spec §8.2): transport-neutral, so an outbound mode
 // could serve them over another connection.
 import { createHash, timingSafeEqual } from "node:crypto";
+import { APP_ACTIONS, APP_NAME_RE, DEFAULT_LOG_LINES, MAX_LOG_LINES, type AppOutcome, type AppVerb, type AppView } from "./apps.js";
 import type { Input, Outcome } from "./task.js";
 import type { SessionView } from "./sessions.js";
 import type { TaskEvent } from "./types.js";
@@ -11,6 +12,9 @@ export interface ApiTarget {
   command(input: Input): Outcome;
   sessions(): SessionView[];
   events(since: number, limit: number, keep?: (e: TaskEvent) => boolean): TaskEvent[];
+  apps(): Promise<AppOutcome<AppView[]>>;
+  appAction(name: string, verb: AppVerb): Promise<AppOutcome<AppView>>;
+  appLogs(name: string, lines: number): Promise<AppOutcome<string[]>>;
 }
 export interface Tokens { task: string; agent: string }
 export interface AccessOptions { hosts: string[]; origins: string[] }
@@ -69,12 +73,44 @@ function outcome(o: Outcome, ok: () => ApiResponse): ApiResponse {
   return o.ok ? ok() : err(STATUS[o.code], o.code, o.message);
 }
 
-export function handle(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts: AccessOptions): ApiResponse {
+// what the agent token may do: ask, report gate refusals and app events; never control apps
+const AGENT_ROUTES = new Set(["POST /ask", "POST /gate", "POST /app"]);
+
+// admit: the checks every route passes first (access, the agent token's routes, readiness); null admits.
+function admit(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts: AccessOptions): ApiResponse | null {
   const access = checkAccess(req.headers, tokens, opts);
   if ("status" in access) return access;
-  const route = `${req.method} ${req.path}`;
-  if (access.scope === "agent" && route !== "POST /ask" && route !== "POST /gate") return err(403, "forbidden", "this token may only ask");
+  if (access.scope === "agent" && !AGENT_ROUTES.has(`${req.method} ${req.path}`)) return err(403, "forbidden", "this token may only ask and report");
   if (!target.ready()) return err(503, "starting", "the bridge is starting");
+  return null;
+}
+
+const APP_ROUTE = /^\/apps\/([^/]+)\/(start|stop|restart|logs)$/;
+const fromApp = <T>(o: AppOutcome<T>, ok: (v: T) => ApiResponse): ApiResponse => (o.ok ? ok(o.value) : err(o.status, o.code, o.message));
+
+// serve: every route; the app routes run agentic-app and answer later, the others go to handle.
+export async function serve(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts: AccessOptions): Promise<ApiResponse> {
+  const m = APP_ROUTE.exec(req.path);
+  if (req.path !== "/apps" && !m) return handle(req, target, tokens, opts);
+  const refused = admit(req, target, tokens, opts);
+  if (refused) return refused;
+  if (!m) return req.method === "GET" ? fromApp(await target.apps(), (v) => ({ status: 200, json: v })) : err(404, "not_found", "no such route");
+  const [, name = "", verb = ""] = m;
+  if (req.method !== (verb === "logs" ? "GET" : "POST")) return err(404, "not_found", "no such route");
+  // checked before anything runs: an encoded or special character never reaches agentic-app
+  if (!APP_NAME_RE.test(name)) return err(404, "not_found", "unknown app");
+  if (verb !== "logs") return fromApp(await target.appAction(name, verb as AppVerb), (v) => ({ status: 202, json: v }));
+  const raw = req.query.get("lines");
+  if (raw !== null && !/^[0-9]{1,9}$/.test(raw)) return err(400, "bad_request", `lines must be a number from 1 to ${MAX_LOG_LINES}`);
+  const lines = raw === null ? DEFAULT_LOG_LINES : Math.min(Number(raw), MAX_LOG_LINES);
+  if (lines < 1) return err(400, "bad_request", `lines must be a number from 1 to ${MAX_LOG_LINES}`);
+  return fromApp(await target.appLogs(name, lines), (v) => ({ status: 200, json: { lines: v } }));
+}
+
+export function handle(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts: AccessOptions): ApiResponse {
+  const refused = admit(req, target, tokens, opts);
+  if (refused) return refused;
+  const route = `${req.method} ${req.path}`;
   if (Buffer.byteLength(req.body) > MAX_BODY) return err(413, "bad_request", "body too large");
   let body: Record<string, unknown> = {};
   if (req.method === "POST" && req.body.trim()) {
@@ -142,6 +178,16 @@ export function handle(req: ApiRequest, target: ApiTarget, tokens: Tokens, opts:
     case "POST /gate":
       target.command({ kind: "gate", rule: isStr(body.rule) ? body.rule : "", command: isStr(body.command) ? body.command : "", ...(session === undefined ? {} : { sessionId: session }) });
       return { status: 204 };
+    case "POST /app": {
+      // agentic-app reports a start, stop, exit or failed prepare (agent token)
+      if (!isStr(body.name) || !APP_NAME_RE.test(body.name)) return err(400, "bad_request", "name must be an app name");
+      const action = APP_ACTIONS.find((a) => a === body.action);
+      if (!action) return err(400, "bad_request", `action must be one of ${APP_ACTIONS.join(", ")}`);
+      const code = body.exit_code;
+      if (code !== undefined && code !== null && !Number.isInteger(code)) return err(400, "bad_request", "exit_code must be an integer");
+      target.command({ kind: "app", name: body.name, action, exitCode: typeof code === "number" ? code : null });
+      return { status: 204 };
+    }
     default:
       return err(404, "not_found", "no such route");
   }

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentProcess, type AgentHooks, type AgentLike } from "../src/agent.js";
+import { Apps, type RunResult } from "../src/apps.js";
 import { Bridge } from "../src/bridge.js";
 import { agentEnvironment, loadConfig, type Config } from "../src/config.js";
 import { harnessFor } from "../src/harness.js";
@@ -208,8 +209,8 @@ class StubAgent implements AgentLike {
 }
 
 let stubDir = "";
-async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch } = {}) {
-  const dir = taskDir();
+async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch; dir?: string; apps?: Apps; autostart?: () => string[] } = {}) {
+  const dir = opts.dir ?? taskDir();
   stubDir = dir;
   const cfg: Config = { ...loadConfig({ AGENTIC_TASK_TOKEN: "task-token-0123456789", AGENTIC_AGENT_TOKEN: "agent-token-0123456789",
     AGENTIC_TASK_DIR: dir, AGENTIC_NOTIFY_WEBHOOK: "https://hooks.example.com/x" }), ...(opts.idleMs ? { idleTimeoutMs: opts.idleMs } : {}) };
@@ -225,6 +226,7 @@ async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch } = {}) {
     agentFactory: (hooks) => { const a = new StubAgent(hooks, script); agents.push(a); return a; },
     worktree: () => ({ ok: true, out: "", err: "" }), release: () => {},
     exit: (c) => exits.push(c), now: () => new Date().toISOString(), log: () => {},
+    ...(opts.apps ? { apps: opts.apps } : {}), ...(opts.autostart ? { autostart: opts.autostart } : {}),
   });
   running.push({ bridge, close: async () => {} });
   return { bridge, store, agents, exits, bodies, script };
@@ -794,5 +796,75 @@ describe("sessions", () => {
     bridge.command({ kind: "stop" });
     expect(bridge.sessions()[0]?.state).toBe("stopped");
     expect(bridge.status().sessions).toMatchObject([{ name: "main", state: "stopped" }]);
+  });
+});
+
+describe("apps in the bridge", () => {
+  const web = { name: "web", state: "stopped", ports: [3000], url: "/", since: null, exit_code: null };
+  function fakeApps(reply: (args: string[]) => RunResult = () => ({ code: 0, out: "", err: "", timedOut: false })) {
+    const calls: Array<{ args: string[]; work: string }> = [];
+    const apps = new Apps(async (args, _t, work) => {
+      calls.push({ args, work });
+      return args[0] === "list" ? { code: 0, out: JSON.stringify([web, { ...web, name: "api" }]), err: "", timedOut: false } : reply(args);
+    });
+    return { apps, calls };
+  }
+  const starts = (calls: Array<{ args: string[] }>) => calls.filter((c) => c.args[0] === "start").map((c) => c.args[1]);
+
+  it("autostart starts each named app once per task, in the checkout, and not again on a resume", async () => {
+    const { apps, calls } = fakeApps();
+    const first = await stubbed({ apps, autostart: () => ["web", "api"] });
+    first.bridge.boot();
+    await waitState(first.bridge, "idle");
+    for (let i = 0; i < 50 && starts(calls).length < 2; i++) await tick(10);
+    expect(starts(calls)).toEqual(["web", "api"]);
+    expect(calls.every((c) => c.work === first.bridge.status().work)).toBe(true);
+    await first.bridge.shutdownAgent();
+    const again = await stubbed({ dir: stubDir, apps, autostart: () => ["web", "api"] });
+    again.bridge.boot();
+    await tick(50);
+    expect(starts(calls)).toEqual(["web", "api"]);
+  });
+
+  it("a failed autostart is an error event, redacted", async () => {
+    const { apps } = fakeApps(() => ({ code: 1, out: "", err: "agentic-app: prepare of web failed: task-token-0123456789\n", timedOut: false }));
+    const { bridge, store } = await stubbed({ apps, autostart: () => ["web"] });
+    bridge.boot();
+    let errs: string[] = [];
+    for (let i = 0; i < 50 && errs.length === 0; i++) { await tick(10); errs = store.readEvents(0).filter((e) => e.type === "error").map((e) => JSON.stringify(e.data)); }
+    expect(errs[0]).toContain("autostart of app web");
+    expect(errs[0]).not.toContain("task-token-0123456789");
+  });
+
+  it("lists, acts and reads logs through agentic-app; a stopped task refuses actions with 409 before spawning", async () => {
+    const { apps, calls } = fakeApps((args) => ({ code: 0, out: args[0] === "logs" ? "x task-token-0123456789\n" : "", err: "", timedOut: false }));
+    const { bridge } = await stubbed({ apps });
+    bridge.boot();
+    await waitState(bridge, "idle");
+    expect(await bridge.apps()).toMatchObject({ ok: true, value: [{ name: "web" }, { name: "api" }] });
+    expect(await bridge.appAction("web", "start")).toMatchObject({ ok: true, value: { name: "web" } });
+    const logs = await bridge.appLogs("web", 10);
+    expect(JSON.stringify(logs)).not.toContain("task-token-0123456789");
+    bridge.command({ kind: "stop" });
+    await waitState(bridge, "stopped");
+    const before = calls.length;
+    expect(await bridge.appAction("web", "start")).toMatchObject({ ok: false, status: 409 });
+    expect(calls.length).toBe(before);
+  });
+
+  it("with no apps configured: an empty list and 404 for a name", async () => {
+    const { bridge } = await stubbed();
+    bridge.boot();
+    await waitState(bridge, "idle");
+    expect(await bridge.apps()).toEqual({ ok: true, value: [] });
+    expect(await bridge.appAction("web", "start")).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("an app report becomes an app event of the task", async () => {
+    const { bridge, store } = await stubbed();
+    bridge.boot();
+    await waitState(bridge, "idle");
+    bridge.command({ kind: "app", name: "web", action: "started", exitCode: null });
+    expect(store.readEvents(0).filter((e) => e.type === "app")).toMatchObject([{ name: null, data: { name: "web", action: "started", exit_code: null } }]);
   });
 });

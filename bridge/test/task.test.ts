@@ -449,6 +449,14 @@ describe("cancel, stop, suspension, failure", () => {
     expect(fx(two().apply({ kind: "gate", rule: "gate", command: "git push", sessionId: "s2" })))
       .toEqual([{ kind: "emit", type: "gate", data: { rule: "gate", command: "git push" }, name: "plan" }]);
   });
+
+  it("app reports become task app events, with no state change", () => {
+    const t = running();
+    const before = t.record.state;
+    expect(fx(t.apply({ kind: "app", name: "web", action: "exited", exitCode: 3 })))
+      .toEqual([{ kind: "emit", type: "app", data: { name: "web", action: "exited", exit_code: 3 }, name: null }]);
+    expect(t.record.state).toBe(before);
+  });
 });
 
 describe("an outstanding prompt that does not finish", () => {

@@ -2,7 +2,7 @@
 export type AgentName = "claude" | "copilot";
 export type State =
   | "starting" | "running" | "waiting" | "idle" | "suspended" | "stopped" | "failed" | "interrupted";
-export type EventType = "state" | "message" | "tool" | "plan" | "question" | "answer" | "gate" | "error";
+export type EventType = "state" | "message" | "tool" | "plan" | "question" | "answer" | "gate" | "error" | "app";
 
 export interface PermissionOption {
   optionId: string;
