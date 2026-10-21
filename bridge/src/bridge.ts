@@ -1,6 +1,8 @@
 // The orchestrator: feeds inputs to the state machine and performs its effects (spec §6).
 import { spawnSync } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import type { ApiTarget } from "./api.js";
+import type { AppOutcome, Apps, AppVerb, AppView } from "./apps.js";
 import type { AgentHooks, AgentLike } from "./agent.js";
 import type { Config } from "./config.js";
 import { UpdateMapper, type Mapped } from "./map.js";
@@ -28,6 +30,12 @@ export interface BridgeDeps {
   exit(code: number): void;
   now(): string;
   log(line: string): void;
+  // the task's apps (agentic-app); none when absent
+  apps?: Apps;
+  // the apps to start once per task, from the resolved config
+  autostart?(): string[];
+  // the configured app names (resolved config): the only names an app report may carry
+  appNames?(): string[];
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -41,6 +49,7 @@ export class Bridge implements ApiTarget {
   private readonly listeners = new Set<(e: TaskEvent) => void>();
   private readonly waiters = new Map<string, (optionId: string | null) => void>();
   private idle: NodeJS.Timeout | null = null;
+  private idleGen = 0; // bumped on every arm and disarm: a check in flight for an older timer is void
   private flush: NodeJS.Timeout | null = null;
   private readonly kills = new Set<Promise<void>>();
   private readonly webhooks = new Set<Promise<void>>();
@@ -106,6 +115,7 @@ export class Bridge implements ApiTarget {
       this.runTimer = setTimeout(() => this.onRunTimeout(), config.runTimeoutMs);
     }
     this.run({ kind: "boot", fresh });
+    this.autostart();
   }
 
   ready(): boolean {
@@ -134,11 +144,59 @@ export class Bridge implements ApiTarget {
   }
 
   command(input: Input): Outcome {
+    if (input.kind === "app" && !(this.d.appNames?.() ?? []).includes(input.name)) {
+      return { ok: false, code: "bad_request", message: `unknown app ${input.name}` };
+    }
     return this.run(input);
   }
 
   events(since: number, limit: number, keep?: (e: TaskEvent) => boolean): TaskEvent[] {
     return this.d.store.readEvents(since, limit, keep);
+  }
+
+  async apps(): Promise<AppOutcome<AppView[]>> {
+    if (!this.d.apps) return { ok: true, value: [] };
+    return this.masked(await this.d.apps.list(this.m().record.work));
+  }
+
+  async appAction(name: string, verb: AppVerb): Promise<AppOutcome<AppView>> {
+    const rec = this.m().record;
+    if (rec.state === "stopped" || rec.cleaned) return { ok: false, status: 409, code: "conflict", message: "the task is stopped" };
+    if (!this.d.apps) return { ok: false, status: 404, code: "not_found", message: `unknown app ${name}` };
+    // a user's app action is activity: it restarts the idle timer, before and after (a start may take minutes)
+    this.touch();
+    const r = this.masked(await this.d.apps.act(rec.work, name, verb));
+    if (!this.down) this.touch();
+    return r;
+  }
+
+  async appLogs(name: string, lines: number): Promise<AppOutcome<string[]>> {
+    if (!this.d.apps) return { ok: false, status: 404, code: "not_found", message: `unknown app ${name}` };
+    return this.masked(await this.d.apps.logs(this.m().record.work, name, lines));
+  }
+
+  // masked: an app's output and refusals leave the bridge with the tokens masked
+  private masked<T>(o: AppOutcome<T>): AppOutcome<T> {
+    return redactDeep(o, this.redact);
+  }
+
+  // autostart: once per task (a marker in the task dir), after the boot made the checkout ready; one
+  // app after the other, a failure is an error event.
+  private autostart(): void {
+    const apps = this.d.apps;
+    if (!apps || !this.d.autostart) return;
+    const marker = this.d.store.path("apps-autostarted");
+    if (existsSync(marker) || this.m().record.state === "stopped") return;
+    const names = this.d.autostart();
+    writeFileSync(marker, names.map((n) => `${n}\n`).join(""));
+    const work = this.m().record.work;
+    void (async () => {
+      for (const name of names) {
+        if (this.down) return;
+        const r = await apps.act(work, name, "start");
+        if (!r.ok && !this.down) this.emit("error", { message: `autostart of app ${name} failed: ${r.message}` }, null);
+      }
+    })().catch((err) => this.log(`autostart failed: ${message(err)}`));
   }
 
   subscribe(fn: (e: TaskEvent) => void): () => void {
@@ -179,14 +237,16 @@ export class Bridge implements ApiTarget {
   private run(input: Input): Outcome {
     const m = this.m();
     const out = m.apply(input);
-    // any input counts as activity: the machine only emits timer effects on state changes
-    if (input.kind !== "idleTimeout") this.touch();
+    // any input counts as activity but an app report (an app's crash keeps no container alive); the
+    // machine only emits timer effects on state changes
+    const activity = input.kind !== "idleTimeout" && input.kind !== "app";
+    if (activity) this.touch();
     if (!out.ok) return out;
     // the record first: the gate reads allowed_actions from it before the agent retries
     this.d.store.writeRecord(m.record);
     for (const e of out.effects) this.perform(e);
     this.d.store.writeRecord(m.record);
-    if (input.kind !== "idleTimeout") this.touch();
+    if (activity) this.touch();
     if (this.phase === "off" && this.cleanable(input)) this.autoClean();
     if (input.kind === "turnEnd" && input.name === MAIN && (this.phase === "work" || this.phase === "summary")) this.scheduledStep();
     return out;
@@ -473,10 +533,32 @@ export class Bridge implements ApiTarget {
     this.disarmIdle();
     if (this.down) return;
     if (this.phase === "work" || this.phase === "summary") return;
-    this.idle = setTimeout(() => this.run({ kind: "idleTimeout" }), this.d.config.idleTimeoutMs);
+    const gen = ++this.idleGen;
+    this.idle = setTimeout(() => void this.onIdle(gen), this.d.config.idleTimeoutMs);
+  }
+
+  // onIdle: no suspend while an app runs or prepares (the container would stop under it): the timer
+  // starts again and looks later. A failing list suspends as before; idle_stop is how unused apps end.
+  private async onIdle(gen: number): Promise<void> {
+    const apps = this.d.apps;
+    if (apps) {
+      let busy = false;
+      try {
+        const r = await apps.list(this.m().record.work);
+        busy = r.ok && r.value.some((a) => a.state === "running" || a.state === "preparing");
+      } catch (err) {
+        this.log(`idle check of the apps failed: ${message(err)}`);
+      }
+      // re-armed, disarmed or shut down meanwhile: that newer decision stands
+      if (gen !== this.idleGen || this.down) return;
+      if (busy) { this.armIdle(); return; }
+    }
+    this.idle = null;
+    this.run({ kind: "idleTimeout" });
   }
 
   private disarmIdle(): void {
+    this.idleGen++;
     if (this.idle) clearTimeout(this.idle);
     this.idle = null;
   }

@@ -117,5 +117,7 @@ if [ "$applies" = 1 ]; then echo 'RUN ["agentic-apply","--finish"]'; fi
 echo "USER root"
 echo "RUN agentic-inventory > /opt/agentic/inventory.txt"
 echo "USER dev"
-echo "LABEL agentic.project=\"$(cfg .project)\" agentic.config.hash=\"$hash\" agentic.docker_socket=\"$socket\" agentic.harness=\"$(cfg .harness.default)\" agentic.run=\"$(printf '%s' "$run_tsv" | base64 -w0)\""
+# the label carries only what the UI needs (ports, url, autostart); commands and env stay in the resolved config
+apps_b64="$(jq -c '(.apps // {}) | map_values({ports: (.ports // []), url: (.url // "/"), autostart: (.autostart // false)})' "$RESOLVED" | tr -d '\n' | base64 -w0)"
+echo "LABEL agentic.project=\"$(cfg .project)\" agentic.config.hash=\"$hash\" agentic.docker_socket=\"$socket\" agentic.harness=\"$(cfg .harness.default)\" agentic.run=\"$(printf '%s' "$run_tsv" | base64 -w0)\" agentic.apps=\"$apps_b64\""
 echo "WORKDIR /work"

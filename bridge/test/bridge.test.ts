@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentProcess, type AgentHooks, type AgentLike } from "../src/agent.js";
+import { Apps, type RunResult } from "../src/apps.js";
 import { Bridge } from "../src/bridge.js";
 import { agentEnvironment, loadConfig, type Config } from "../src/config.js";
 import { harnessFor } from "../src/harness.js";
@@ -208,8 +209,8 @@ class StubAgent implements AgentLike {
 }
 
 let stubDir = "";
-async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch } = {}) {
-  const dir = taskDir();
+async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch; dir?: string; apps?: Apps; autostart?: () => string[]; appNames?: () => string[] } = {}) {
+  const dir = opts.dir ?? taskDir();
   stubDir = dir;
   const cfg: Config = { ...loadConfig({ AGENTIC_TASK_TOKEN: "task-token-0123456789", AGENTIC_AGENT_TOKEN: "agent-token-0123456789",
     AGENTIC_TASK_DIR: dir, AGENTIC_NOTIFY_WEBHOOK: "https://hooks.example.com/x" }), ...(opts.idleMs ? { idleTimeoutMs: opts.idleMs } : {}) };
@@ -225,6 +226,8 @@ async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch } = {}) {
     agentFactory: (hooks) => { const a = new StubAgent(hooks, script); agents.push(a); return a; },
     worktree: () => ({ ok: true, out: "", err: "" }), release: () => {},
     exit: (c) => exits.push(c), now: () => new Date().toISOString(), log: () => {},
+    ...(opts.apps ? { apps: opts.apps } : {}), ...(opts.autostart ? { autostart: opts.autostart } : {}),
+    ...(opts.appNames ? { appNames: opts.appNames } : {}),
   });
   running.push({ bridge, close: async () => {} });
   return { bridge, store, agents, exits, bodies, script };
@@ -794,5 +797,143 @@ describe("sessions", () => {
     bridge.command({ kind: "stop" });
     expect(bridge.sessions()[0]?.state).toBe("stopped");
     expect(bridge.status().sessions).toMatchObject([{ name: "main", state: "stopped" }]);
+  });
+});
+
+describe("apps in the bridge", () => {
+  const web = { name: "web", state: "stopped", ports: [3000], url: "/", since: null, exit_code: null };
+  function fakeApps(reply: (args: string[]) => RunResult = () => ({ code: 0, out: "", err: "", timedOut: false })) {
+    const calls: Array<{ args: string[]; work: string }> = [];
+    const apps = new Apps(async (args, _t, work) => {
+      calls.push({ args, work });
+      return args[0] === "list" ? { code: 0, out: JSON.stringify([web, { ...web, name: "api" }]), err: "", timedOut: false } : reply(args);
+    });
+    return { apps, calls };
+  }
+  const starts = (calls: Array<{ args: string[] }>) => calls.filter((c) => c.args[0] === "start").map((c) => c.args[1]);
+
+  it("autostart starts each named app once per task, in the checkout, and not again on a resume", async () => {
+    const { apps, calls } = fakeApps();
+    const first = await stubbed({ apps, autostart: () => ["web", "api"] });
+    first.bridge.boot();
+    await waitState(first.bridge, "idle");
+    for (let i = 0; i < 50 && starts(calls).length < 2; i++) await tick(10);
+    expect(starts(calls)).toEqual(["web", "api"]);
+    expect(calls.every((c) => c.work === first.bridge.status().work)).toBe(true);
+    await first.bridge.shutdownAgent();
+    const again = await stubbed({ dir: stubDir, apps, autostart: () => ["web", "api"] });
+    again.bridge.boot();
+    await tick(50);
+    expect(starts(calls)).toEqual(["web", "api"]);
+  });
+
+  it("a failed autostart is an error event, redacted", async () => {
+    const { apps } = fakeApps(() => ({ code: 1, out: "", err: "agentic-app: prepare of web failed: task-token-0123456789\n", timedOut: false }));
+    const { bridge, store } = await stubbed({ apps, autostart: () => ["web"] });
+    bridge.boot();
+    let errs: string[] = [];
+    for (let i = 0; i < 50 && errs.length === 0; i++) { await tick(10); errs = store.readEvents(0).filter((e) => e.type === "error").map((e) => JSON.stringify(e.data)); }
+    expect(errs[0]).toContain("autostart of app web");
+    expect(errs[0]).not.toContain("task-token-0123456789");
+  });
+
+  it("lists, acts and reads logs through agentic-app; a stopped task refuses actions with 409 before spawning", async () => {
+    const { apps, calls } = fakeApps((args) => ({ code: 0, out: args[0] === "logs" ? "x task-token-0123456789\n" : "", err: "", timedOut: false }));
+    const { bridge } = await stubbed({ apps });
+    bridge.boot();
+    await waitState(bridge, "idle");
+    expect(await bridge.apps()).toMatchObject({ ok: true, value: [{ name: "web" }, { name: "api" }] });
+    expect(await bridge.appAction("web", "start")).toMatchObject({ ok: true, value: { name: "web" } });
+    const logs = await bridge.appLogs("web", 10);
+    expect(JSON.stringify(logs)).not.toContain("task-token-0123456789");
+    bridge.command({ kind: "stop" });
+    await waitState(bridge, "stopped");
+    const before = calls.length;
+    expect(await bridge.appAction("web", "start")).toMatchObject({ ok: false, status: 409 });
+    expect(calls.length).toBe(before);
+  });
+
+  it("with no apps configured: an empty list and 404 for a name", async () => {
+    const { bridge } = await stubbed();
+    bridge.boot();
+    await waitState(bridge, "idle");
+    expect(await bridge.apps()).toEqual({ ok: true, value: [] });
+    expect(await bridge.appAction("web", "start")).toMatchObject({ ok: false, status: 404 });
+  });
+
+  it("an app report of a configured app becomes an app event of the task; another name is refused", async () => {
+    const { bridge, store } = await stubbed({ appNames: () => ["web"] });
+    bridge.boot();
+    await waitState(bridge, "idle");
+    expect(bridge.command({ kind: "app", name: "web", action: "started", exitCode: null })).toMatchObject({ ok: true });
+    expect(bridge.command({ kind: "app", name: "api", action: "started", exitCode: null })).toMatchObject({ ok: false, code: "bad_request" });
+    expect(store.readEvents(0).filter((e) => e.type === "app")).toMatchObject([{ name: null, data: { name: "web", action: "started", exit_code: null } }]);
+    const none = await stubbed();
+    none.bridge.boot();
+    await waitState(none.bridge, "idle");
+    expect(none.bridge.command({ kind: "app", name: "web", action: "started", exitCode: null })).toMatchObject({ ok: false, code: "bad_request" });
+  });
+
+  // listed: Apps whose list answers with web in STATE (or fails when STATE is null)
+  function listed(state: { web: string | null }) {
+    const calls: string[][] = [];
+    const apps = new Apps(async (args) => {
+      calls.push(args);
+      if (args[0] !== "list") return { code: 0, out: "", err: "", timedOut: false };
+      if (state.web === null) return { code: 1, out: "", err: "agentic-app: broken\n", timedOut: false };
+      return { code: 0, out: JSON.stringify([{ ...web, state: state.web }]), err: "", timedOut: false };
+    });
+    return { apps, calls };
+  }
+
+  for (const st of ["running", "preparing"]) {
+    it(`the idle timeout does not suspend the task while an app is ${st}; it suspends once none is`, async () => {
+      const state = { web: st as string | null };
+      const { apps } = listed(state);
+      const { bridge, exits } = await stubbed({ idleMs: 150, apps });
+      bridge.boot();
+      await waitState(bridge, "idle");
+      await tick(450);
+      expect(bridge.status().state).toBe("idle");
+      expect(exits).toEqual([]);
+      state.web = "stopped";
+      await waitState(bridge, "suspended");
+      expect(await exited(exits)).toEqual([0]);
+    });
+  }
+
+  it("the idle timeout suspends as before when no app runs or the list fails", async () => {
+    for (const st of ["stopped", "exited", "failed", null]) {
+      const { apps } = listed({ web: st });
+      const { bridge, exits } = await stubbed({ idleMs: 150, apps });
+      bridge.boot();
+      await waitState(bridge, "idle");
+      await waitState(bridge, "suspended");
+      expect(await exited(exits), String(st)).toEqual([0]);
+    }
+  });
+
+  it("an app action restarts the idle timer", async () => {
+    const { apps } = listed({ web: "stopped" });
+    const { bridge, exits } = await stubbed({ idleMs: 400, apps });
+    bridge.boot();
+    await waitState(bridge, "idle");
+    await tick(250);
+    expect(await bridge.appAction("web", "stop")).toMatchObject({ ok: true });
+    await tick(250);
+    expect(bridge.status().state).toBe("idle");
+    await waitState(bridge, "suspended");
+    expect(await exited(exits)).toEqual([0]);
+  });
+
+  it("an app report does not restart the idle timer", async () => {
+    const { bridge, exits } = await stubbed({ idleMs: 300, appNames: () => ["web"] });
+    bridge.boot();
+    await waitState(bridge, "idle");
+    await tick(180);
+    bridge.command({ kind: "app", name: "web", action: "exited", exitCode: 1 });
+    await tick(200);
+    expect(bridge.status().state).toBe("suspended");
+    expect(exits).toEqual([0]);
   });
 });

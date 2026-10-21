@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+# agentic-app: the apps of the config resolved at container start (~/.agentic/config.json; the
+# checkout's agentic.yaml is never read), each in window app-<name> of session "apps" on a tmux
+# server of its own (-L agentic-apps), in the task's checkout plus the app's dir. Starts, stops,
+# exits and failed prepares are posted to the bridge (POST $AGENTIC_BRIDGE_URL/app).
+# Usage: agentic-app list [--json] | start|stop|restart NAME | logs NAME [--lines N]
+set -euo pipefail
+state="${AGENTIC_STATE:-$HOME/.agentic}"
+conf="$state/config.json"
+apps="$state/apps"
+self="$(readlink -f "$0")"
+read -ra TMUX_CMD <<<"${AGENTIC_TMUX:-tmux -L agentic-apps}"
+read -ra SH <<<"${AGENTIC_WINDOW_SHELL:-bash -lc}"
+usage="usage: agentic-app list [--json] | start|stop|restart NAME | logs NAME [--lines N]"
+
+die() { echo "agentic-app: $*" >&2; exit 1; }
+# the lock fd (8) never reaches tmux, a hook or the idle loop: a server it forks would hold it
+t() { "${TMUX_CMD[@]}" "$@" 8>&-; }
+work() { printf '%s\n' "${AGENTIC_WORK:-/work}"; }
+# field NAME KEY: a string field of an app, empty when unset
+field() { jq -r --arg n "$1" --arg k "$2" '.apps[$n][$k] // empty | strings' "$conf"; }
+# names: the configured app names that pass the name rule, one per line
+names() { jq -r '.apps // {} | keys[] | select(test("^[a-z][a-z0-9-]{0,30}$"))' "$conf" 2>/dev/null || true; }
+win() { printf 'apps:=app-%s' "$1"; }
+has_window() { t list-windows -t apps -F '#{window_name}' 2>/dev/null | grep -qxF -- "app-$1"; }
+dead() { [ "$(t display -p -t "$(win "$1")" '#{pane_dead}' 2>/dev/null)" = 1 ]; }
+stamp() { date +%s > "$apps/$1.since"; }
+
+# notify NAME ACTION [CODE]: one event to the bridge, best effort. The agent token goes in a mode-600
+# header file (never argv); the bridge is on the container's loopback, so no proxy.
+notify() {
+  [ -n "${AGENTIC_BRIDGE_URL:-}" ] || return 0
+  local hdr
+  hdr="$(mktemp)" || return 0
+  [ -z "${AGENTIC_AGENT_TOKEN:-}" ] || printf 'Authorization: Bearer %s\n' "$AGENTIC_AGENT_TOKEN" > "$hdr"
+  jq -cn --arg n "$1" --arg a "$2" --arg c "${3:-}" '{name: $n, action: $a, exit_code: ($c | tonumber? // null)}' \
+    | curl -fsS -m 5 --noproxy '*' -X POST -H "@$hdr" -H 'Content-Type: application/json' \
+        --data-binary @- -o /dev/null "$AGENTIC_BRIDGE_URL/app" >/dev/null 2>&1 || true
+  rm -f "$hdr"
+}
+
+# appdir NAME: the checkout plus the app's dir; fails when it does not exist.
+appdir() {
+  local d; d="$(field "$1" dir)"
+  [ -z "$d" ] || case "/$d/" in //*|*/../*) die "dir $d must be a relative path inside the checkout" ;; esac
+  [ -z "$d" ] || [ -d "$(work)/$d" ] || die "dir $d does not exist in the checkout ($(work))"
+  if [ -n "$d" ]; then printf '%s/%s\n' "$(work)" "$d"; else work; fi
+}
+
+# write_env NAME: export lines for the app's env, each value %q-quoted, never expanded (mode 600).
+write_env() {
+  local k v
+  (umask 077
+   jq -r --arg n "$1" '.apps[$n].env // {} | to_entries[]
+       | select((.key | test("^[A-Z_][A-Z0-9_]*$")) and (.value | type) == "string")
+       | "\(.key)\t\(.value | @base64)"' "$conf" | while IFS=$'\t' read -r k v; do
+     printf 'export %s=%q\n' "$k" "$(printf '%s' "$v" | base64 -d)"
+   done > "$apps/$1.env")
+}
+
+# hook NAME CMD SECONDS LOG: runs a prepare or teardown in the app's dir with the start env and the
+# app's env, without the bridge tokens, ended after SECONDS (exit 124).
+hook() {
+  local dir; dir="$(appdir "$1")"
+  # shellcheck disable=SC1090,SC1091
+  ( cd "$dir"
+    set +u; if [ -f "$state/env" ]; then . "$state/env"; fi; . "$apps/$1.env"; set -u
+    unset AGENTIC_AGENT_TOKEN AGENTIC_TASK_TOKEN
+    exec timeout -k 5 "$3" "${SH[@]}" "$2" ) > "$4" 2>&1 </dev/null 8>&- 9>&-
+}
+
+# copy_env_files NAME: each {from, to}: from .agentic/ into the checkout, only when to is missing.
+copy_env_files() {
+  local from to src dst cdir root
+  cdir="$(cat "$state/config-dir" 2>/dev/null || true)"
+  root="$(realpath -m -- "$(work)")"
+  while IFS=$'\t' read -r from to; do
+    case "/$from/ /$to/" in //*|*/../*|*\ //*) echo "agentic-app: env_files: $from -> $to is not a relative path without ..; skipped" >&2; continue ;; esac
+    if [ -z "$cdir" ]; then echo "agentic-app: env_files: $from is no file in .agentic/; skipped" >&2; continue; fi
+    # resolved, symlinks included, each must stay under its root
+    src="$(realpath -m -- "$cdir/$from")"; dst="$(realpath -m -- "$root/$to")"
+    if [[ "$src" != "$(realpath -m -- "$cdir")"/* || "$dst" != "$root"/* ]]; then
+      echo "agentic-app: env_files: $from -> $to leaves .agentic/ or the checkout; skipped" >&2; continue
+    fi
+    if [ -e "$dst" ] || [ -L "$dst" ]; then continue; fi
+    if [ ! -f "$src" ]; then echo "agentic-app: env_files: $from is no file in .agentic/; skipped" >&2; continue; fi
+    { mkdir -p -- "$(dirname -- "$dst")" && cp -- "$src" "$dst"; } 2>/dev/null \
+      || die "env_files: cannot copy $from to $to in the checkout"
+  done < <(jq -r --arg n "$1" '.apps[$n].env_files // [] | .[] | select((.from | type) == "string" and (.to | type) == "string")
+             | "\(.from)\t\(.to)"' "$conf")
+}
+
+# ensure: the session "apps" on the apps' server, created with the start env and without the tokens.
+ensure() {
+  t has-session -t apps 2>/dev/null && return 0
+  local w; w="$(work)"
+  # shellcheck disable=SC1091
+  ( set +u; if [ -f "$state/env" ]; then . "$state/env"; fi; set -u
+    env -u AGENTIC_AGENT_TOKEN -u AGENTIC_TASK_TOKEN "${TMUX_CMD[@]}" new-session -d -s apps -n home -c "${w//#/##}" 8>&- )
+}
+
+# idle_secs NAME: idle_stop in seconds (30m, 1h, 2s); 0 for never.
+idle_secs() {
+  local v; v="$(field "$1" idle_stop)"
+  [[ "$v" =~ ^([0-9]+)([smh]?)$ ]] || { echo 0; return; }
+  case "${BASH_REMATCH[2]}" in m) echo $((10#${BASH_REMATCH[1]} * 60)) ;; h) echo $((10#${BASH_REMATCH[1]} * 3600)) ;; *) echo $((10#${BASH_REMATCH[1]})) ;; esac
+}
+
+# busy NAME: an established connection on one of the app's ports, from ss, else from /proc/net/tcp*.
+busy() {
+  local ports p filter="" f hex
+  mapfile -t ports < <(jq -r --arg n "$1" '.apps[$n].ports // [] | .[] | numbers' "$conf")
+  [ "${#ports[@]}" -gt 0 ] || return 1
+  if command -v "${AGENTIC_SS:-ss}" >/dev/null 2>&1; then
+    for p in "${ports[@]}"; do filter+="${filter:+ or }sport = :$p"; done
+    [ -n "$("${AGENTIC_SS:-ss}" -Htn state established "( $filter )" 2>/dev/null)" ]
+    return
+  fi
+  for p in "${ports[@]}"; do
+    hex="$(printf '%04X' "$p")"
+    for f in "${AGENTIC_PROC_NET:-/proc/net}"/tcp "${AGENTIC_PROC_NET:-/proc/net}"/tcp6; do
+      [ -f "$f" ] || continue
+      awk -v h="$hex" 'NR > 1 && $4 == "01" { n = split($2, a, ":"); if (toupper(a[n]) == h) found = 1 } END { exit !found }' "$f" && return 0
+    done
+  done
+  return 1
+}
+
+# idle_watched: an app with idle_stop and ports that is running.
+idle_watched() {
+  local n
+  while IFS= read -r n; do
+    [ "$(idle_secs "$n")" -gt 0 ] && has_window "$n" && ! dead "$n" && return 0
+  done < <(names)
+  return 1
+}
+
+# idle_loop: one per container (a lock); stops each app whose ports had no connection for its
+# idle_stop; ends when no watched app runs.
+idle_loop() {
+  local n secs last
+  exec 9>"$apps/idle-loop.lock"
+  flock -n 9 || return 0
+  echo $$ > "$apps/idle-loop.pid"
+  while :; do
+    sleep "${AGENTIC_IDLE_POLL:-15}"
+    while IFS= read -r n; do
+      secs="$(idle_secs "$n")"
+      if [ "$secs" = 0 ] || ! has_window "$n" || dead "$n"; then continue; fi
+      if busy "$n"; then date +%s > "$apps/$n.active"; continue; fi
+      last="$(cat "$apps/$n.active" 2>/dev/null || date +%s)"
+      if [ $(($(date +%s) - last)) -ge "$secs" ]; then ( stop "$n" ) || true; fi
+    done < <(names)
+    idle_watched && continue
+    # release, then look again: a start in between finds the lock free or this loop goes on
+    rm -f "$apps/idle-loop.pid"; exec 9>&-
+    idle_watched || return 0
+    exec 9>"$apps/idle-loop.lock"
+    flock -n 9 || return 0
+    echo $$ > "$apps/idle-loop.pid"
+  done
+}
+
+start() {
+  local n="$1" w="$apps/$1" dir prep rc q s
+  exec 8>"$w.lock"
+  flock 8
+  # a prepare left by an agentic-app that was killed may still run: never a second one alongside
+  if preparing "$n"; then die "app $n is preparing; start it again when that ends"; fi
+  ensure
+  if has_window "$n"; then
+    if ! dead "$n"; then echo "agentic-app: app $n is already running" >&2; return 0; fi
+    t kill-window -t "$(win "$n")"
+  fi
+  dir="$(appdir "$n")"
+  rm -f "$w.failed" "$w.stopping"
+  copy_env_files "$n"
+  write_env "$n"
+  prep="$(field "$n" prepare)"
+  if [ -n "$prep" ] && [ ! -e "$w.prepared" ]; then
+    # the prepare's own pid and start time mark it: it outlives this process when that is killed, and
+    # a pid reused after a container restart does not match
+    hook "$n" "$prep" "${AGENTIC_PREPARE_TIMEOUT:-600}" "$w.prepare.log" 8>&- 9>&- &
+    echo "$! $(started $!)" > "$w.preparing"; stamp "$n"
+    rc=0; wait $! || rc=$?
+    rm -f "$w.preparing"
+    if [ "$rc" != 0 ]; then
+      echo "$rc" > "$w.failed"; stamp "$n"
+      if [ "$rc" = 124 ]; then echo "agentic-app: prepare of $n timed out after ${AGENTIC_PREPARE_TIMEOUT:-600} s" >&2; fi
+      echo "agentic-app: prepare of $n failed (exit $rc); its last lines:" >&2
+      tail -n 20 "$w.prepare.log" | clean >&2
+      notify "$n" failed "$rc"
+      exit 1
+    fi
+    : > "$w.prepared"
+  fi
+  # the run text and a wrapper live in files, so no quoting goes through tmux. The wrapper keeps the
+  # bridge address and agent token for the exit post only (mode 600); the app runs without them.
+  printf '%s\n' "$(field "$n" run)" > "$w.run"
+  q="$(printf '%q ' "${SH[@]}")"
+  s="$(printf 'AGENTIC_BRIDGE_URL=%q AGENTIC_AGENT_TOKEN=%q bash %q notify %q' \
+    "${AGENTIC_BRIDGE_URL:-}" "${AGENTIC_AGENT_TOKEN:-}" "$self" "$n")"
+  # shellcheck disable=SC2016
+  (umask 077; {
+    printf 'if [ -f %q ]; then . %q; fi\n. %q\n' "$state/env" "$state/env" "$w.env"
+    printf 'unset AGENTIC_AGENT_TOKEN AGENTIC_TASK_TOKEN AGENTIC_BRIDGE_URL\n'
+    printf '%s"$(cat %q)"\nrc=$?\n' "$q" "$w.run"
+    printf 'date +%%s > %q\n' "$w.since"
+    printf '[ -e %q ] || %s exited "$rc"\nexit "$rc"\n' "$w.stopping" "$s"
+  } > "$w.sh")
+  # finished windows stay, with their output and exit code; logs reads up to 2000 lines back
+  t set-option -g remain-on-exit on
+  t set-option -g history-limit 50000
+  # tmux format-expands -c: escape #
+  t new-window -d -t apps: -n "app-$n" -c "${dir//#/##}" "bash $(printf %q "$w.sh")"
+  stamp "$n"; date +%s > "$w.active"
+  notify "$n" started
+  if [ "$(idle_secs "$n")" -gt 0 ]; then
+    setsid bash "$self" idle-loop </dev/null >/dev/null 2>&1 8>&- &
+  fi
+  return 0
+}
+
+# stop NAME: under the app's lock, so a user stop and an idle stop never both run the teardown; the
+# lock is let go on return (the idle loop goes on).
+stop() {
+  local rc=0
+  if preparing "$1"; then die "app $1 is preparing; stop it when that ends"; fi
+  exec 8>"$apps/$1.lock"
+  flock 8
+  stop_locked "$1" || rc=$?
+  exec 8>&-
+  return "$rc"
+}
+
+stop_locked() {
+  local n="$1" w="$apps/$1" i cmd rc=0
+  if ! has_window "$n"; then rm -f "$w.failed"; return 0; fi
+  : > "$w.stopping"
+  dead "$n" || t send-keys -t "$(win "$n")" C-c
+  for ((i = 0; i < ${AGENTIC_APP_STOP_WAIT:-10} * 10; i++)); do dead "$n" && break; sleep 0.1; done
+  t kill-window -t "$(win "$n")" 2>/dev/null || true
+  rm -f "$w.failed"; stamp "$n"
+  notify "$n" stopped
+  cmd="$(field "$n" teardown)"
+  [ -n "$cmd" ] || return 0
+  write_env "$n"
+  hook "$n" "$cmd" "${AGENTIC_TEARDOWN_TIMEOUT:-120}" "$w.teardown.log" || rc=$?
+  [ "$rc" = 0 ] && return 0
+  echo "agentic-app: teardown of $n failed (exit $rc); its last lines:" >&2
+  tail -n 20 "$w.teardown.log" | clean >&2
+  return 1
+}
+
+# started PID: the process's start time (field 22 of /proc/PID/stat, after the command name); empty
+# when it is gone.
+started() { sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | cut -d' ' -f20 || true; }
+
+# preparing NAME: a prepare runs for the app (NAME.preparing holds "PID START" and that process lives
+# with that start time); a stale marker goes.
+preparing() {
+  local pid="" st="" now
+  if [ -f "$apps/$1.preparing" ]; then read -r pid st < "$apps/$1.preparing" || true; fi
+  if [[ "$pid" =~ ^[0-9]+$ ]] && [ -n "$st" ] && kill -0 "$pid" 2>/dev/null; then
+    now="$(started "$pid")"
+    if [ "$now" = "$st" ]; then return 0; fi
+  fi
+  rm -f "$apps/$1.preparing"; return 1
+}
+
+# app_state NAME: state and exit code (tab-separated).
+app_state() {
+  local n="$1" w="$apps/$1" r
+  if has_window "$n"; then
+    r="$(t display -p -t "$(win "$n")" '#{pane_dead}	#{pane_dead_status}' 2>/dev/null || true)"
+    if [ "${r%%	*}" = 1 ]; then printf 'exited\t%s\n' "${r#*	}"; else printf 'running\t\n'; fi
+    return
+  fi
+  if preparing "$n"; then printf 'preparing\t\n'; return; fi
+  if [ -f "$w.failed" ]; then printf 'failed\t%s\n' "$(cat "$w.failed")"; return; fi
+  printf 'stopped\t\n'
+}
+
+list() {
+  local n st code since rows=""
+  while IFS= read -r n; do
+    IFS=$'\t' read -r st code < <(app_state "$n")
+    since=""
+    if [ "$st" != stopped ] || [ -f "$apps/$n.since" ]; then since="$(cat "$apps/$n.since" 2>/dev/null || true)"; fi
+    rows+="$n	$st	$code	$since"$'\n'
+  done < <(names)
+  jq -cn --arg rows "$rows" --slurpfile c "$conf" '
+    ($c[0].apps // {}) as $a
+    | [$rows | split("\n")[] | select(. != "") | split("\t") | . as [$n, $s, $x, $t]
+       | {name: $n, state: $s, ports: ($a[$n].ports // []), url: ($a[$n].url // "/"),
+          since: ($t | tonumber? // null), exit_code: ($x | tonumber? // null)}]'
+}
+
+# clean: no C0 control (tab and newline stay), no DEL, no C1 control (UTF-8 U+0080-U+009F); each
+# line at most 4000 bytes.
+clean() {
+  LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C sed 's/\xc2[\x80-\x9f]//g' | cut -b 1-4000
+}
+# trim: no trailing blank lines (the pane's empty rows below its output).
+trim() { awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] ~ /^[ \t]*$/) n--; for (i = 1; i <= n; i++) print l[i] }'; }
+
+logs() {
+  local n="$1" lines=200
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --lines) lines="${2:-}"; shift ;;
+      *) die "unknown option $1" ;;
+    esac
+    shift
+  done
+  [[ "$lines" =~ ^[0-9]{1,4}$ ]] && [ "$lines" -ge 1 ] && [ "$lines" -le 2000 ] || die "--lines takes a number from 1 to 2000"
+  if has_window "$n"; then
+    t capture-pane -p -J -S "-$lines" -t "$(win "$n")" | trim | tail -n "$lines" | clean
+  elif [ -f "$apps/$n.failed" ] && [ -f "$apps/$n.prepare.log" ]; then
+    trim < "$apps/$n.prepare.log" | tail -n "$lines" | clean
+  else
+    die "app $n is not running"
+  fi
+}
+
+cmd="${1:-}"; name="${2:-}"
+case "$cmd" in
+  list|start|stop|restart|logs) ;;
+  # internal: the wrapper's exit post and the idle loop start launches
+  notify|idle-loop) ;;
+  help|-h|--help) echo "$usage"; exit 0 ;;
+  *) die "$usage" ;;
+esac
+mkdir -p "$apps"
+case "$cmd" in
+  list)
+    if [ ! -f "$conf" ]; then echo '[]'; exit 0; fi
+    if [ "${2:-}" = --json ]; then list
+    else list | jq -r '.[] | [.name, .state, (.exit_code // "" | tostring), (.ports | map(tostring) | join(","))] | @tsv'; fi
+    exit 0 ;;
+  idle-loop) idle_loop; exit 0 ;;
+esac
+[[ "$name" =~ ^[a-z][a-z0-9-]{0,30}$ ]] || die "bad app name '$name'"
+[ -f "$conf" ] || die "no resolved config at $conf"
+jq -e --arg n "$name" '.apps // {} | has($n)' "$conf" >/dev/null || die "unknown app $name"
+case "$cmd" in
+  start) start "$name" ;;
+  stop) stop "$name" ;;
+  restart) rc=0; stop "$name" || rc=$?; start "$name"; exit "$rc" ;;
+  logs) shift; logs "$@" ;;
+  notify) notify "$name" "${3:-}" "${4:-}" ;;
+esac

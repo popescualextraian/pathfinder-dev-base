@@ -17,3 +17,7 @@ setup:
   - volume m2 /home/dev/.m2
   - add marketplace /opt/agentic/marketplace
   - add plugin cost@agentic
+apps:
+  web:
+    run: python3 -m http.server 8099 --bind 0.0.0.0
+    ports: [8099]

@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentProcess } from "./agent.js";
+import { appNames, Apps, autostartNames, spawnRunner } from "./apps.js";
 import { Bridge } from "./bridge.js";
 import { agentEnvironment, loadConfig } from "./config.js";
 import { follow } from "./follow.js";
@@ -32,6 +33,8 @@ async function serve(): Promise<void> {
   const agentic = process.env.AGENTIC_DIR ?? "/opt/agentic";
   const stateDir = process.env.AGENTIC_STATE ?? join(process.env.HOME ?? "/home/dev", ".agentic");
   let close: (() => Promise<void>) | null = null;
+  // the config resolved at container start (the checkout's agentic.yaml is never read)
+  const resolved = () => { try { return readFileSync(join(stateDir, "config.json"), "utf8"); } catch { return ""; } };
   const bridge = new Bridge({
     store, config: cfg, paragraph, log, now: () => new Date().toISOString(),
     notifier: new Notifier({ eventsLog, webhook: cfg.webhook, project: cfg.project, log }),
@@ -49,6 +52,10 @@ async function serve(): Promise<void> {
         log(`release failed: ${(e as Error).message}`);
       }
     },
+    // agentic-app gets what the agent gets (the agent token for its event posts, never the task token)
+    apps: new Apps(spawnRunner(join(agentic, "bin", "agentic-app"), env)),
+    autostart: () => autostartNames(resolved()),
+    appNames: () => appNames(resolved()),
     exit: (code) => { log(`exit ${code}`); void bridge.shutdownAgent().then(() => close?.()).finally(() => process.exit(code)); },
   });
   const server = await startServer({ port: cfg.port, host: "0.0.0.0", tokens: cfg.tokens, access: { hosts: cfg.hosts, origins: cfg.origins },
