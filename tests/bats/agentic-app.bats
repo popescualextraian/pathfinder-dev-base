@@ -50,6 +50,12 @@ windows() { $AGENTIC_TMUX list-windows -t apps -F '#{window_name}' 2>/dev/null |
 posts() { grep '^body: ' "$CURL_LOG" 2>/dev/null | sed 's/^body: //' || true; }
 actions() { posts | jq -r --arg n "$1" 'select(.name == $n) | .action' | tr '\n' ' '; }
 field() { jq -c --arg n "$1" ".[] | select(.name == \$n) | $2" <<<"$output"; }
+# no_ctl TEXT: no C0 control but tab and newline, no DEL, no UTF-8 C1 control (a failing call fails the test)
+no_ctl() {
+  if printf '%s' "$1" | LC_ALL=C grep -q $'[\x01-\x08\x0b-\x1f\x7f]'; then return 1; fi
+  if printf '%s' "$1" | LC_ALL=C grep -qE $'\xc2[\x80-\x9f]'; then return 1; fi
+  return 0
+}
 
 @test "start opens window app-NAME in the checkout's dir with the start env and the app's env, and posts started" {
   run bash "$X" start web
@@ -277,7 +283,7 @@ field() { jq -c --arg n "$1" ".[] | select(.name == \$n) | $2" <<<"$output"; }
   [ "$status" -eq 0 ]
   [ "${#lines[@]}" -eq 5 ]
   [[ "$output" == *line-49* && "$output" == *"red bell cr"* && "$output" != *line-45* ]]
-  ! printf '%s' "$output" | LC_ALL=C grep -q $'[\x01-\x08\x0b-\x1f\x7f]'
+  no_ctl "$output"
   run bash "$X" logs loud --lines 2001
   [ "$status" -eq 1 ]
   run bash "$X" logs loud --lines x
@@ -394,4 +400,114 @@ field() { jq -c --arg n "$1" ".[] | select(.name == \$n) | $2" <<<"$output"; }
   run bash "$X" help
   [ "$status" -eq 0 ]
   [[ "$output" == *usage* ]]
+}
+
+# --- fix round 1
+
+@test "an agentic-app killed mid-prepare: the next start refuses while that prepare lives, then prepares again" {
+  conf '.apps.web.prepare = "echo p >> \"$HOME/prep.log\"; sleep 2"'
+  bash "$X" start web & p=$!
+  sleep 0.7
+  kill "$p"; wait "$p" || true
+  pid="$(cat "$AGENTIC_STATE/apps/web.preparing")"
+  [ "$pid" != "$p" ]
+  kill -0 "$pid"
+  run bash "$X" start web
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"app web is preparing"* ]]
+  run bash "$X" list --json
+  [ "$(field web '.state')" = '"preparing"' ]
+  for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+  run bash "$X" start web
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$HOME/prep.log")" -eq 2 ]
+}
+
+@test "a stale preparing marker with a dead pid is cleared by the next start" {
+  conf '.apps.web.prepare = "true"'
+  sh -c 'exit 0' & dp=$!; wait "$dp"
+  mkdir -p "$AGENTIC_STATE/apps"; echo "$dp" > "$AGENTIC_STATE/apps/web.preparing"
+  run bash "$X" start web
+  [ "$status" -eq 0 ]
+  [ ! -e "$AGENTIC_STATE/apps/web.preparing" ]
+  run bash "$X" list --json
+  [ "$(field web '.state')" = '"running"' ]
+}
+
+@test "stop of an app that is preparing is refused" {
+  conf '.apps.web.prepare = "sleep 2"'
+  bash "$X" start web & p=$!
+  sleep 0.7
+  run bash "$X" stop web
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"app web is preparing"* ]]
+  wait "$p"
+}
+
+@test "the printed last lines of a failed prepare and teardown carry no control characters" {
+  conf '.apps.web.prepare = "printf \"bad\\033[31mred\\a c1\\xc2\\x9bx\\n\"; exit 2"'
+  run bash "$X" start web
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"bad[31mred c1x"* ]]
+  no_ctl "$output"
+  run bash "$X" logs web
+  [[ "$output" == *"bad[31mred c1x"* ]]
+  no_ctl "$output"
+  conf '.apps.web.prepare = null | .apps.web.teardown = "printf \"down\\033x\\a\\n\"; exit 3"'
+  bash "$X" start web
+  run bash "$X" stop web
+  [ "$status" -eq 1 ]
+  [[ "$output" == *downx* ]]
+  no_ctl "$output"
+}
+
+@test "logs caps each line at 4000 bytes" {
+  conf '.apps.wide = {run: "head -c 5000 /dev/zero | tr \"\\\\0\" a; echo; sleep 30"}'
+  bash "$X" start wide; sleep 0.8
+  run bash "$X" logs wide
+  [ "$status" -eq 0 ]
+  [[ "$output" == *aaaa* ]]
+  [ "$(printf '%s\n' "$output" | awk '{ if (length($0) > m) m = length($0) } END { print m }')" -le 4000 ]
+}
+
+@test "env_files through a symlink out of .agentic/ or out of the checkout are skipped" {
+  mkdir -p "$BATS_TEST_TMPDIR/outside" "$BATS_TEST_TMPDIR/outside2"
+  printf 'S=secret\n' > "$BATS_TEST_TMPDIR/outside/secret.env"
+  printf 'A=1\n' > "$AGENTIC_WORK/.agentic/ok.env"
+  ln -s "$BATS_TEST_TMPDIR/outside" "$AGENTIC_WORK/.agentic/out"
+  ln -s "$BATS_TEST_TMPDIR/outside2" "$AGENTIC_WORK/linkdir"
+  conf '.apps.web.env_files = [{from: "out/secret.env", to: "s.env"}, {from: "ok.env", to: "linkdir/x.env"}]'
+  run bash "$X" start web
+  [ "$status" -eq 0 ]
+  [ ! -e "$AGENTIC_WORK/s.env" ]
+  [ ! -e "$BATS_TEST_TMPDIR/outside2/x.env" ]
+  [[ "$output" == *"env_files: out/secret.env -> s.env leaves .agentic/ or the checkout; skipped"* ]]
+  [[ "$output" == *"env_files: ok.env -> linkdir/x.env leaves .agentic/ or the checkout; skipped"* ]]
+}
+
+@test "a dir with .. or an absolute dir is refused even past validation" {
+  for d in ../up /tmp a/../../b; do
+    conf ".apps.web.dir = \"$d\""
+    run bash "$X" start web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"dir $d must be a relative path inside the checkout"* ]]
+  done
+  [ -z "$(windows | grep -x app-web || true)" ]
+}
+
+@test "two concurrent stops run the teardown once" {
+  conf '.apps.web.teardown = "echo down >> \"$HOME/down.log\"; sleep 1"'
+  bash "$X" start web; sleep 0.3
+  bash "$X" stop web & a=$!
+  bash "$X" stop web & b=$!
+  wait "$a"; wait "$b"
+  [ "$(wc -l < "$HOME/down.log")" -eq 1 ]
+  [ "$(actions web)" = "started stopped " ]
+}
+
+@test "an app name in the config that fails the name rule is skipped by list" {
+  conf '.apps["bad;name x"] = {run: "true"}'
+  run bash "$X" list --json
+  [ "$status" -eq 0 ]
+  [ "$(jq -r 'map(.name) | join(",")' <<<"$output")" = bad,stubborn,web ]
 }

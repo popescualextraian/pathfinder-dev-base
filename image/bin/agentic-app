@@ -19,7 +19,8 @@ t() { "${TMUX_CMD[@]}" "$@" 8>&-; }
 work() { printf '%s\n' "${AGENTIC_WORK:-/work}"; }
 # field NAME KEY: a string field of an app, empty when unset
 field() { jq -r --arg n "$1" --arg k "$2" '.apps[$n][$k] // empty | strings' "$conf"; }
-names() { jq -r '.apps // {} | keys[]' "$conf" 2>/dev/null || true; }
+# names: the configured app names that pass the name rule, one per line
+names() { jq -r '.apps // {} | keys[] | select(test("^[a-z][a-z0-9-]{0,30}$"))' "$conf" 2>/dev/null || true; }
 win() { printf 'apps:=app-%s' "$1"; }
 has_window() { t list-windows -t apps -F '#{window_name}' 2>/dev/null | grep -qxF -- "app-$1"; }
 dead() { [ "$(t display -p -t "$(win "$1")" '#{pane_dead}' 2>/dev/null)" = 1 ]; }
@@ -41,6 +42,7 @@ notify() {
 # appdir NAME: the checkout plus the app's dir; fails when it does not exist.
 appdir() {
   local d; d="$(field "$1" dir)"
+  [ -z "$d" ] || case "/$d/" in //*|*/../*) die "dir $d must be a relative path inside the checkout" ;; esac
   [ -z "$d" ] || [ -d "$(work)/$d" ] || die "dir $d does not exist in the checkout ($(work))"
   if [ -n "$d" ]; then printf '%s/%s\n' "$(work)" "$d"; else work; fi
 }
@@ -64,19 +66,24 @@ hook() {
   ( cd "$dir"
     set +u; if [ -f "$state/env" ]; then . "$state/env"; fi; . "$apps/$1.env"; set -u
     unset AGENTIC_AGENT_TOKEN AGENTIC_TASK_TOKEN
-    exec timeout -k 5 "$3" "${SH[@]}" "$2" ) > "$4" 2>&1 </dev/null 8>&-
+    exec timeout -k 5 "$3" "${SH[@]}" "$2" ) > "$4" 2>&1 </dev/null 8>&- 9>&-
 }
 
 # copy_env_files NAME: each {from, to}: from .agentic/ into the checkout, only when to is missing.
 copy_env_files() {
-  local from to src dst cdir
+  local from to src dst cdir root
   cdir="$(cat "$state/config-dir" 2>/dev/null || true)"
+  root="$(realpath -m -- "$(work)")"
   while IFS=$'\t' read -r from to; do
     case "/$from/ /$to/" in //*|*/../*|*\ //*) echo "agentic-app: env_files: $from -> $to is not a relative path without ..; skipped" >&2; continue ;; esac
-    dst="$(work)/$to"
+    if [ -z "$cdir" ]; then echo "agentic-app: env_files: $from is no file in .agentic/; skipped" >&2; continue; fi
+    # resolved, symlinks included, each must stay under its root
+    src="$(realpath -m -- "$cdir/$from")"; dst="$(realpath -m -- "$root/$to")"
+    if [[ "$src" != "$(realpath -m -- "$cdir")"/* || "$dst" != "$root"/* ]]; then
+      echo "agentic-app: env_files: $from -> $to leaves .agentic/ or the checkout; skipped" >&2; continue
+    fi
     if [ -e "$dst" ] || [ -L "$dst" ]; then continue; fi
-    src="$cdir/$from"
-    if [ -z "$cdir" ] || [ ! -f "$src" ]; then echo "agentic-app: env_files: $from is no file in .agentic/; skipped" >&2; continue; fi
+    if [ ! -f "$src" ]; then echo "agentic-app: env_files: $from is no file in .agentic/; skipped" >&2; continue; fi
     { mkdir -p -- "$(dirname -- "$dst")" && cp -- "$src" "$dst"; } 2>/dev/null \
       || die "env_files: cannot copy $from to $to in the checkout"
   done < <(jq -r --arg n "$1" '.apps[$n].env_files // [] | .[] | select((.from | type) == "string" and (.to | type) == "string")
@@ -96,7 +103,7 @@ ensure() {
 idle_secs() {
   local v; v="$(field "$1" idle_stop)"
   [[ "$v" =~ ^([0-9]+)([smh]?)$ ]] || { echo 0; return; }
-  case "${BASH_REMATCH[2]}" in m) echo $((BASH_REMATCH[1] * 60)) ;; h) echo $((BASH_REMATCH[1] * 3600)) ;; *) echo $((10#${BASH_REMATCH[1]})) ;; esac
+  case "${BASH_REMATCH[2]}" in m) echo $((10#${BASH_REMATCH[1]} * 60)) ;; h) echo $((10#${BASH_REMATCH[1]} * 3600)) ;; *) echo $((10#${BASH_REMATCH[1]})) ;; esac
 }
 
 # busy NAME: an established connection on one of the app's ports, from ss, else from /proc/net/tcp*.
@@ -122,9 +129,9 @@ busy() {
 # idle_watched: an app with idle_stop and ports that is running.
 idle_watched() {
   local n
-  for n in $(names); do
+  while IFS= read -r n; do
     [ "$(idle_secs "$n")" -gt 0 ] && has_window "$n" && ! dead "$n" && return 0
-  done
+  done < <(names)
   return 1
 }
 
@@ -137,13 +144,13 @@ idle_loop() {
   echo $$ > "$apps/idle-loop.pid"
   while :; do
     sleep "${AGENTIC_IDLE_POLL:-15}"
-    for n in $(names); do
+    while IFS= read -r n; do
       secs="$(idle_secs "$n")"
       if [ "$secs" = 0 ] || ! has_window "$n" || dead "$n"; then continue; fi
       if busy "$n"; then date +%s > "$apps/$n.active"; continue; fi
       last="$(cat "$apps/$n.active" 2>/dev/null || date +%s)"
-      if [ $(($(date +%s) - last)) -ge "$secs" ]; then stop "$n" || true; fi
-    done
+      if [ $(($(date +%s) - last)) -ge "$secs" ]; then ( stop "$n" ) || true; fi
+    done < <(names)
     idle_watched && continue
     # release, then look again: a start in between finds the lock free or this loop goes on
     rm -f "$apps/idle-loop.pid"; exec 9>&-
@@ -158,6 +165,8 @@ start() {
   local n="$1" w="$apps/$1" dir prep rc q s
   exec 8>"$w.lock"
   flock 8
+  # a prepare left by an agentic-app that was killed may still run: never a second one alongside
+  if preparing "$n"; then die "app $n is preparing; start it again when that ends"; fi
   ensure
   if has_window "$n"; then
     if ! dead "$n"; then echo "agentic-app: app $n is already running" >&2; return 0; fi
@@ -169,14 +178,16 @@ start() {
   write_env "$n"
   prep="$(field "$n" prepare)"
   if [ -n "$prep" ] && [ ! -e "$w.prepared" ]; then
-    echo $$ > "$w.preparing"; stamp "$n"
-    rc=0; hook "$n" "$prep" "${AGENTIC_PREPARE_TIMEOUT:-600}" "$w.prepare.log" || rc=$?
+    # the prepare's own pid marks it: it outlives this process when that is killed
+    hook "$n" "$prep" "${AGENTIC_PREPARE_TIMEOUT:-600}" "$w.prepare.log" 8>&- 9>&- &
+    echo $! > "$w.preparing"; stamp "$n"
+    rc=0; wait $! || rc=$?
     rm -f "$w.preparing"
     if [ "$rc" != 0 ]; then
       echo "$rc" > "$w.failed"; stamp "$n"
       if [ "$rc" = 124 ]; then echo "agentic-app: prepare of $n timed out after ${AGENTIC_PREPARE_TIMEOUT:-600} s" >&2; fi
       echo "agentic-app: prepare of $n failed (exit $rc); its last lines:" >&2
-      tail -n 20 "$w.prepare.log" >&2
+      tail -n 20 "$w.prepare.log" | clean >&2
       notify "$n" failed "$rc"
       exit 1
     fi
@@ -209,7 +220,19 @@ start() {
   return 0
 }
 
+# stop NAME: under the app's lock, so a user stop and an idle stop never both run the teardown; the
+# lock is let go on return (the idle loop goes on).
 stop() {
+  local rc=0
+  if preparing "$1"; then die "app $1 is preparing; stop it when that ends"; fi
+  exec 8>"$apps/$1.lock"
+  flock 8
+  stop_locked "$1" || rc=$?
+  exec 8>&-
+  return "$rc"
+}
+
+stop_locked() {
   local n="$1" w="$apps/$1" i cmd rc=0
   if ! has_window "$n"; then rm -f "$w.failed"; return 0; fi
   : > "$w.stopping"
@@ -224,32 +247,38 @@ stop() {
   hook "$n" "$cmd" "${AGENTIC_TEARDOWN_TIMEOUT:-120}" "$w.teardown.log" || rc=$?
   [ "$rc" = 0 ] && return 0
   echo "agentic-app: teardown of $n failed (exit $rc); its last lines:" >&2
-  tail -n 20 "$w.teardown.log" >&2
+  tail -n 20 "$w.teardown.log" | clean >&2
   return 1
+}
+
+# preparing NAME: a prepare runs for the app (the pid in NAME.preparing lives); a stale marker goes.
+preparing() {
+  local pid; pid="$(cat "$apps/$1.preparing" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi
+  rm -f "$apps/$1.preparing"; return 1
 }
 
 # app_state NAME: state and exit code (tab-separated).
 app_state() {
-  local n="$1" w="$apps/$1" r pid
+  local n="$1" w="$apps/$1" r
   if has_window "$n"; then
     r="$(t display -p -t "$(win "$n")" '#{pane_dead}	#{pane_dead_status}' 2>/dev/null || true)"
     if [ "${r%%	*}" = 1 ]; then printf 'exited\t%s\n' "${r#*	}"; else printf 'running\t\n'; fi
     return
   fi
-  pid="$(cat "$w.preparing" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then printf 'preparing\t\n'; return; fi
+  if preparing "$n"; then printf 'preparing\t\n'; return; fi
   if [ -f "$w.failed" ]; then printf 'failed\t%s\n' "$(cat "$w.failed")"; return; fi
   printf 'stopped\t\n'
 }
 
 list() {
   local n st code since rows=""
-  for n in $(names); do
+  while IFS= read -r n; do
     IFS=$'\t' read -r st code < <(app_state "$n")
     since=""
     if [ "$st" != stopped ] || [ -f "$apps/$n.since" ]; then since="$(cat "$apps/$n.since" 2>/dev/null || true)"; fi
     rows+="$n	$st	$code	$since"$'\n'
-  done
+  done < <(names)
   jq -cn --arg rows "$rows" --slurpfile c "$conf" '
     ($c[0].apps // {}) as $a
     | [$rows | split("\n")[] | select(. != "") | split("\t") | . as [$n, $s, $x, $t]
@@ -257,11 +286,13 @@ list() {
           since: ($t | tonumber? // null), exit_code: ($x | tonumber? // null)}]'
 }
 
-# clean: no control characters (tab and newline stay), no trailing blank lines.
+# clean: no C0 control (tab and newline stay), no DEL, no C1 control (UTF-8 U+0080-U+009F); each
+# line at most 4000 bytes.
 clean() {
-  LC_ALL=C tr -d '\000-\010\013-\037\177' \
-    | awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] ~ /^[ \t]*$/) n--; for (i = 1; i <= n; i++) print l[i] }'
+  LC_ALL=C tr -d '\000-\010\013-\037\177' | LC_ALL=C sed 's/\xc2[\x80-\x9f]//g' | cut -b 1-4000
 }
+# trim: no trailing blank lines (the pane's empty rows below its output).
+trim() { awk '{ l[NR] = $0 } END { n = NR; while (n > 0 && l[n] ~ /^[ \t]*$/) n--; for (i = 1; i <= n; i++) print l[i] }'; }
 
 logs() {
   local n="$1" lines=200
@@ -275,9 +306,9 @@ logs() {
   done
   [[ "$lines" =~ ^[0-9]{1,4}$ ]] && [ "$lines" -ge 1 ] && [ "$lines" -le 2000 ] || die "--lines takes a number from 1 to 2000"
   if has_window "$n"; then
-    t capture-pane -p -J -S "-$lines" -t "$(win "$n")" | clean | tail -n "$lines"
+    t capture-pane -p -J -S "-$lines" -t "$(win "$n")" | trim | tail -n "$lines" | clean
   elif [ -f "$apps/$n.failed" ] && [ -f "$apps/$n.prepare.log" ]; then
-    clean < "$apps/$n.prepare.log" | tail -n "$lines"
+    trim < "$apps/$n.prepare.log" | tail -n "$lines" | clean
   else
     die "app $n is not running"
   fi
