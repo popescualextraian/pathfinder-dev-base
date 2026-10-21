@@ -55,13 +55,13 @@
       }
     },
     "apps": {
-      "description": "Applications the task container can run, each in tmux window app-<name>, controlled through the bridge (agentic-app, the UI). Keys per app: run, ports, url, dir, env, env_files, prepare, teardown, autostart, idle_stop. Changing them needs agentic build.",
-      "type": "object",
+      "description": "Applications the task container can run, each in tmux window app-<name>, controlled through the bridge (agentic-app, the UI). Keys per app: run, ports, url, dir, env, env_files, prepare, teardown, autostart, idle_stop. Changing them needs agentic build. At most 32 apps.",
+      "type": "object", "maxProperties": 32,
       "additionalProperties": {
         "type": "object", "required": ["run"], "additionalProperties": false,
         "properties": {
           "run": {"description": "The command, run with bash -lc in dir of the checkout; it should stay in the foreground.", "type": "string", "minLength": 1},
-          "ports": {"description": "Container ports the app listens on (1-65535, none shared with another app); may be empty. The server must listen on 0.0.0.0.", "type": "array", "items": {"type": "integer", "minimum": 1}},
+          "ports": {"description": "Container ports the app listens on (1-65535, at most 16, none shared with another app, not the bridge's 8765); may be empty. The server must listen on 0.0.0.0.", "type": "array", "maxItems": 16, "items": {"type": "integer", "minimum": 1}},
           "url": {"description": "Path to open. Default /.", "type": "string", "pattern": "^/"},
           "dir": {"description": "Working directory relative to the checkout. Default the checkout.", "type": "string", "minLength": 1},
           "env": {"description": "Plain values exported to prepare, run and teardown. Keys match ^[A-Z_][A-Z0-9_]*$; a key naming a token, key, secret or password is refused: such values belong in .env.", "type": "object", "additionalProperties": {"type": "string"}},

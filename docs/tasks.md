@@ -265,14 +265,18 @@ posted to the bridge and appears as an `app` event `{name, action: started|stopp
 
 | Route (task token) | Success | Errors |
 |---|---|---|
-| `GET /apps` | 200, `[{name, state: running\|stopped\|failed, ports, url, since, exit_code}]` | none |
+| `GET /apps` | 200, `[{name, state: running\|preparing\|stopped\|exited\|failed, ports, url, since, exit_code}]` (`since` in unix seconds or null; `exit_code` for `exited` and `failed`) | none |
 | `POST /apps/NAME/start`, `/stop`, `/restart` | 202, the app | 404 unknown app, 409 task stopped, app still preparing or not running, 502 `agentic-app` failed, 504 timeout |
 | `GET /apps/NAME/logs?lines=N` | 200, `{lines: [...]}` (N up to 2000, default 200, control characters removed) | 404 unknown app |
 | `POST /app` (agent token) | 204; `agentic-app` reports an event | refused for names that are not configured |
 
 A call waits for `agentic-app`: start up to 660 s (it covers `prepare`), restart up to 840 s, stop up to 180 s
 (it covers `teardown`), then 504. A start or restart of an app whose `prepare` is still running gets 409
-`preparing`. An `app` report does not restart the task's idle timer (the agent's own activity does).
+`preparing`. An `app` report does not restart the task's idle timer (the agent's own activity does); a start,
+stop or restart through the bridge does. When the idle timer runs out while an app is `running` or `preparing`,
+the task is not suspended (its container would stop the app): the timer starts again and the bridge looks again
+later; if `agentic-app list` fails, the task suspends as before. `idle_stop` is how an unused app ends. A
+container restart clears the markers of prepares that were running (start step `07-apps`).
 
 `autostart` apps are started once per task, on the first boot of the bridge after the checkout is ready, also
 when that boot is a lazy one. The marker `apps-autostarted` in the task directory is written before the starts

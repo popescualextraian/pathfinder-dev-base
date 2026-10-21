@@ -244,6 +244,35 @@ APPS_OK=$'version: 2\nproject: demo\napps:\n  web:\n    run: npm start\n    port
   [[ "$output" == *".apps: port 3000 is used by a, b"* ]]
 }
 
+@test "an app port equal to the bridge port 8765 is refused" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    ports: [3000, 8765]'
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps.web.ports[1]: port 8765 is the bridge's"* ]]
+}
+
+@test "at most 32 apps and 16 ports per app" {
+  local y ports
+  y="$(printf 'version: 2\nproject: demo\napps:\n'; for i in $(seq 1 33); do printf '  a%s:\n    run: x\n' "$i"; done)"
+  write "$P/agentic.yaml" "$y"
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps: at most 32 entries"* ]]
+  y="$(printf 'version: 2\nproject: demo\napps:\n'; for i in $(seq 1 32); do printf '  a%s:\n    run: x\n' "$i"; done)"
+  write "$P/agentic.yaml" "$y"
+  run "$AC" validate "$P"
+  [ "$status" -eq 0 ]
+  ports="$(seq -s, 3001 3017)"
+  write "$P/agentic.yaml" "$(printf 'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    ports: [%s]' "$ports")"
+  run "$AC" validate "$P"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *".apps.web.ports: at most 16 items"* ]]
+  ports="$(seq -s, 3001 3016)"
+  write "$P/agentic.yaml" "$(printf 'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    ports: [%s]' "$ports")"
+  run "$AC" validate "$P"
+  [ "$status" -eq 0 ]
+}
+
 @test "an app env key that names a token, key, secret or password is refused, any case" {
   for k in API_TOKEN db_password MY_SECRET API_KEY; do
     write "$P/agentic.yaml" "$(printf 'version: 2\nproject: demo\napps:\n  web:\n    run: x\n    env: {%s: v}' "$k")"

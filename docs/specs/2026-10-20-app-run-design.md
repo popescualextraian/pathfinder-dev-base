@@ -60,11 +60,15 @@ to the bridge with the task's own token. `idle_stop` is checked by a small loop 
 
 | Route | Body | Result |
 |---|---|---|
-| `GET /apps` | | `[{name, state: running\|stopped\|failed, ports, url, since}]` |
+| `GET /apps` | | `[{name, state: running\|preparing\|stopped\|exited\|failed, ports, url, since, exit_code}]`; `since` in unix seconds or null |
 | `POST /apps/:name/start` `/stop` `/restart` | | 202 with the app; 404 unknown; 409 when the task is stopped |
 | `GET /apps/:name/logs?lines=N` | | `{lines: [...]}` (N ≤ 2000, default 200), control characters removed |
 
 `autostart` apps are started once the task's checkout is ready.
+
+The task does not suspend under a running or preparing app: when the idle timer runs out, the bridge asks
+`agentic-app list` and, while an app is `running` or `preparing`, starts the timer again (a failing list suspends as
+before). App actions restart the timer; `app` reports do not. `idle_stop` is how an unused app ends.
 
 ## 6. Testing
 

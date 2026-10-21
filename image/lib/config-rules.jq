@@ -14,7 +14,7 @@ def secret_errs:
     | select($val != "" and ($val | test("^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$") | not))
     | "." + ($p | map(tostring) | join(".")) + ": literal secret; reference it as ${VAR} and put the value in .agentic/.env" ];
 
-# apps_errs: app names, port range, a port used by two apps, env keys and env_files paths.
+# apps_errs: app names, port range, the bridge's port, a port used by two apps, env keys and env_files paths.
 # Values of the wrong type are left to the schema check.
 def apps_errs:
   (if (.apps | type) == "object" then .apps else {} end
@@ -26,6 +26,8 @@ def apps_errs:
          else ".apps.\($n): app name must match ^[a-z][a-z0-9-]{0,30}$" end),
         ( $v.ports | to_entries[] | select(.value < 1 or .value > 65535)
           | ".apps.\($n).ports[\(.key)]: port \(.value) is out of range"),
+        ( $v.ports | to_entries[] | select(.value == 8765)
+          | ".apps.\($n).ports[\(.key)]: port 8765 is the bridge's"),
         ( $v.dir // empty | strings | select(bad_rel)
           | ".apps.\($n).dir: must be a relative path inside the checkout"),
         ( $v.env // {} | objects | keys[]

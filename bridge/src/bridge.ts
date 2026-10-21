@@ -49,6 +49,7 @@ export class Bridge implements ApiTarget {
   private readonly listeners = new Set<(e: TaskEvent) => void>();
   private readonly waiters = new Map<string, (optionId: string | null) => void>();
   private idle: NodeJS.Timeout | null = null;
+  private idleGen = 0; // bumped on every arm and disarm: a check in flight for an older timer is void
   private flush: NodeJS.Timeout | null = null;
   private readonly kills = new Set<Promise<void>>();
   private readonly webhooks = new Set<Promise<void>>();
@@ -162,7 +163,11 @@ export class Bridge implements ApiTarget {
     const rec = this.m().record;
     if (rec.state === "stopped" || rec.cleaned) return { ok: false, status: 409, code: "conflict", message: "the task is stopped" };
     if (!this.d.apps) return { ok: false, status: 404, code: "not_found", message: `unknown app ${name}` };
-    return this.masked(await this.d.apps.act(rec.work, name, verb));
+    // a user's app action is activity: it restarts the idle timer, before and after (a start may take minutes)
+    this.touch();
+    const r = this.masked(await this.d.apps.act(rec.work, name, verb));
+    if (!this.down) this.touch();
+    return r;
   }
 
   async appLogs(name: string, lines: number): Promise<AppOutcome<string[]>> {
@@ -528,10 +533,32 @@ export class Bridge implements ApiTarget {
     this.disarmIdle();
     if (this.down) return;
     if (this.phase === "work" || this.phase === "summary") return;
-    this.idle = setTimeout(() => this.run({ kind: "idleTimeout" }), this.d.config.idleTimeoutMs);
+    const gen = ++this.idleGen;
+    this.idle = setTimeout(() => void this.onIdle(gen), this.d.config.idleTimeoutMs);
+  }
+
+  // onIdle: no suspend while an app runs or prepares (the container would stop under it): the timer
+  // starts again and looks later. A failing list suspends as before; idle_stop is how unused apps end.
+  private async onIdle(gen: number): Promise<void> {
+    const apps = this.d.apps;
+    if (apps) {
+      let busy = false;
+      try {
+        const r = await apps.list(this.m().record.work);
+        busy = r.ok && r.value.some((a) => a.state === "running" || a.state === "preparing");
+      } catch (err) {
+        this.log(`idle check of the apps failed: ${message(err)}`);
+      }
+      // re-armed, disarmed or shut down meanwhile: that newer decision stands
+      if (gen !== this.idleGen || this.down) return;
+      if (busy) { this.armIdle(); return; }
+    }
+    this.idle = null;
+    this.run({ kind: "idleTimeout" });
   }
 
   private disarmIdle(): void {
+    this.idleGen++;
     if (this.idle) clearTimeout(this.idle);
     this.idle = null;
   }

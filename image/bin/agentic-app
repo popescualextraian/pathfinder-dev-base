@@ -178,9 +178,10 @@ start() {
   write_env "$n"
   prep="$(field "$n" prepare)"
   if [ -n "$prep" ] && [ ! -e "$w.prepared" ]; then
-    # the prepare's own pid marks it: it outlives this process when that is killed
+    # the prepare's own pid and start time mark it: it outlives this process when that is killed, and
+    # a pid reused after a container restart does not match
     hook "$n" "$prep" "${AGENTIC_PREPARE_TIMEOUT:-600}" "$w.prepare.log" 8>&- 9>&- &
-    echo $! > "$w.preparing"; stamp "$n"
+    echo "$! $(started $!)" > "$w.preparing"; stamp "$n"
     rc=0; wait $! || rc=$?
     rm -f "$w.preparing"
     if [ "$rc" != 0 ]; then
@@ -251,10 +252,19 @@ stop_locked() {
   return 1
 }
 
-# preparing NAME: a prepare runs for the app (the pid in NAME.preparing lives); a stale marker goes.
+# started PID: the process's start time (field 22 of /proc/PID/stat, after the command name); empty
+# when it is gone.
+started() { sed 's/.*) //' "/proc/$1/stat" 2>/dev/null | cut -d' ' -f20 || true; }
+
+# preparing NAME: a prepare runs for the app (NAME.preparing holds "PID START" and that process lives
+# with that start time); a stale marker goes.
 preparing() {
-  local pid; pid="$(cat "$apps/$1.preparing" 2>/dev/null || true)"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then return 0; fi
+  local pid="" st="" now
+  if [ -f "$apps/$1.preparing" ]; then read -r pid st < "$apps/$1.preparing" || true; fi
+  if [[ "$pid" =~ ^[0-9]+$ ]] && [ -n "$st" ] && kill -0 "$pid" 2>/dev/null; then
+    now="$(started "$pid")"
+    if [ "$now" = "$st" ]; then return 0; fi
+  fi
   rm -f "$apps/$1.preparing"; return 1
 }
 

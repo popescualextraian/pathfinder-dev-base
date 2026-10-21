@@ -409,9 +409,11 @@ no_ctl() {
   bash "$X" start web & p=$!
   sleep 0.7
   kill "$p"; wait "$p" || true
-  pid="$(cat "$AGENTIC_STATE/apps/web.preparing")"
+  read -r pid st < "$AGENTIC_STATE/apps/web.preparing"
   [ "$pid" != "$p" ]
   kill -0 "$pid"
+  # the marker keeps the prepare's start time from /proc/PID/stat (field 22)
+  [ "$st" = "$(sed 's/.*) //' "/proc/$pid/stat" | cut -d' ' -f20)" ]
   run bash "$X" start web
   [ "$status" -eq 1 ]
   [[ "$output" == *"app web is preparing"* ]]
@@ -432,6 +434,39 @@ no_ctl() {
   [ ! -e "$AGENTIC_STATE/apps/web.preparing" ]
   run bash "$X" list --json
   [ "$(field web '.state')" = '"running"' ]
+}
+
+@test "a preparing marker whose pid lives but started at another time (a container restart) is stale" {
+  conf '.apps.web.prepare = "true"'
+  sleep 30 & lp=$!
+  mkdir -p "$AGENTIC_STATE/apps"
+  for marker in "$lp 1" "$lp"; do
+    echo "$marker" > "$AGENTIC_STATE/apps/web.preparing"
+    run bash "$X" list --json
+    [ "$(field web '.state')" = '"stopped"' ]
+    [ ! -e "$AGENTIC_STATE/apps/web.preparing" ]
+  done
+  echo "$lp 1" > "$AGENTIC_STATE/apps/web.preparing"
+  run bash "$X" start web
+  kill "$lp"
+  [ "$status" -eq 0 ]
+  run bash "$X" list --json
+  [ "$(field web '.state')" = '"running"' ]
+}
+
+@test "the start step 07-apps clears the preparing markers a container restart left" {
+  mkdir -p "$AGENTIC_STATE/apps"
+  echo "1 1" > "$AGENTIC_STATE/apps/web.preparing"; echo "2 2" > "$AGENTIC_STATE/apps/api.preparing"
+  : > "$AGENTIC_STATE/apps/web.prepared"
+  run bash "$REPO_ROOT/image/start.d/07-apps.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$AGENTIC_STATE/apps/web.preparing" ] && [ ! -e "$AGENTIC_STATE/apps/api.preparing" ]
+  [ -e "$AGENTIC_STATE/apps/web.prepared" ]
+  rm -rf "$AGENTIC_STATE/apps"
+  run bash "$REPO_ROOT/image/start.d/07-apps.sh"
+  [ "$status" -eq 0 ]
+  run bash "$REPO_ROOT/image/start.d/07-apps.sh" --check
+  [ "$status" -eq 0 ]
 }
 
 @test "stop of an app that is preparing is refused" {

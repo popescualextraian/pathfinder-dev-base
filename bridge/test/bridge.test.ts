@@ -874,6 +874,58 @@ describe("apps in the bridge", () => {
     expect(none.bridge.command({ kind: "app", name: "web", action: "started", exitCode: null })).toMatchObject({ ok: false, code: "bad_request" });
   });
 
+  // listed: Apps whose list answers with web in STATE (or fails when STATE is null)
+  function listed(state: { web: string | null }) {
+    const calls: string[][] = [];
+    const apps = new Apps(async (args) => {
+      calls.push(args);
+      if (args[0] !== "list") return { code: 0, out: "", err: "", timedOut: false };
+      if (state.web === null) return { code: 1, out: "", err: "agentic-app: broken\n", timedOut: false };
+      return { code: 0, out: JSON.stringify([{ ...web, state: state.web }]), err: "", timedOut: false };
+    });
+    return { apps, calls };
+  }
+
+  for (const st of ["running", "preparing"]) {
+    it(`the idle timeout does not suspend the task while an app is ${st}; it suspends once none is`, async () => {
+      const state = { web: st as string | null };
+      const { apps } = listed(state);
+      const { bridge, exits } = await stubbed({ idleMs: 150, apps });
+      bridge.boot();
+      await waitState(bridge, "idle");
+      await tick(450);
+      expect(bridge.status().state).toBe("idle");
+      expect(exits).toEqual([]);
+      state.web = "stopped";
+      await waitState(bridge, "suspended");
+      expect(await exited(exits)).toEqual([0]);
+    });
+  }
+
+  it("the idle timeout suspends as before when no app runs or the list fails", async () => {
+    for (const st of ["stopped", "exited", "failed", null]) {
+      const { apps } = listed({ web: st });
+      const { bridge, exits } = await stubbed({ idleMs: 150, apps });
+      bridge.boot();
+      await waitState(bridge, "idle");
+      await waitState(bridge, "suspended");
+      expect(await exited(exits), String(st)).toEqual([0]);
+    }
+  });
+
+  it("an app action restarts the idle timer", async () => {
+    const { apps } = listed({ web: "stopped" });
+    const { bridge, exits } = await stubbed({ idleMs: 400, apps });
+    bridge.boot();
+    await waitState(bridge, "idle");
+    await tick(250);
+    expect(await bridge.appAction("web", "stop")).toMatchObject({ ok: true });
+    await tick(250);
+    expect(bridge.status().state).toBe("idle");
+    await waitState(bridge, "suspended");
+    expect(await exited(exits)).toEqual([0]);
+  });
+
   it("an app report does not restart the idle timer", async () => {
     const { bridge, exits } = await stubbed({ idleMs: 300, appNames: () => ["web"] });
     bridge.boot();
