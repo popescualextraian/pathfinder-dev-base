@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const die = (msg) => { console.error(msg); process.exit(2); };
+const die = (text) => { console.error(text); process.exit(2); };
 
 let Ajv;
 try {
