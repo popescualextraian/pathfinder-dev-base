@@ -84,8 +84,8 @@ After a change. Without a range use `$(git merge-base HEAD <default branch>)`.
    its page; correct only what the diff contradicts.
 2. Each `unclaimed` file gets an owner: a component's `sources`, a new component, or
    `omitted.yaml` with a reason.
-3. Delete a plan review under `reviews/plans/` whose plan this branch has implemented; its result
-   lives in the model and git keeps the history.
+3. Delete the plan reviews in `reviews/plans/` this branch has implemented (git keeps them). Drop
+   or rename a removed or renamed component's entries in `reviews/full.json` and plan reviews.
 4. Run `agentic-arch build`, `agentic-arch sync`, `agentic-arch check`. Summarise the changes.
 
 ### plan <plan-file>
@@ -97,7 +97,7 @@ Review a plan or spec against the doc before it is applied. Follow `reference/pl
 2. List each component the plan touches as new, changed or removed with one line; a new one gets
    its proposed part, module, layer and summary.
 3. Check every principle and rule against the plan. A break names the rule, why the plan breaks
-   it, and the simpler alternative. Skip findings already accepted in `exceptions`.
+   it, and the simpler alternative; one whose id is in `exceptions` stays with status `accepted`.
 4. Give a rough size: S, M or L.
 5. Write `reviews/plans/<slug>.json`, run `agentic-arch check`, and print a short summary for the
    person and the agent.

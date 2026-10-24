@@ -100,3 +100,13 @@ validate_fm() {
   run bash -c "grep -rhoiE '[a-z0-9.-]+\.(com|net|org|io|de|dev|cloud)\b' '$S/SKILL.md' '$S/reference' '$S/templates' | grep -viE '(^|\.)example\.com$'"
   [ "$status" -eq 1 ]
 }
+
+@test "plan mode keeps accepted findings with status accepted, as plan-review.md says" {
+  ! grep -qi 'skip findings already accepted' "$S/SKILL.md"
+  sed -n '/^### plan/,/^### review/p' "$S/SKILL.md" | tr '\n' ' ' | grep -qE 'status `accepted`'
+  grep -qF 'keep the finding with status' "$S/reference/plan-review.md"
+}
+
+@test "update mode keeps the reviews in step with removed or renamed components" {
+  sed -n '/^### update/,/^### plan/p' "$S/SKILL.md" | tr '\n' ' ' | grep -qE 'removed or renamed.*reviews/full\.json'
+}
