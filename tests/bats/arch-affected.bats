@@ -62,3 +62,18 @@ unclaimed scripts.sh"
   [ "$status" -eq 2 ]
   [[ "$output" == *usage* ]]
 }
+
+@test "-C on a project in a subfolder maps paths relative to the project" {
+  r="$BATS_TEST_TMPDIR/repo"
+  mkdir -p "$r"
+  cp -r "$REPO_ROOT/tests/fixtures/architect/good" "$r/shop"
+  git -C "$r" init -q
+  git -C "$r" add -A
+  git -C "$r" -c user.name=t -c user.email=t@example.com commit -q -m base
+  echo "// x" >> "$r/shop/backend/src/api/orders/orders-api.ts"
+  echo "x" > "$r/outside.txt"
+  git -C "$r" add -A
+  run "$ARCH" -C "$r/shop" affected HEAD
+  [ "$status" -eq 0 ]
+  [ "$output" = "component orders-api backend/src/api/orders/orders-api.ts" ]
+}

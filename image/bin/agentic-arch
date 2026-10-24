@@ -69,11 +69,12 @@ cmd_check() {
   echo "architect: ok"
 }
 
-# cmd_affected RANGE: maps the files git diff lists to the component with the longest matching source.
+# cmd_affected RANGE: maps the files git diff lists under ROOT, relative to it, to the component with
+# the longest matching source.
 cmd_affected() {
   local files f e best src id
   declare -A owner=()
-  files="$(git -C "$ROOT" diff --name-only "$1")" || exit 2
+  files="$(git -C "$ROOT" diff --name-only --relative "$1")" || exit 2
   while IFS=$'\t' read -r src id; do
     owner["${src%/}"]="$id"
   done < <(arch_owners)
