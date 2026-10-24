@@ -66,8 +66,8 @@ No nagging: an accepted finding is shown as accepted, never as new; a finding ke
 
 Once per repository. Follow `reference/seed.md`.
 
-1. Read the layout, the existing CLAUDE.md and `docs/`. Detect the style and the layers with the
-   catalog's `detect` hints.
+1. Read the layout, the existing CLAUDE.md and `docs/`. Detect the style and layers with the
+   catalog's `detect` hints; what the project states wins over the catalog default.
 2. Define the components (aim for 5 to 30 top-level ones). Write `architecture.md`, the component
    pages and a few main flows, all `status: draft`. Put unowned paths into `omitted.yaml`.
 3. Add `@docs/architecture/index.md` to CLAUDE.md (`templates/CLAUDE-snippet.md`); do not rewrite
