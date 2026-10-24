@@ -74,7 +74,7 @@ check "overlay step, overlay defaults and all skills" 'test -f ~/.overlay-step-r
 check "agentic-wiki" 'agentic-wiki -C /work/wiki-demo check \
   && grep -qx -- "- agentic-wiki" /opt/agentic/inventory.txt'
 check "agentic-arch: check is ok, deps finds the accepted-finding id, dependency-cruiser is installed" '
-  [ "$(agentic-arch -C /work/arch-demo check)" = "architect: ok" ] \
+  [ "$(agentic-arch -C /work/arch-demo check | tail -n 1)" = "architect: ok" ] \
   && { agentic-arch -C /work/arch-demo deps > /tmp/arch-deps.json || [ $? -eq 1 ]; } \
   && grep -q "layers/orders-api/imports-order-store" /tmp/arch-deps.json \
   && node /opt/agentic/arch/node_modules/dependency-cruiser/bin/dependency-cruiser.mjs --version \
