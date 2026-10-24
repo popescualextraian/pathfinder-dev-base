@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "kind": "full",
+  "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  "reviewedAt": "2026-10-21T09:30:00Z",
+  "components": {
+    "order-views": { "reviewedAt": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+    "order-service": { "reviewedAt": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+    "orders-api": { "reviewedAt": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+    "catalog-service": { "reviewedAt": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" }
+  },
+  "findings": [
+    { "id": "dry/order-service/price-rounding-copied", "rule": "dry", "component": "order-service", "severity": "warn", "source": "llm",
+      "text": "Price rounding is implemented in the order service and again in the catalog service.", "status": "open", "since": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+    { "id": "layers/orders-api/imports-order-store", "rule": "layers", "component": "orders-api", "severity": "error", "source": "depcruise",
+      "text": "The orders API reads the order store directly for the CSV export.", "status": "accepted", "since": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" },
+    { "id": "kiss/catalog-service/two-caches", "rule": "kiss", "component": "catalog-service", "severity": "info", "source": "llm",
+      "text": "The catalog service kept its own cache next to the store's.", "status": "fixed", "since": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678" }
+  ]
+}

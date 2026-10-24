@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "style": { "id": "modular-monolith", "name": "Modular monolith, layered" },
+  "parts": [
+    {
+      "id": "frontend",
+      "name": "Frontend",
+      "layers": [
+        { "id": "views", "name": "Views", "mayUse": ["state"] },
+        { "id": "state", "name": "State", "mayUse": ["api-client"] },
+        { "id": "api-client", "name": "API client", "mayUse": [] }
+      ],
+      "modules": [
+        { "id": "orders", "name": "Orders" },
+        { "id": "catalog", "name": "Catalog" }
+      ]
+    },
+    {
+      "id": "backend",
+      "name": "Backend",
+      "layers": [
+        { "id": "api", "name": "API", "mayUse": ["service", "commons"] },
+        { "id": "service", "name": "Service", "mayUse": ["integration", "repository", "commons"] },
+        { "id": "integration", "name": "Integration", "mayUse": ["service", "commons"] },
+        { "id": "repository", "name": "Repository", "mayUse": ["commons"] },
+        { "id": "commons", "name": "Commons", "mayUse": [] }
+      ],
+      "modules": [
+        { "id": "orders", "name": "Orders" },
+        { "id": "catalog", "name": "Catalog" }
+      ]
+    }
+  ],
+  "components": [
+    { "id": "order-views", "name": "Order views", "part": "frontend", "layer": "views", "module": "orders", "parent": null, "summary": "Cart, checkout and order history screens.", "page": "components/order-views.md" },
+    { "id": "order-state", "name": "Order state", "part": "frontend", "layer": "state", "module": "orders", "parent": null, "summary": "Hooks holding the cart and the user's orders.", "page": "components/order-state.md" },
+    { "id": "orders-client", "name": "Orders client", "part": "frontend", "layer": "api-client", "module": "orders", "parent": null, "summary": "The only frontend code that calls the orders API.", "page": "components/orders-client.md" },
+    { "id": "catalog-views", "name": "Catalog views", "part": "frontend", "layer": "views", "module": "catalog", "parent": null, "summary": "Product list and product page.", "page": "components/catalog-views.md" },
+    { "id": "catalog-state", "name": "Catalog state", "part": "frontend", "layer": "state", "module": "catalog", "parent": null, "summary": "Hooks holding products and filters.", "page": "components/catalog-state.md" },
+    { "id": "catalog-client", "name": "Catalog client", "part": "frontend", "layer": "api-client", "module": "catalog", "parent": null, "summary": "The only frontend code that calls the catalog API.", "page": "components/catalog-client.md" },
+    { "id": "orders-api", "name": "Orders API", "part": "backend", "layer": "api", "module": "orders", "parent": null, "summary": "REST for carts and orders; validation only.", "page": "components/orders-api.md" },
+    { "id": "order-service", "name": "Order service", "part": "backend", "layer": "service", "module": "orders", "parent": null, "summary": "Owns orders: pricing, checkout, the payment step.", "page": "components/order-service.md" },
+    { "id": "payment-gateway", "name": "Payment gateway", "part": "backend", "layer": "integration", "module": "orders", "parent": null, "summary": "Talks to the payment provider; implements the service's Payments interface.", "page": "components/payment-gateway.md" },
+    { "id": "order-store", "name": "Order store", "part": "backend", "layer": "repository", "module": "orders", "parent": null, "summary": "Orders in the database.", "page": "components/order-store.md" },
+    { "id": "catalog-api", "name": "Catalog API", "part": "backend", "layer": "api", "module": "catalog", "parent": null, "summary": "REST for products and search.", "page": "components/catalog-api.md" },
+    { "id": "catalog-service", "name": "Catalog service", "part": "backend", "layer": "service", "module": "catalog", "parent": null, "summary": "Owns products, prices and search.", "page": "components/catalog-service.md" },
+    { "id": "catalog-store", "name": "Catalog store", "part": "backend", "layer": "repository", "module": "catalog", "parent": null, "summary": "Products in the database, with a read cache.", "page": "components/catalog-store.md" },
+    { "id": "config", "name": "Config", "part": "backend", "layer": "commons", "module": null, "parent": null, "summary": "Validated environment, read once at start.", "page": "components/config.md" },
+    { "id": "validation", "name": "Validation", "part": "backend", "layer": "commons", "module": null, "parent": null, "summary": "The global validation pipe.", "page": "components/validation.md" }
+  ],
+  "connections": [
+    { "from": "order-views", "to": "order-state", "via": "call" },
+    { "from": "order-state", "to": "orders-client", "via": "call" },
+    { "from": "orders-client", "to": "orders-api", "via": "rest" },
+    { "from": "orders-api", "to": "order-service", "via": "call" },
+    { "from": "order-service", "to": "payment-gateway", "via": "call" },
+    { "from": "order-service", "to": "order-store", "via": "call" },
+    { "from": "order-service", "to": "catalog-service", "via": "call" },
+    { "from": "catalog-views", "to": "catalog-state", "via": "call" },
+    { "from": "catalog-state", "to": "catalog-client", "via": "call" },
+    { "from": "catalog-client", "to": "catalog-api", "via": "rest" },
+    { "from": "catalog-api", "to": "catalog-service", "via": "call" },
+    { "from": "catalog-service", "to": "catalog-store", "via": "call" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "kind": "plan",
+  "title": "Serve the catalog from a headless CMS",
+  "plan": "Kept outside this repository (a note instead of a path).",
+  "baseCommit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
+  "reviewedAt": "2026-10-23T08:40:00Z",
+  "size": "S",
+  "summary": "Products come from the CMS; the catalog store goes away.",
+  "changes": [
+    { "component": "cms-client", "change": "new", "line": "Reads products from the CMS; implements the catalog service's Products interface.",
+      "proposed": { "name": "CMS client", "part": "backend", "layer": "integration", "module": "catalog",
+                    "summary": "The CMS's REST API behind the Products interface.", "talks_to": [] } },
+    { "component": "catalog-service", "change": "changed", "line": "Reads products through the Products interface." },
+    { "component": "catalog-store", "change": "removed", "line": "Products no longer live in our database." }
+  ],
+  "findings": [],
+  "passed": ["layers", "boundaries", "yagni"]
+}
