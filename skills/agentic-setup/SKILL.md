@@ -165,5 +165,5 @@ Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_
    the values); and tell the user to run, on the host, `agentic build`, then
    `agentic dev recreate` (or restart their container) and `agentic doctor`. `.env` changes need
    only a container restart.
-   If the project has no `docs/wiki/`, suggest running `/wiki seed` next, which writes the wiki,
-   a lean CLAUDE.md and path rules.
+   If the project has no `docs/architecture/`, suggest running `/architect seed` next, which
+   writes the architecture doc and imports its index into CLAUDE.md.

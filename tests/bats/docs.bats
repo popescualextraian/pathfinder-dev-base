@@ -45,8 +45,8 @@ load helpers
   grep -qF 'Never put a token in the URL' "$f"
 }
 
-@test "the setup hand-over suggests /wiki seed when the project has no wiki" {
-  grep -qF '/wiki seed' "$REPO_ROOT/skills/agentic-setup/SKILL.md"
+@test "the setup hand-over suggests /architect seed when the project has no architecture doc" {
+  grep -qF '/architect seed' "$REPO_ROOT/skills/agentic-setup/SKILL.md"
 }
 
 @test "docs/setup.md documents every setup command, and the skill reference lists the same commands" {

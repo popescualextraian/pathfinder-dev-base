@@ -269,6 +269,26 @@ validates all of it. The skill decides where each statement belongs:
 `marketplace/plugins/wiki/skills/wiki/reference/routing.md`. For architecture documentation see
 the architect skill (`/architect`).
 
+## Architecture doc and the architect skill (WIP)
+
+The `architect` skill keeps a light description of the architecture in `docs/architecture/` and
+checks plans and code against it. The doc directs, it does not teach: it names the style, pins the
+project's own choices and lists the rules; the code shows the rest.
+
+- Layout: `architecture.md` (style, parts, layers, boundaries, principles, patterns, exceptions),
+  `components/<id>.md`, optional `flows/`, `decisions/` and `catalog/`, `omitted.yaml`; generated:
+  `index.md` (imported into CLAUDE.md), `model.json`, `rules.depcruise.cjs`; reviews in
+  `reviews/full.json` and `reviews/plans/<slug>.json`.
+- Modes: `/architect seed` (once), `update [<range>]`, `plan <plan-file>` (advisory review before
+  you apply a plan), `review [--full]`, `accept <finding-id> "<reason>"`, `new <template>` (a new
+  project), `audit`.
+- `agentic-arch [-C DIR]`: `build` (index, model, rules), `check` (prints `architect: ok` or one line
+  per problem), `affected <range>` (changed files by component), `deps [--affected <sha>]`
+  (dependency-cruiser findings as JSON; exit 1 when there are findings) and `sync` (mirrors the
+  index for Copilot).
+
+Details: `docs/architecture.md`. The parked wiki is described above.
+
 ## Philosophy
 
 The aim is more autonomy and speed with the same quality, reached through seventeen pillars:

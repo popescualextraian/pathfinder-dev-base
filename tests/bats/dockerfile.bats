@@ -56,3 +56,11 @@ D="$REPO_ROOT/image/Dockerfile"
 @test "ccusage is pinned to an exact version" {
   grep -Eq '(^| )ccusage@[0-9]+\.[0-9]+\.[0-9]+( |$)' "$D"
 }
+
+@test "the architect tools are installed from the lockfile in their own layer before the agentic layer" {
+  grep -Eq '^COPY image/arch/package.json image/arch/package-lock.json /opt/agentic/arch/$' "$D"
+  grep -Eq 'cd /opt/agentic/arch .*PATH=/opt/node/\$\{NODE_HARNESS\}/bin:\$PATH npm ci --omit=dev --no-audit --no-fund' "$D"
+  grep -Eq '^COPY image/arch/validate.mjs /opt/agentic/arch/validate.mjs$' "$D"
+  [ "$(grep -n 'npm ci --omit=dev' "$D" | cut -d: -f1)" -lt "$(grep -n '^COPY image/lib ' "$D" | cut -d: -f1)" ]
+  [ "$(grep -n 'COPY image/arch/validate.mjs' "$D" | cut -d: -f1)" -gt "$(grep -n '^COPY image/lib ' "$D" | cut -d: -f1)" ]
+}

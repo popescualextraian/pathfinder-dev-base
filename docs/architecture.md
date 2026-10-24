@@ -109,6 +109,22 @@ never a second copy of a base file to keep in sync.
 - **Gate (2).** The PreToolUse hook is installed at user scope for both harnesses, so it applies
   whether the CLI or a hub launches the harness.
 
+## Architect skill
+
+`skills/architect/` (installed into both harnesses like every skill) holds the modes, the catalog
+(styles, principles, patterns, templates), the templates and the JSON schemas the UI reads. The
+deterministic half is the script `agentic-arch` (`image/bin`, library `image/lib/arch.sh`): build,
+check, affected, deps, sync. The LLM does the rest (seeding, plan and code review).
+
+The image carries a few Node tools in `/opt/agentic/arch`: `validate.mjs` (schema checks for
+`check`) and dependency-cruiser, installed with `npm ci --omit=dev` from the committed lockfile in
+its own layer before the agentic layer, on the pinned Node 22. Versions are pinned exactly and
+nothing is fetched at run time. `agentic-arch deps` runs it with the generated
+`rules.depcruise.cjs`.
+
+Catalog entries resolve by id, last wins: built-in (`skills/architect/catalog`), the overlay
+(`/opt/agentic/catalog/architect/`), the project (`docs/architecture/catalog/`).
+
 ## Decisions
 
 | Decision | Choice | Why |
