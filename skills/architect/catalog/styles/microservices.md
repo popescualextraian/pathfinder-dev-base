@@ -17,6 +17,7 @@ rules:
   - Services talk only through published APIs or events.
   - A service is deployed and versioned alone.
   - Clients of other services sit in one layer and tolerate failure.
+  - "With ports-and-adapters, client and repository may use service: they implement its interfaces."
 ---
 
 # Microservices

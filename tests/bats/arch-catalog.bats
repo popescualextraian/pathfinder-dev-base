@@ -103,3 +103,16 @@ need() {
   run "$REPO_ROOT/image/bin/agentic-arch" -C "$P" check
   echo "$output"; [ "$output" = "architect: ok" ]
 }
+
+@test "with ports-and-adapters, integration and repository may use service in the catalog defaults" {
+  local f
+  for f in "$CAT/styles/modular-monolith.md" "$CAT/templates/modular-monolith.md"; do
+    wiki_fm "$f" | jq -e '[(.layers // .parts[0].layers)[] | select(.id == "integration" or .id == "repository") | .mayUse | index("service") != null] | length == 2 and all' >/dev/null \
+      || { echo "integration and repository must list service: $f"; false; }
+  done
+  for f in layered microservices; do
+    wiki_fm "$CAT/styles/$f.md" | jq -e '.rules | any(test("ports-and-adapters") and test("may use service"))' >/dev/null \
+      || { echo "rule missing in $f"; false; }
+  done
+  wiki_fm "$CAT/patterns/ports-and-adapters.md" | jq -e '.implies | test("integration and repository may use service")' >/dev/null
+}

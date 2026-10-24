@@ -6,6 +6,7 @@ summary: "The core declares ports; adapters implement them for each outside syst
 use_when: "The core must stay free of a framework, a store or a remote system."
 spot: "An interface in the core with an implementation in an adapter folder."
 layers_implied: [ports, adapters]
+implies: "Adapters implement interfaces the core owns: integration and repository may use service."
 ---
 
 # Ports and adapters
