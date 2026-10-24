@@ -60,6 +60,54 @@ val() { run bash -c "$1 | node '$V' --model '$C/model.json'"; }
   [[ "$output" == *ghost* ]]
 }
 
+@test "a full review finding may name a layer id, as deps does for a layer folder" {
+  jq '.findings[0].component = "service"' "$C/full.json" >"$BATS_TEST_TMPDIR/f.json"
+  val "$(declare -f item); item full '$BATS_TEST_TMPDIR/f.json'"
+  [ "$status" -eq 0 ]
+  jq '.components.service = .components["order-service"]' "$C/full.json" >"$BATS_TEST_TMPDIR/f.json"
+  val "$(declare -f item); item full '$BATS_TEST_TMPDIR/f.json'"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"component service is not in the model"* ]]
+}
+
+# plan_with JQ: the gift-cards plan changed by JQ, validated; status and output in run's variables.
+plan_with() {
+  jq "$1" "$C/2026-10-20-gift-cards.json" >"$BATS_TEST_TMPDIR/p.json"
+  val "$(declare -f item); item plan '$BATS_TEST_TMPDIR/p.json'"
+}
+
+@test "a plan finding must name a model component or a new one" {
+  plan_with '.findings[0].component = "invoice-service"'
+  [ "$status" -eq 1 ]
+  [ "$output" = "$BATS_TEST_TMPDIR/p.json: finding layers/order-views/calls-orders-client-directly names component invoice-service, neither in the model nor new" ]
+  plan_with '.findings[0].component = "gift-card-service"'
+  [ "$status" -eq 0 ]
+}
+
+@test "a new component's proposed part, layer and module must exist" {
+  plan_with '.changes[0].proposed.part = "nopart"'
+  [ "$status" -eq 1 ]
+  [ "$output" = "$BATS_TEST_TMPDIR/p.json: gift-card-service: proposed part nopart is not in the model" ]
+  plan_with '.changes[0].proposed.layer = "nope"'
+  [ "$status" -eq 1 ]
+  [ "$output" = "$BATS_TEST_TMPDIR/p.json: gift-card-service: proposed layer nope is not in part backend" ]
+  plan_with '.changes[0].proposed.module = "billing"'
+  [ "$status" -eq 1 ]
+  [ "$output" = "$BATS_TEST_TMPDIR/p.json: gift-card-service: proposed module billing is not in part backend" ]
+  plan_with '.changes[0].proposed.module = null'
+  [ "$status" -eq 0 ]
+}
+
+@test "a new component talks only to known or other new components" {
+  plan_with '.changes[0].proposed.talks_to[0].to = "ghost"'
+  [ "$status" -eq 1 ]
+  [ "$output" = "$BATS_TEST_TMPDIR/p.json: gift-card-service: proposed talks_to names unknown component ghost" ]
+  plan_with '.changes[0].proposed.talks_to[0].to = "gift-card-store"
+    | .changes += [{component: "gift-card-store", change: "new", line: "Stores cards.",
+        proposed: {name: "Gift card store", part: "backend", layer: "repository", summary: "Gift cards in the database."}}]'
+  [ "$status" -eq 0 ]
+}
+
 @test "page front matter schemas accept good data and reject bad enums" {
   echo '[{"kind":"component","file":"a.md","data":{"id":"a","name":"A","summary":"s","layer":"api","sources":["src/"],"status":"draft","extra":1}}]' >"$BATS_TEST_TMPDIR/ok.json"
   run node "$V" <"$BATS_TEST_TMPDIR/ok.json"

@@ -44,9 +44,14 @@ try {
 }
 
 let known = null;
+let parts = null;
+let layerIds = null;
 if (modelPath) {
   try {
-    known = new Set(JSON.parse(readFileSync(modelPath, "utf8")).components.map((c) => c.id));
+    const model = JSON.parse(readFileSync(modelPath, "utf8"));
+    known = new Set(model.components.map((c) => c.id));
+    parts = new Map(model.parts.map((p) => [p.id, p]));
+    layerIds = new Set(model.parts.flatMap((p) => p.layers.map((l) => l.id)));
   } catch (e) {
     die(`validate.mjs: cannot read model ${modelPath} (${e.message})`);
   }
@@ -64,13 +69,31 @@ for (const { kind, file, data } of items) {
   }
   if (!known) continue;
   if (kind === "plan") {
+    const fresh = new Set(data.changes.filter((c) => c.change === "new" && c.proposed).map((c) => c.component));
+    const exists = (id) => known.has(id) || fresh.has(id);
     for (const c of data.changes) {
-      if (!known.has(c.component) && !(c.change === "new" && c.proposed)) {
+      if (!known.has(c.component) && !fresh.has(c.component)) {
         problems.push(`${file}: component ${c.component} is neither in the model nor new with proposed`);
       }
+      if (c.change !== "new" || !c.proposed) continue;
+      const { part, layer, module = null, talks_to: talks = [] } = c.proposed;
+      const p = parts.get(part);
+      if (!p) {
+        problems.push(`${file}: ${c.component}: proposed part ${part} is not in the model`);
+      } else {
+        if (!p.layers.some((l) => l.id === layer)) problems.push(`${file}: ${c.component}: proposed layer ${layer} is not in part ${part}`);
+        if (module !== null && !p.modules.some((m) => m.id === module)) problems.push(`${file}: ${c.component}: proposed module ${module} is not in part ${part}`);
+      }
+      for (const t of talks) {
+        if (!exists(t.to)) problems.push(`${file}: ${c.component}: proposed talks_to names unknown component ${t.to}`);
+      }
+    }
+    for (const f of data.findings) {
+      if (!exists(f.component)) problems.push(`${file}: finding ${f.id} names component ${f.component}, neither in the model nor new`);
     }
   } else if (kind === "full") {
-    const refs = [...Object.keys(data.components), ...data.findings.map((f) => f.component)];
+    // a finding may name a layer: deps puts the layer id there for a file owned by a layer folder
+    const refs = [...Object.keys(data.components), ...data.findings.map((f) => f.component).filter((id) => !layerIds.has(id))];
     for (const id of new Set(refs)) {
       if (!known.has(id)) problems.push(`${file}: component ${id} is not in the model`);
     }
