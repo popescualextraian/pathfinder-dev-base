@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Component page front matter",
+  "type": "object",
+  "required": ["id", "name", "summary", "layer", "sources"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+    "name": { "type": "string", "minLength": 1 },
+    "summary": { "type": "string" },
+    "part": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+    "layer": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+    "module": { "oneOf": [{ "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, { "type": "null" }] },
+    "parent": { "oneOf": [{ "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, { "type": "null" }] },
+    "sources": { "type": "array", "items": { "type": "string" } },
+    "talks_to": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["to", "via"],
+        "properties": { "to": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, "via": { "enum": ["call", "rest", "event", "file", "other"] } }
+      }
+    },
+    "patterns": { "type": "array", "items": { "type": "string" } },
+    "status": { "enum": ["draft", "reviewed"] }
+  }
+}
