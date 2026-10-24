@@ -128,6 +128,35 @@ rule() { node -e 'const r = require(process.argv[1]); console.log(JSON.stringify
   [ "$stderr" = 'agentic-arch: backend/src/tools/seed.ts imports backend/src/backlog/service/backlog-service.ts (boundaries:backlog-package:entry), but no component or layer owns backend/src/tools/seed.ts' ]
 }
 
+# node_stub: ARCH_NODE becomes a node that logs its arguments to $NODE_LOG, then runs node.
+node_stub() {
+  NODE_LOG="$BATS_TEST_TMPDIR/node.log"
+  printf '#!/bin/sh\necho "$@" >> "%s"\nexec node "$@"\n' "$NODE_LOG" > "$BATS_TEST_TMPDIR/node-stub"
+  chmod +x "$BATS_TEST_TMPDIR/node-stub"
+  export ARCH_NODE="$BATS_TEST_TMPDIR/node-stub"
+}
+
+@test "deps runs dependency-cruiser on ARCH_NODE" {
+  need_tools
+  node_stub
+  deps "$P"
+  [ "$status" -eq 0 ]
+  grep -q 'dependency-cruiser/bin/dependency-cruiser.mjs --config docs/architecture/rules.depcruise.cjs' "$NODE_LOG"
+}
+
+@test "node is the image's pinned Node when present, else node from PATH" {
+  source "$REPO_ROOT/image/lib/wiki.sh"; source "$REPO_ROOT/image/lib/arch.sh"
+  unset ARCH_NODE
+  NODE_HARNESS=no-such-major
+  [ "$(arch_node)" = node ]
+  NODE_HARNESS=22
+  if [ -x /opt/node/22/bin/node ]; then [ "$(arch_node)" = /opt/node/22/bin/node ]; fi
+  unset NODE_HARNESS
+  if [ -x /opt/node/22/bin/node ]; then [ "$(arch_node)" = /opt/node/22/bin/node ]; fi
+  ARCH_NODE=/x/node
+  [ "$(arch_node)" = /x/node ]
+}
+
 @test "the rules file is generated, valid JS and stable" {
   need_tools
   "$ARCH" -C "$P" build

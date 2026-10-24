@@ -30,6 +30,15 @@ chk() {
   [ "$output" = "architect: ok" ]
 }
 
+@test "check runs validate.mjs on ARCH_NODE" {
+  log="$BATS_TEST_TMPDIR/node.log"
+  printf '#!/bin/sh\necho "$@" >> "%s"\nexec node "$@"\n' "$log" > "$BATS_TEST_TMPDIR/node-stub"
+  chmod +x "$BATS_TEST_TMPDIR/node-stub"
+  ARCH_NODE="$BATS_TEST_TMPDIR/node-stub" run "$ARCH" -C "$A" check
+  [ "$status" -eq 0 ]
+  grep -q 'arch/validate.mjs --model ' "$log"
+}
+
 @test "no docs/architecture prints a message and exits 0" {
   rm -r "$D"
   run "$ARCH" -C "$A" check

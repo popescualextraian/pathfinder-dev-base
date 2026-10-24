@@ -124,7 +124,7 @@ cmd_deps() {
     changed="$({ git -C "$ROOT" diff --name-only --relative "$since" -- && git -C "$ROOT" ls-files --others --exclude-standard; } | jq -Rsc 'split("\n") | map(select(. != ""))')" \
       || { echo "agentic-arch: cannot list the files changed since $since" >&2; exit 2; }
   fi
-  out="$(cd "$ROOT" && node "$cruiser" --config "$rules" --output-type json "${roots[@]}")" \
+  out="$(cd "$ROOT" && "$(arch_node)" "$cruiser" --config "$rules" --output-type json "${roots[@]}")" \
     || { echo "agentic-arch: dependency-cruiser failed" >&2; exit 2; }
   if [ "$(jq -r '.summary.totalCruised // 0' <<<"$out")" -eq 0 ]; then
     echo "agentic-arch: dependency-cruiser found no JavaScript or TypeScript modules under the component sources" >&2; exit 2
