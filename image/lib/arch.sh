@@ -187,16 +187,17 @@ arch_index() {
     (if (.patterns | length) > 0 then "Patterns: " + (.patterns | join(", ")) + "." else empty end),
     (if ((.exceptions // []) | length) > 0 then "Accepted exceptions: " + (.exceptions | map(.id) | join(", ")) + "." else empty end)' <<<"$top"
   printf '\n## Components\n'
+  # one heading per part and per module (none for a part without modules), one line per component
   jq -r '
     . as $m
-    | def mname($p; $mid): if $mid == null then "Across modules" else ($m.parts[] | select(.id == $p) | .modules[] | select(.id == $mid) | .name) end;
-      def lname($p; $l): $m.parts[] | select(.id == $p) | .layers[] | select(.id == $l) | .name;
-      reduce $m.components[] as $c ({out: [], p: null, m: "-", l: null};
-        (if $c.part != .p then .out += ["", "### " + ($m.parts[] | select(.id == $c.part) | .name)] | .m = "-" else . end
-        | if $c.module != .m then .out += ["#### " + mname($c.part; $c.module)] | .l = null else . end
-        | if $c.layer != .l then .out += ["##### " + lname($c.part; $c.layer)] else . end
-        | .out += ["- [\($c.name)](\($c.page)): \($c.summary)"]
-        | .p = $c.part | .m = $c.module | .l = $c.layer)) | .out[]' <<<"$model"
+    | def part($p): $m.parts[] | select(.id == $p);
+      def mname($p; $mid): if $mid == null then "Across modules" else (part($p) | .modules[] | select(.id == $mid) | .name) end;
+      def lname($p; $l): (part($p) | .layers[] | select(.id == $l) | .name) // $l;
+      reduce $m.components[] as $c ({out: [], p: null, m: "-"};
+        (if $c.part != .p then .out += ["", "### " + part($c.part).name] | .m = "-" else . end
+        | if $c.module != .m and (part($c.part).modules | length) > 0 then .out += ["#### " + mname($c.part; $c.module)] else . end
+        | .out += ["- \(lname($c.part; $c.layer)): [\($c.name)](\($c.page)): \($c.summary)"]
+        | .p = $c.part | .m = $c.module)) | .out[]' <<<"$model"
   printf '\n'
   arch_links flows Flows
   arch_links decisions Decisions

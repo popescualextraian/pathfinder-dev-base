@@ -14,25 +14,17 @@ Principles, in order: kiss.
 
 ### Backend
 #### Backlog
-##### API
-- [Backlog API](components/backlog-api.md): Entry and handlers of the backlog package.
-##### Service
-- [Backlog service](components/backlog-service.md): Backlog rules.
-##### Repository
-- [Backlog store](components/backlog-store.md): Backlog storage.
+- API: [Backlog API](components/backlog-api.md): Entry and handlers of the backlog package.
+- Service: [Backlog service](components/backlog-service.md): Backlog rules.
+- Repository: [Backlog store](components/backlog-store.md): Backlog storage.
 #### Schedule
-##### API
-- [Schedule API](components/schedule-api.md): Entry and handlers of the schedule package.
+- API: [Schedule API](components/schedule-api.md): Entry and handlers of the schedule package.
 #### Across modules
-##### Boot
-- [Main](components/main.md): Starts the process and wires the packages.
-##### Commons
-- [Commons](components/commons.md): Logging shared by every package.
+- Boot: [Main](components/main.md): Starts the process and wires the packages.
+- Commons: [Commons](components/commons.md): Logging shared by every package.
 
 ### Frontend
-#### Across modules
-##### UI
-- [Web](components/web.md): The browser app.
+- UI: [Web](components/web.md): The browser app.
 
 Paths are relative to docs/architecture/. Read the component page before changing its sources;
 run the architect skill's plan mode on a plan when asked. The code wins over this doc.

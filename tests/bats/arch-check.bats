@@ -134,6 +134,51 @@ chk() {
   [[ "$output" == *"limit 70"* ]]
 }
 
+@test "an index of 30 components in one part stays within 70 lines and passes check" {
+  touch "$ARCH_CATALOG_OVERLAY/styles/layered.md"
+  P="$BATS_TEST_TMPDIR/big"
+  mkdir -p "$P/docs/architecture/components" "$P/src"
+  echo "@docs/architecture/index.md" > "$P/CLAUDE.md"
+  cat > "$P/docs/architecture/architecture.md" <<'MD'
+---
+style: layered
+parts:
+  - id: app
+    name: App
+    layers:
+      - { id: api, name: API, mayUse: [service, commons] }
+      - { id: service, name: Service, mayUse: [repository, commons] }
+      - { id: repository, name: Repository, mayUse: [commons] }
+      - { id: commons, name: Commons, mayUse: [] }
+    modules:
+      - { id: orders, name: Orders }
+      - { id: catalog, name: Catalog }
+      - { id: users, name: Users }
+      - { id: billing, name: Billing }
+      - { id: search, name: Search }
+      - { id: reports, name: Reports }
+principles: [kiss]
+patterns: []
+---
+
+# Architecture
+MD
+  local i m l
+  for i in $(seq 1 30); do
+    # six modules, each with components in all four layers
+    m="$(sed -n "$(( (i - 1) % 6 + 1 ))p" <<<$'orders\ncatalog\nusers\nbilling\nsearch\nreports')"
+    l="$(sed -n "$(( (i - 1) / 6 % 4 + 1 ))p" <<<$'api\nservice\nrepository\ncommons')"
+    echo "export const c$i = $i;" > "$P/src/c$i.ts"
+    printf -- '---\nid: c%s\nname: Component %s\nsummary: "Does the job number %s for its module."\nlayer: %s\nmodule: %s\nsources:\n  - src/c%s.ts\n---\n\n# Component %s\n' \
+      "$i" "$i" "$i" "$l" "$m" "$i" "$i" > "$P/docs/architecture/components/c$i.md"
+  done
+  "$ARCH" -C "$P" build
+  [ "$(wc -l < "$P/docs/architecture/index.md")" -le 70 ]
+  run "$ARCH" -C "$P" check
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "$output" = "architect: ok" ]
+}
+
 @test "a table over 10 rows is reported" {
   { echo; echo "| a | b |"; echo "|---|---|"; for i in $(seq 1 11); do echo "| $i | x |"; done; } >> "$D/components/order-store.md"
   chk "table with 11 rows"

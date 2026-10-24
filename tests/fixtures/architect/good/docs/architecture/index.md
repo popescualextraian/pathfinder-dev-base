@@ -16,41 +16,27 @@ Accepted exceptions: layers/orders-api/imports-order-store.
 
 ### Frontend
 #### Orders
-##### Views
-- [Order views](components/order-views.md): Cart, checkout and order history screens.
-##### State
-- [Order state](components/order-state.md): Hooks holding the cart and the user's orders.
-##### API client
-- [Orders client](components/orders-client.md): The only frontend code that calls the orders API.
+- Views: [Order views](components/order-views.md): Cart, checkout and order history screens.
+- State: [Order state](components/order-state.md): Hooks holding the cart and the user's orders.
+- API client: [Orders client](components/orders-client.md): The only frontend code that calls the orders API.
 #### Catalog
-##### Views
-- [Catalog views](components/catalog-views.md): Product list and product page.
-##### State
-- [Catalog state](components/catalog-state.md): Hooks holding products and filters.
-##### API client
-- [Catalog client](components/catalog-client.md): The only frontend code that calls the catalog API.
+- Views: [Catalog views](components/catalog-views.md): Product list and product page.
+- State: [Catalog state](components/catalog-state.md): Hooks holding products and filters.
+- API client: [Catalog client](components/catalog-client.md): The only frontend code that calls the catalog API.
 
 ### Backend
 #### Orders
-##### API
-- [Orders API](components/orders-api.md): REST for carts and orders; validation only.
-##### Service
-- [Order service](components/order-service.md): Owns orders: pricing, checkout, the payment step.
-##### Integration
-- [Payment gateway](components/payment-gateway.md): Talks to the payment provider; implements the service's Payments interface.
-##### Repository
-- [Order store](components/order-store.md): Orders in the database.
+- API: [Orders API](components/orders-api.md): REST for carts and orders; validation only.
+- Service: [Order service](components/order-service.md): Owns orders: pricing, checkout, the payment step.
+- Integration: [Payment gateway](components/payment-gateway.md): Talks to the payment provider; implements the service's Payments interface.
+- Repository: [Order store](components/order-store.md): Orders in the database.
 #### Catalog
-##### API
-- [Catalog API](components/catalog-api.md): REST for products and search.
-##### Service
-- [Catalog service](components/catalog-service.md): Owns products, prices and search.
-##### Repository
-- [Catalog store](components/catalog-store.md): Products in the database, with a read cache.
+- API: [Catalog API](components/catalog-api.md): REST for products and search.
+- Service: [Catalog service](components/catalog-service.md): Owns products, prices and search.
+- Repository: [Catalog store](components/catalog-store.md): Products in the database, with a read cache.
 #### Across modules
-##### Commons
-- [Config](components/config.md): Validated environment, read once at start.
-- [Validation](components/validation.md): The global validation pipe.
+- Commons: [Config](components/config.md): Validated environment, read once at start.
+- Commons: [Validation](components/validation.md): The global validation pipe.
 
 Paths are relative to docs/architecture/. Read the component page before changing its sources;
 run the architect skill's plan mode on a plan when asked. The code wins over this doc.

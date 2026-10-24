@@ -39,9 +39,13 @@ snapshot() { (cd "$1" && find . -type f | LC_ALL=C sort | xargs sha256sum); }
   [ "$(wc -l < "$i")" -le 70 ]
   ! grep -q '@' "$i"
   grep -qF 'Read the component page before changing its sources;' "$i"
-  grep -qxF -- '- [Order service](components/order-service.md): Owns orders: pricing, checkout, the payment step.' "$i"
-  # under Backend > Orders > Service
-  awk '/^### Backend/ { p = 1 } p && /^#### Orders/ { m = 1 } m && /^##### Service/ { l = 1 } l && /Order service/ { f = 1 } END { exit !f }' "$i"
+  # one line per component, its layer first, under Backend > Orders
+  grep -qxF -- '- Service: [Order service](components/order-service.md): Owns orders: pricing, checkout, the payment step.' "$i"
+  awk '/^### Backend/ { p = 1 } p && /^#### Orders/ { m = 1 } m && /^- Service: \[Order service\]/ { f = 1 } END { exit !f }' "$i"
+  # no heading per layer
+  ! grep -q '^#####' "$i"
+  grep -qxF -- '- Commons: [Config](components/config.md): Validated environment, read once at start.' "$i"
+  awk '/^### Backend/ { p = 1 } p && /^#### Across modules/ { m = 1 } m && /\[Config\]/ { f = 1 } END { exit !f }' "$i"
   grep -qF 'Style: Modular monolith, layered.' "$i"
   grep -qF 'make-it-work, yagni, least-surprise, kiss, consistent, dry, clean-code, solid' "$i"
 }
@@ -98,7 +102,9 @@ EOF
   [ "$(jq -c '.parts[0].modules' "$d/docs/architecture/model.json")" = '[]' ]
   [ "$(jq -r '.components[0].part, .components[0].module' "$d/docs/architecture/model.json" | paste -sd,)" = "app,null" ]
   [ "$(jq -r '.connections | length' "$d/docs/architecture/model.json")" = 1 ]
-  grep -qF -- '- [Pages](components/pages.md): The screens.' "$d/docs/architecture/index.md"
+  grep -qxF -- '- Web: [Pages](components/pages.md): The screens.' "$d/docs/architecture/index.md"
+  # a part without modules gets no module heading
+  ! grep -q '^####' "$d/docs/architecture/index.md"
 }
 
 @test "a missing architecture.md exits 2" {
