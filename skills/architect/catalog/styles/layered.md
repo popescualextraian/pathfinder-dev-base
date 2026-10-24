@@ -14,6 +14,7 @@ rules:
   - A layer imports only from the layers it may use.
   - No layer imports from one above it.
   - Cross-cutting helpers live in one shared place.
+  - "With ports-and-adapters, repository may use service: it implements interfaces the service owns."
 ---
 
 # Layered

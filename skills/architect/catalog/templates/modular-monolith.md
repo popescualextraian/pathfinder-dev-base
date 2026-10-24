@@ -10,12 +10,12 @@ parts:
     layers:
       - { id: api, name: API, mayUse: [service] }
       - { id: service, name: Service, mayUse: [repository, integration] }
-      - { id: integration, name: Integration, mayUse: [] }
-      - { id: repository, name: Repository, mayUse: [] }
+      - { id: integration, name: Integration, mayUse: [service] }
+      - { id: repository, name: Repository, mayUse: [service] }
     modules:
       - { id: example, name: Example }
 principles: [make-it-work, yagni, least-surprise, kiss, consistent, dry, clean-code, solid]
-patterns: [repository]
+patterns: [ports-and-adapters, repository]
 ---
 
 # Architecture of NAME

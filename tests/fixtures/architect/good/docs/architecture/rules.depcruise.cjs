@@ -14,6 +14,9 @@ module.exports = {
         "path": [
           "^frontend/src/catalog/api-client/catalog-client\\.ts(/|$)",
           "^frontend/src/orders/api-client/orders-client\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -30,6 +33,9 @@ module.exports = {
         "path": [
           "^frontend/src/catalog/views/catalog-views\\.ts(/|$)",
           "^frontend/src/orders/views/order-views\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -46,6 +52,9 @@ module.exports = {
         "path": [
           "^frontend/src/catalog/views/catalog-views\\.ts(/|$)",
           "^frontend/src/orders/views/order-views\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -62,6 +71,9 @@ module.exports = {
         "path": [
           "^frontend/src/catalog/state/catalog-state\\.ts(/|$)",
           "^frontend/src/orders/state/order-state\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -77,6 +89,9 @@ module.exports = {
       "to": {
         "path": [
           "^backend/src/integration/orders/payment-gateway\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -93,6 +108,9 @@ module.exports = {
         "path": [
           "^backend/src/repository/catalog/catalog-store\\.ts(/|$)",
           "^backend/src/repository/orders/order-store\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -110,6 +128,9 @@ module.exports = {
         "path": [
           "^backend/src/api/catalog/catalog-api\\.ts(/|$)",
           "^backend/src/api/orders/orders-api\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -125,6 +146,9 @@ module.exports = {
         "path": [
           "^backend/src/api/catalog/catalog-api\\.ts(/|$)",
           "^backend/src/api/orders/orders-api\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -140,6 +164,9 @@ module.exports = {
         "path": [
           "^backend/src/repository/catalog/catalog-store\\.ts(/|$)",
           "^backend/src/repository/orders/order-store\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -156,6 +183,9 @@ module.exports = {
         "path": [
           "^backend/src/api/catalog/catalog-api\\.ts(/|$)",
           "^backend/src/api/orders/orders-api\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -173,6 +203,9 @@ module.exports = {
           "^backend/src/service/catalog/catalog-service\\.ts(/|$)",
           "^backend/src/service/orders/order-service\\.ts(/|$)",
           "^backend/src/service/orders/payments\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -188,6 +221,9 @@ module.exports = {
       "to": {
         "path": [
           "^backend/src/integration/orders/payment-gateway\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -204,6 +240,9 @@ module.exports = {
         "path": [
           "^backend/src/api/catalog/catalog-api\\.ts(/|$)",
           "^backend/src/api/orders/orders-api\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -221,6 +260,9 @@ module.exports = {
           "^backend/src/service/catalog/catalog-service\\.ts(/|$)",
           "^backend/src/service/orders/order-service\\.ts(/|$)",
           "^backend/src/service/orders/payments\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -236,6 +278,9 @@ module.exports = {
       "to": {
         "path": [
           "^backend/src/integration/orders/payment-gateway\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -252,6 +297,9 @@ module.exports = {
         "path": [
           "^backend/src/repository/catalog/catalog-store\\.ts(/|$)",
           "^backend/src/repository/orders/order-store\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -280,6 +328,9 @@ module.exports = {
           "^backend/src/api/orders/orders-api\\.ts(/|$)",
           "^backend/src/integration/orders/payment-gateway\\.ts(/|$)",
           "^backend/src/commons/validation\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -308,6 +359,9 @@ module.exports = {
           "^frontend/src/orders/state/order-state\\.ts(/|$)",
           "^frontend/src/orders/views/order-views\\.ts(/|$)",
           "^frontend/src/orders/api-client/orders-client\\.ts(/|$)"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     }

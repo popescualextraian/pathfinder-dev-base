@@ -110,3 +110,14 @@ validate_fm() {
 @test "update mode keeps the reviews in step with removed or renamed components" {
   sed -n '/^### update/,/^### plan/p' "$S/SKILL.md" | tr '\n' ' ' | grep -qE 'removed or renamed.*reviews/full\.json'
 }
+
+@test "seed takes layer directions from what the project states, not from the catalog default" {
+  S="$REPO_ROOT/skills/architect"
+  run grep -F "keep the style's" "$S/reference/seed.md"
+  [ "$status" -ne 0 ]
+  grep -qF 'What the project states wins' "$S/reference/seed.md"
+  grep -qF 'ports-and-adapters' "$S/reference/seed.md"
+  grep -qF 'integration and repository may use service' "$S/reference/seed.md"
+  grep -qF 'states wins over the catalog default' "$S/SKILL.md"
+  [ "$(wc -l < "$S/SKILL.md")" -le 150 ]
+}

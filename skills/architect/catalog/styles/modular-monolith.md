@@ -10,13 +10,14 @@ detect:
 layers:
   - { id: api, name: API, mayUse: [service] }
   - { id: service, name: Service, mayUse: [repository, integration] }
-  - { id: integration, name: Integration, mayUse: [] }
-  - { id: repository, name: Repository, mayUse: [] }
+  - { id: integration, name: Integration, mayUse: [service] }
+  - { id: repository, name: Repository, mayUse: [service] }
 rules:
   - A module owns its data; no other module reads its tables.
   - Modules meet only through the service interface of the other module.
   - Inside a module, layers use only the layers they may use.
   - Shared code is generic and knows no module.
+  - "With ports-and-adapters, integration and repository may use service: they implement its interfaces."
 ---
 
 # Modular monolith, layered

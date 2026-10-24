@@ -23,6 +23,9 @@ module.exports = {
         "path": [
           "^backend/src/backlog/service/",
           "^backend/src/schedule/service/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -47,6 +50,9 @@ module.exports = {
       "to": {
         "path": [
           "^backend/src/backlog/repository/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -74,6 +80,9 @@ module.exports = {
           "^backend/src/schedule/index\\.ts(/|$)",
           "^backend/src/schedule/api/",
           "^backend/src/schedule/service/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -91,6 +100,9 @@ module.exports = {
       "to": {
         "path": [
           "^backend/src/backlog/repository/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -116,6 +128,9 @@ module.exports = {
           "^backend/src/schedule/index\\.ts(/|$)",
           "^backend/src/schedule/api/",
           "^backend/src/schedule/service/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -134,6 +149,9 @@ module.exports = {
           "^backend/src/backlog/api/",
           "^backend/src/schedule/index\\.ts(/|$)",
           "^backend/src/schedule/api/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -158,6 +176,9 @@ module.exports = {
           "^backend/src/schedule/index\\.ts(/|$)",
           "^backend/src/schedule/api/",
           "^backend/src/schedule/service/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -175,6 +196,9 @@ module.exports = {
           "^backend/src/backlog/api/",
           "^backend/src/schedule/index\\.ts(/|$)",
           "^backend/src/schedule/api/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -190,6 +214,9 @@ module.exports = {
         "path": [
           "^backend/src/backlog/service/",
           "^backend/src/schedule/service/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -214,6 +241,9 @@ module.exports = {
           "^backend/src/schedule/index\\.ts(/|$)",
           "^backend/src/schedule/api/",
           "^backend/src/schedule/service/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -231,6 +261,9 @@ module.exports = {
           "^backend/src/backlog/api/",
           "^backend/src/schedule/index\\.ts(/|$)",
           "^backend/src/schedule/api/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -246,6 +279,9 @@ module.exports = {
         "path": [
           "^backend/src/backlog/service/",
           "^backend/src/schedule/service/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -260,6 +296,9 @@ module.exports = {
       "to": {
         "path": [
           "^backend/src/backlog/repository/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -282,6 +321,9 @@ module.exports = {
       "to": {
         "path": [
           "^frontend/src/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -304,6 +346,9 @@ module.exports = {
           "^backend/src/schedule/index\\.ts(/|$)",
           "^backend/src/schedule/api/",
           "^backend/src/schedule/service/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -330,6 +375,9 @@ module.exports = {
           "^backend/src/commons/",
           "^backend/src/backlog/",
           "^backend/src/schedule/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -347,6 +395,9 @@ module.exports = {
         ],
         "pathNot": [
           "^backend/src/backlog/index\\.ts$"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -373,6 +424,9 @@ module.exports = {
           "^backend/src/commons/",
           "^backend/src/backlog/",
           "^backend/src/schedule/"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     },
@@ -390,6 +444,9 @@ module.exports = {
         ],
         "pathNot": [
           "^backend/src/schedule/index\\.ts$"
+        ],
+        "dependencyTypesNot": [
+          "type-only"
         ]
       }
     }

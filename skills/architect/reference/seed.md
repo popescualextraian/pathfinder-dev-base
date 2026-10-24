@@ -26,10 +26,14 @@ When two styles fit equally, take the simpler one and say so under "Needs a huma
 
 ## 3. Layers, modules, boundaries
 
-- Layers per part, top to bottom, with `mayUse` as the imports actually show them. Start from the
-  style's usual layers and directions; rename them to the project's folder names.
-- An import against the expected direction is not a reason to change the layers: keep the style's
-  direction and let the first review report it.
+- Layers per part, top to bottom. What the project states wins over the catalog default: its
+  CLAUDE.md, README, boundary tests and the patterns the doc names set each `mayUse`; the style's
+  usual directions are only the starting point. The imports you sampled confirm them. Rename
+  layers to the project's folder names.
+- With `ports-and-adapters` named (service-owned interfaces implemented by adapters):
+  integration and repository may use service, so `mayUse` lists `service` for both.
+- An import against the stated direction is a finding for the first review, not a reason to
+  change the layers.
 - Modules only when the code has feature folders that repeat across layers.
 - Boundaries only when a folder is clearly meant to be sealed (a package with an index or an
   explicit public API).
