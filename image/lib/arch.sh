@@ -208,6 +208,7 @@ arch_index() {
 # --- check helpers: each prints one "<path>: <message>" line per problem -------------------------
 
 # arch_check_structure TOP COMPS: ids, part/layer/module, layer references, talks_to and parent.
+# part may be left out only with one part.
 arch_check_structure() {
   jq -r --argjson top "$1" --arg doc "$ARCH_DIR/architecture.md" '
     ($top.parts | map(.id)) as $pids
@@ -223,7 +224,8 @@ arch_check_structure() {
         | "\(.path): duplicate component id \(.id)"),
       (.[] | select(.fm != null) | . as $c | $c.fm as $fm | ($fm.part // $pids[0]) as $part
         | (if $fm.id != null and $fm.id != $c.id then "\($c.path): id \($fm.id) differs from the file name \($c.id)" else empty end),
-          (if ($pids | index($part)) == null then "\($c.path): part \($part) is not in architecture.md"
+          (if $fm.part == null and ($pids | length) > 1 then "\($c.path): part is required with more than one part"
+           elif ($pids | index($part)) == null then "\($c.path): part \($part) is not in architecture.md"
            else ($top.parts[] | select(.id == $part)) as $p
              | (if ($p.layers | map(.id) | index($fm.layer)) == null and $fm.layer != null
                 then "\($c.path): layer \($fm.layer) is not in part \($part) of architecture.md" else empty end),

@@ -67,6 +67,13 @@ chk() {
   chk "part nowhere is not in architecture.md"
 }
 
+@test "a component without part in a project with more than one part is reported" {
+  sed -i '/^part: backend$/d' "$D/components/order-store.md"
+  chk "docs/architecture/components/order-store.md: part is required with more than one part"
+  # no follow-up guess at the first part's layers
+  [[ "$output" != *"layer repository is not in part"* ]]
+}
+
 @test "an unknown layer is reported" {
   sed -i 's/^layer: repository$/layer: storage/' "$D/components/order-store.md"
   chk "layer storage is not in part backend"
