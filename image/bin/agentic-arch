@@ -31,9 +31,83 @@ cmd_build() {
   if declare -F arch_rules >/dev/null; then arch_rules > "$ROOT/$ARCH_DIR/rules.depcruise.cjs"; fi
 }
 
+# check_generated: build on a copy of the doc must reproduce the generated files, CRLF aside.
+check_generated() {
+  local tmp f
+  tmp="$(mktemp -d)"
+  mkdir -p "$tmp/docs"
+  cp -r "$ROOT/$ARCH_DIR" "$tmp/docs/"
+  if ! bash "${BASH_SOURCE[0]}" -C "$tmp" build >/dev/null 2>&1; then
+    echo "$ARCH_DIR: could not rebuild the generated files; run agentic-arch build to see why"
+    rm -rf "$tmp"; return 0
+  fi
+  for f in index.md model.json rules.depcruise.cjs; do
+    if [ -f "$tmp/$ARCH_DIR/$f" ] && { [ ! -f "$ROOT/$ARCH_DIR/$f" ] \
+         || ! cmp -s <(tr -d '\r' < "$tmp/$ARCH_DIR/$f") <(tr -d '\r' < "$ROOT/$ARCH_DIR/$f"); }; then
+      echo "$ARCH_DIR/$f: generated content is stale; run agentic-arch build"
+    fi
+  done
+  rm -rf "$tmp"
+}
+
+cmd_check() {
+  local top comps n=0 line
+  if [ ! -f "$ROOT/$ARCH_DIR/architecture.md" ]; then echo "agentic-arch: no $ARCH_DIR; nothing to check"; return 0; fi
+  if ! top="$(arch_top)"; then
+    echo "$ARCH_DIR/architecture.md: missing or invalid front matter"
+    echo "agentic-arch: 1 problem(s)" >&2; return 1
+  fi
+  comps="$(arch_components)"
+  while IFS= read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    echo "$line"
+    case "$line" in warn:*) ;; *) n=$((n + 1)) ;; esac
+  done < <(arch_check_shape "$top" "$comps"; arch_check_structure "$top" "$comps"; arch_check_catalog "$top" "$comps"
+           arch_check_sources "$comps"; arch_check_links; arch_check_limits "$comps"; arch_check_context
+           check_generated; arch_check_exceptions "$top")
+  if [ "$n" -gt 0 ]; then echo "agentic-arch: $n problem(s)" >&2; return 1; fi
+  echo "architect: ok"
+}
+
+# cmd_affected RANGE: maps the files git diff lists to the component with the longest matching source.
+cmd_affected() {
+  local files f e best src id
+  declare -A owner=()
+  files="$(git -C "$ROOT" diff --name-only "$1")" || exit 2
+  while IFS=$'\t' read -r src id; do
+    owner["${src%/}"]="$id"
+  done < <(arch_owners)
+  while IFS= read -r f; do
+    case "$f" in
+      ""|"$ARCH_DIR"/*|.claude/*|.github/*|CLAUDE.md) continue ;;
+    esac
+    best=""
+    for e in "${!owner[@]}"; do
+      if [ "$f" = "$e" ] || [[ "$f" == "$e"/* ]]; then
+        if [ "${#e}" -gt "${#best}" ]; then best="$e"; fi
+      fi
+    done
+    if [ -z "$best" ]; then echo "unclaimed $f"
+    elif [ "${owner[$best]}" = - ]; then echo "omitted $f"
+    else echo "component ${owner[$best]} $f"; fi
+  done <<<"$files"
+}
+
+# cmd_sync: puts the index, minus its generated-note line, into .github/copilot-instructions.md.
+cmd_sync() {
+  if [ -f "$ROOT/$ARCH_DIR/index.md" ]; then
+    mkdir -p "$ROOT/.github"
+    tail -n +2 "$ROOT/$ARCH_DIR/index.md" | wiki_put_block "$ROOT/.github/copilot-instructions.md" architecture-index
+  fi
+  echo "synced .github/copilot-instructions.md"
+}
+
 [ "$#" -ge 1 ] || usage
 cmd="$1"; shift
 case "$cmd" in
   build) cmd_build ;;
+  check) cmd_check ;;
+  affected) need_arch; [ "$#" -eq 1 ] || usage; cmd_affected "$1" ;;
+  sync) need_arch; cmd_sync ;;
   *) usage ;;
 esac

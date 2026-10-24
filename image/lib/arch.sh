@@ -128,3 +128,152 @@ arch_index() {
   printf '%s\n' "Paths are relative to docs/architecture/. Read the component page before changing its sources;" \
     "run the architect skill's plan mode on a plan when asked. The code wins over this doc."
 }
+
+# --- check helpers: each prints one "<path>: <message>" line per problem -------------------------
+
+# arch_check_structure TOP COMPS: ids, part/layer/module, layer references, talks_to and parent.
+arch_check_structure() {
+  jq -r --argjson top "$1" --arg doc "$ARCH_DIR/architecture.md" '
+    ($top.parts | map(.id)) as $pids
+    | ([$top.parts[].layers[].id]) as $alllayers
+    | (map(select(.fm != null) | .fm.id // .id)) as $ids
+    | ($top.parts[] | . as $p | .layers[] | . as $l | (.mayUse // [])[]
+        | select(. as $u | $p.layers | map(.id) | index($u) | not)
+        | "\($doc): layer \($l.id) of part \($p.id) may use unknown layer \(.)"),
+      (($top.boundaries // [])[] | . as $b | (.uses // [])[] | select(. as $u | $alllayers | index($u) | not)
+        | "\($doc): boundary \($b.id) uses unknown layer \(.)"),
+      (.[] | select(.fm == null) | "\(.path): missing or invalid front matter"),
+      ([.[] | select(.fm != null) | {path, id: (.fm.id // .id)}] | group_by(.id)[] | select(length > 1) | .[1:][]
+        | "\(.path): duplicate component id \(.id)"),
+      (.[] | select(.fm != null) | . as $c | $c.fm as $fm | ($fm.part // $pids[0]) as $part
+        | (if $fm.id != null and $fm.id != $c.id then "\($c.path): id \($fm.id) differs from the file name \($c.id)" else empty end),
+          (if ($pids | index($part)) == null then "\($c.path): part \($part) is not in architecture.md"
+           else ($top.parts[] | select(.id == $part)) as $p
+             | (if ($p.layers | map(.id) | index($fm.layer)) == null and $fm.layer != null
+                then "\($c.path): layer \($fm.layer) is not in part \($part) of architecture.md" else empty end),
+               (if $fm.module != null and (($p.modules // []) | map(.id) | index($fm.module)) == null
+                then "\($c.path): module \($fm.module) is not in part \($part) of architecture.md" else empty end)
+           end),
+          (($fm.talks_to // [])[] | select(.to as $t | $ids | index($t) | not)
+            | "\($c.path): talks_to names unknown component \(.to)"),
+          (if $fm.parent != null and ($ids | index($fm.parent) | not)
+           then "\($c.path): parent names unknown component \($fm.parent)" else empty end))' <<<"$2"
+}
+
+# arch_check_catalog TOP COMPS: the style, principles and patterns resolve through the catalog.
+arch_check_catalog() {
+  local kind id where
+  while IFS=$'\t' read -r kind id where; do
+    if ! arch_catalog_find "$kind" "$id" >/dev/null; then echo "$where: $kind $id is not in the catalog"; fi
+  done < <(jq -r --arg doc "$ARCH_DIR/architecture.md" '
+      (["style", .[0].style, $doc], (.[0].principles[]? | ["principle", ., $doc]), (.[0].patterns[]? | ["pattern", ., $doc]),
+       (.[1][] | select(.fm != null) | .path as $p | (.fm.patterns[]? | ["pattern", ., $p]))) | @tsv' <<<"[$1,$2]")
+}
+
+# arch_check_sources COMPS: every source exists; no source is claimed by two pages.
+arch_check_sources() {
+  local path src e
+  declare -A claimed=()
+  while IFS=$'\t' read -r path src; do
+    e="${src%/}"
+    if [ ! -e "$ROOT/$e" ]; then echo "$path: source $src does not exist"; fi
+    if [ -n "${claimed[$e]:-}" ]; then
+      echo "$path: source $src is also claimed by ${claimed[$e]}"
+    else
+      claimed[$e]="$path"
+    fi
+  done < <(jq -r '.[] | select(.fm != null) | .path as $p | (.fm.sources // [])[] | select(type == "string") | [$p, .] | @tsv' <<<"$1")
+}
+
+# arch_authored_files: the authored pages relative to ROOT; the generated index is left out.
+arch_authored_files() {
+  (cd "$ROOT" && find "$ARCH_DIR" -type f -name '*.md' -not -path "$ARCH_DIR/catalog/*" | LC_ALL=C sort) \
+    | grep -vxF "$ARCH_DIR/index.md" || true
+}
+
+# arch_check_links: relative links in authored text resolve to a file.
+arch_check_links() {
+  local path dir target
+  while IFS= read -r path; do
+    dir="$(dirname "$ROOT/$path")"
+    while IFS= read -r target; do
+      case "$target" in *://*|mailto:*|'#'*) continue ;; esac
+      target="${target%%#*}"
+      if [ ! -e "$dir/$target" ]; then echo "$path: broken link $target"; fi
+    done < <(wiki_authored "$ROOT/$path" | grep -oE '\]\([^)[:space:]]+\)' | sed -E 's/^\]\((.*)\)$/\1/' || true)
+  done < <(arch_authored_files)
+}
+
+# arch_check_limits COMPS: component page size, tables, the index.
+arch_check_limits() {
+  local path n
+  while IFS= read -r path; do
+    n="$(wiki_authored "$ROOT/$path" | grep -cvE '^[[:space:]]*(#.*)?$' || true)"
+    if [ "$n" -gt 80 ]; then echo "$path: $n lines, limit 80"; fi
+    n="$(wiki_authored "$ROOT/$path" | awk '/^\|/ { run++; if (run - 2 > max) max = run - 2; next } { run = 0 } END { print max + 0 }')"
+    if [ "$n" -gt 10 ]; then echo "$path: table with $n rows, limit 10; leave inventories to the code"; fi
+  done < <(jq -r '.[].path' <<<"$1")
+  if [ -f "$ROOT/$ARCH_DIR/index.md" ]; then
+    n="$(wc -l < "$ROOT/$ARCH_DIR/index.md")"
+    if [ "$n" -gt 70 ]; then echo "$ARCH_DIR/index.md: $n lines, limit 70"; fi
+  fi
+}
+
+# arch_check_context: CLAUDE.md imports the index.
+arch_check_context() {
+  if [ ! -f "$ROOT/CLAUDE.md" ]; then
+    echo "CLAUDE.md: missing; it must import the architecture index"
+  elif ! grep -qxF "@$ARCH_DIR/index.md" < <(tr -d '\r' < "$ROOT/CLAUDE.md"); then
+    echo "CLAUDE.md: no @$ARCH_DIR/index.md line"
+  fi
+}
+
+# arch_review_files: the review files relative to ROOT.
+arch_review_files() {
+  (cd "$ROOT" && { ls "$ARCH_DIR/reviews/full.json" "$ARCH_DIR"/reviews/plans/*.json 2>/dev/null || true; })
+}
+
+# arch_check_shape TOP COMPS: validate.mjs on the architecture page, the components, the model and
+# the reviews; unreadable review files are reported here.
+arch_check_shape() {
+  local items f kind out st=0 validate schemas
+  items="$(jq -c '{kind: "architecture", file: "'"$ARCH_DIR"'/architecture.md", data: .}' <<<"$1")"$'\n'
+  items+="$(jq -c '.[] | select(.fm != null) | {kind: "component", file: .path, data: .fm}' <<<"$2")"$'\n'
+  if [ -f "$ROOT/$ARCH_DIR/model.json" ]; then
+    if jq -e . "$ROOT/$ARCH_DIR/model.json" >/dev/null 2>&1; then
+      items+="$(jq -c '{kind: "model", file: "'"$ARCH_DIR"'/model.json", data: .}' "$ROOT/$ARCH_DIR/model.json")"$'\n'
+    else
+      echo "$ARCH_DIR/model.json: not valid JSON"
+    fi
+  fi
+  while IFS= read -r f; do
+    if [ -z "$f" ]; then continue; fi
+    if ! jq -e . "$ROOT/$f" >/dev/null 2>&1; then echo "$f: not valid JSON"; continue; fi
+    kind=plan; if [ "$(basename "$f")" = full.json ]; then kind=full; fi
+    items+="$(jq -c --arg k "$kind" --arg f "$f" '{kind: $k, file: $f, data: .}' "$ROOT/$f")"$'\n'
+  done < <(arch_review_files)
+  validate="$AGENTIC_DIR/arch/validate.mjs"; [ -f "$validate" ] || validate="$ARCH_LIB_DIR/../arch/validate.mjs"
+  schemas="$AGENTIC_DIR/skills/architect/schema"; [ -d "$schemas" ] || schemas="$ARCH_LIB_DIR/../../skills/architect/schema"
+  local margs=()
+  if [ -f "$ROOT/$ARCH_DIR/model.json" ]; then margs=(--model "$ROOT/$ARCH_DIR/model.json"); fi
+  out="$(jq -s '.' <<<"$items" | node "$validate" "${margs[@]}" --schemas "$schemas" 2>&1)" || st=$?
+  if [ "$st" -ne 0 ]; then printf '%s\n' "$out"; fi
+}
+
+# arch_check_exceptions TOP: accepted findings need an exception; an exception without a finding
+# warns, unless it is scoped to a plan whose review exists.
+arch_check_exceptions() {
+  local f ids="[]" findings="[]" slug id
+  while IFS= read -r f; do
+    if [ -z "$f" ] || ! jq -e . "$ROOT/$f" >/dev/null 2>&1; then continue; fi
+    findings="$(jq -c --arg f "$f" --argjson acc "$findings" '$acc + [(.findings // [])[] | {id, status, file: $f}]' "$ROOT/$f")"
+  done < <(arch_review_files)
+  ids="$(jq -c '[(.exceptions // [])[].id]' <<<"$1")"
+  jq -r --argjson ids "$ids" '.[] | select(.status == "accepted" and (.id as $i | $ids | index($i) | not))
+    | "\(.file): accepted finding \(.id) is not in exceptions of architecture.md"' <<<"$findings"
+  while IFS=$'\t' read -r id slug; do
+    if [ -n "$slug" ] && [ -f "$ROOT/$ARCH_DIR/reviews/plans/$slug.json" ]; then continue; fi
+    echo "warn: $id: exception matches no finding"
+  done < <(jq -r --argjson f "$findings" '(.exceptions // [])[] | select(.id as $i | $f | map(.id) | index($i) | not)
+    | [.id, (.plan // "")] | @tsv' <<<"$1")
+}
