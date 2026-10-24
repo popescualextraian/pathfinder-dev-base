@@ -69,8 +69,7 @@ check "overlay step, overlay defaults and all skills" 'test -f ~/.overlay-step-r
   && [ "$(jq -r .hooks.on_start_required ~/.agentic/config.json)" = true ] \
   && test -f ~/.claude/skills/agentic-setup/SKILL.md && test -f ~/.claude/skills/overlay-skill/SKILL.md \
   && test -f ~/.claude/skills/smoke-skill/SKILL.md && test -f ~/.copilot/skills/smoke-skill/SKILL.md'
-check "agentic-wiki and the /wiki skill" 'agentic-wiki -C /work/wiki-demo check \
-  && test -f ~/.claude/skills/wiki/SKILL.md && test -f ~/.copilot/skills/wiki/SKILL.md \
+check "agentic-wiki" 'agentic-wiki -C /work/wiki-demo check \
   && grep -qx -- "- agentic-wiki" /opt/agentic/inventory.txt'
 check "on-start hook ran" 'test -f ~/.on-start-ran'
 check "setup lines: plugin for both harnesses, MCP with a reference, narrowed agent, instructions, volume" '

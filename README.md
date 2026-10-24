@@ -2,7 +2,7 @@
 
 A container for agentic development. One base image with the tools agents need (git, Claude
 Code, Copilot CLI, AWS and Azure CLI, gh, Java 21 and Maven, Node 22, Python 3.12, Docker CLI,
-Playwright with Chromium) and the `/agentic-setup` and `/wiki` skills. Each project extends it in
+Playwright with Chromium) and the `/agentic-setup` skill. Each project extends it in
 the standard ways: `.env` for secrets and settings, one-line `setup:` commands for plugins,
 marketplaces, MCP servers, skills, files and mounts, and plain Dockerfile lines for anything else.
 The project owns its technologies; this repository owns the agentic part.
@@ -258,15 +258,16 @@ The USD figures are the list price of the tokens (ccusage, offline), an estimate
 bills differently. Install in an existing project, prices, other harnesses and the contracts:
 [`docs/cost.md`](docs/cost.md).
 
-## Project wiki (WIP)
+## Project wiki (parked)
 
-> **Work in progress:** the wiki skill is not finished yet; commands and page layout may change.
-
-`/wiki seed` writes what agents cannot read from the code into `docs/wiki/`: components and their
-boundaries, decisions, contracts, concepts, flows and the shared code to reuse. It also writes a
-lean CLAUDE.md that imports the wiki index, and path rules. `/wiki update` keeps the pages true
-after a change. `agentic-wiki check` validates all of it. The skill decides where each statement
-belongs: `skills/wiki/reference/routing.md`.
+The wiki skill is parked: it is no longer installed by default. Add it to a project with
+`agentic add plugin wiki@agentic`. `/wiki seed` then writes what agents cannot read from the code
+into `docs/wiki/`: components and their boundaries, decisions, contracts, concepts, flows and the
+shared code to reuse. It also writes a lean CLAUDE.md that imports the wiki index, and path rules.
+`/wiki update` keeps the pages true after a change. `agentic-wiki check` (still in the image)
+validates all of it. The skill decides where each statement belongs:
+`marketplace/plugins/wiki/skills/wiki/reference/routing.md`. For architecture documentation see
+the architect skill (`/architect`).
 
 ## Philosophy
 

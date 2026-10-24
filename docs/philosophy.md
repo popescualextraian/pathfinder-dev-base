@@ -14,8 +14,8 @@ builds on the ones before it.
 | 3 | Agentic colleagues | available locally: `agentic schedule` (cron); remote through the platform's scheduler |
 | 4 | Spec-driven development | available: Superpowers (a recommended setup line); trackers through `add mcp` |
 | 5 | Invest in the plan | available: the spec gate |
-| 6 | Knowledge in AI format | in progress: the wiki skill |
-| 7 | A minimal, agent-maintained wiki | in progress: the wiki skill |
+| 6 | Knowledge in AI format | in progress: the wiki plugin (parked); the architect skill (`/architect`) |
+| 7 | A minimal, agent-maintained wiki | in progress: the wiki plugin (parked); the architect skill (`/architect`) |
 | 8 | The agent tests its own work | available: test tools and Playwright in the image |
 | 9 | Steer the agent, don't write code | dev mode now; autonomous mode planned |
 | 10 | Guardrails, not supervision | partly available: sandbox, secret handling; action gate planned |

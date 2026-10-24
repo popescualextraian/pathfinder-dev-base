@@ -1,0 +1,2 @@
+{ "name": "wiki", "version": "1.0.0",
+  "description": "Keeps the project's agent knowledge (docs/wiki, CLAUDE.md, path rules) true to the code; checked with agentic-wiki" }
