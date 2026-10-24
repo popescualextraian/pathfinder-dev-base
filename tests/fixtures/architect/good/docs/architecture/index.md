@@ -52,5 +52,5 @@ Accepted exceptions: layers/orders-api/imports-order-store.
 - [Config](components/config.md): Validated environment, read once at start.
 - [Validation](components/validation.md): The global validation pipe.
 
-Paths are relative to docs/architecture/. Read a component's page before you change it.
-The code wins over this doc; never guess a page id.
+Paths are relative to docs/architecture/. Read the component page before changing its sources;
+run the architect skill's plan mode on a plan when asked. The code wins over this doc.

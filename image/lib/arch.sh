@@ -125,6 +125,6 @@ arch_index() {
   printf '\n'
   arch_links flows Flows
   arch_links decisions Decisions
-  printf '%s\n' "Paths are relative to docs/architecture/. Read a component's page before you change it." \
-    "The code wins over this doc; never guess a page id."
+  printf '%s\n' "Paths are relative to docs/architecture/. Read the component page before changing its sources;" \
+    "run the architect skill's plan mode on a plan when asked. The code wins over this doc."
 }
