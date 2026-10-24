@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Builds and checks the architecture doc in docs/architecture/; the deterministic half of /architect.
+# Usage: agentic-arch [-C DIR] build | check | affected <git diff range> | deps [--affected <sha>] | sync
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+# shellcheck source=../lib/wiki.sh
+source "$AGENTIC_DIR/lib/wiki.sh"
+# shellcheck source=../lib/arch.sh
+source "$AGENTIC_DIR/lib/arch.sh"
+usage() { echo "usage: agentic-arch [-C DIR] build | check | affected <git diff range> | deps [--affected <sha>] | sync" >&2; exit 2; }
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ "${1:-}" = -C ]; then
+  [ "$#" -ge 2 ] || usage
+  ROOT="$(cd "$2" && pwd)"; shift 2
+fi
+need_arch() {
+  [ -f "$ROOT/$ARCH_DIR/architecture.md" ] || { echo "agentic-arch: no $ARCH_DIR in $ROOT" >&2; exit 2; }
+}
+
+cmd_build() {
+  need_arch
+  local model index
+  arch_top >/dev/null || { echo "agentic-arch: $ARCH_DIR/architecture.md has no valid front matter" >&2; exit 1; }
+  model="$(arch_model)"
+  index="$(arch_index)"
+  printf '%s\n' "$model" > "$ROOT/$ARCH_DIR/model.json"
+  printf '%s\n' "$index" > "$ROOT/$ARCH_DIR/index.md"
+  # Hook for Task 5: rules.depcruise.cjs is written only once arch_rules exists.
+  if declare -F arch_rules >/dev/null; then arch_rules > "$ROOT/$ARCH_DIR/rules.depcruise.cjs"; fi
+}
+
+[ "$#" -ge 1 ] || usage
+cmd="$1"; shift
+case "$cmd" in
+  build) cmd_build ;;
+  *) usage ;;
+esac
