@@ -49,6 +49,10 @@ D="$REPO_ROOT/image/Dockerfile"
   grep -qx 'bridge/node_modules' "$REPO_ROOT/.dockerignore"
 }
 
+@test ".dockerignore keeps the architect tools' node_modules out of the build context" {
+  grep -qx 'image/arch/node_modules' "$REPO_ROOT/.dockerignore"
+}
+
 @test "Claude keeps .claude.json in the mounted ~/.claude, so hand-made settings survive a recreate" {
   grep -Eq '^ +CLAUDE_CONFIG_DIR=/home/dev/.claude \\$' "$D"
 }
