@@ -233,3 +233,28 @@ node_stub() {
   deps "$P" --affected HEAD
   [ "$(ids)" = layers/backlog-api/imports-backlog-store ]
 }
+
+@test "type-only imports are not layer, part or boundary breaks" {
+  need_tools
+  grep -q loadItems "$P/backend/src/backlog/repository/backlog-store.ts"
+  echo "import type { Item } from '../repository/backlog-store';" >> "$P/backend/src/backlog/api/backlog-api.ts"
+  echo "import type { Item as Other } from '../../backlog/service/backlog-service';" >> "$P/backend/src/schedule/api/schedule-api.ts"
+  echo "import type { start } from '../../main';" >> "$P/backend/src/backlog/repository/backlog-store.ts"
+  deps "$P"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[]' ]
+}
+
+@test "every generated layers, parts and boundaries rule skips type-only dependencies" {
+  need_tools
+  "$ARCH" -C "$P" build
+  run node -e 'const r = require(process.argv[1]); const bad = r.forbidden.filter((x) => !(x.to.dependencyTypesNot || []).includes("type-only")); if (r.forbidden.length === 0 || bad.length) { console.log(bad.map((x) => x.name).join(",") || "no rules"); process.exit(1); }' "$R"
+  [ "$status" -eq 0 ]
+}
+
+@test "a value import next to a type-only one is still a break" {
+  need_tools
+  printf '%s\n' "import type { Item } from '../repository/backlog-store';" "import { loadItems } from '../repository/backlog-store';" >> "$P/backend/src/backlog/api/backlog-api.ts"
+  deps "$P"
+  [ "$(ids)" = layers/backlog-api/imports-backlog-store ]
+}

@@ -135,8 +135,9 @@ arch_rules() {
       | {path: ($in | map(re) | uniq),
          pathNot: ([$out[] | . as $o | select(any($in[]; under($o.p; .p))) | re] | uniq)};
     def side($s): $s | with_entries(select(.value | length > 0));
+    # type-only imports erase at compile time: they are no layer, part or boundary break.
     def rule($name; $from; $to): if ($from | has("path") and (.path | length) == 0) or ($to.path | length) == 0 then empty
-      else {name: $name, severity: "error", from: side($from), to: side($to)} end;
+      else {name: $name, severity: "error", from: side($from), to: (side($to) + {dependencyTypesNot: ["type-only"]})} end;
     def nope($xs; $x): ($xs // []) | index([$x]) | not;
     # the part of a boundary: of its longest owner, else of the first owner inside it
     def boundary_part($f): ([$owners[] | select(.part != null and ($f == .p or under($f; .p)))] | max_by(.p | length) | .part)
