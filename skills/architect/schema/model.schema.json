@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architecture model",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "style", "parts", "components", "connections"],
+  "properties": {
+    "version": { "const": 1 },
+    "style": {
+      "type": "object", "additionalProperties": false, "required": ["id", "name"],
+      "properties": { "id": { "type": "string", "minLength": 1 }, "name": { "type": "string", "minLength": 1 } }
+    },
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["id", "name", "layers", "modules"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "layers": {
+            "type": "array",
+            "items": {
+              "type": "object", "additionalProperties": false, "required": ["id", "name", "mayUse"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+                "name": { "type": "string", "minLength": 1 },
+                "mayUse": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" } }
+              }
+            }
+          },
+          "modules": {
+            "type": "array",
+            "items": {
+              "type": "object", "additionalProperties": false, "required": ["id", "name"],
+              "properties": { "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, "name": { "type": "string", "minLength": 1 } }
+            }
+          }
+        }
+      }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "name", "part", "layer", "module", "parent", "summary", "page"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "part": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "layer": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "module": { "oneOf": [{ "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, { "type": "null" }] },
+          "parent": { "oneOf": [{ "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, { "type": "null" }] },
+          "summary": { "type": "string" },
+          "page": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["from", "to", "via"],
+        "properties": {
+          "from": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "to": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "via": { "enum": ["call", "rest", "event", "file", "other"] }
+        }
+      }
+    }
+  }
+}

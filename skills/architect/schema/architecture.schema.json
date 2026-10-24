@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architecture page front matter",
+  "type": "object",
+  "required": ["style", "parts", "principles", "patterns"],
+  "properties": {
+    "style": { "type": "string", "minLength": 1 },
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "name", "layers"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "name": { "type": "string" },
+          "layers": {
+            "type": "array",
+            "items": {
+              "type": "object", "required": ["id", "name", "mayUse"],
+              "properties": {
+                "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+                "name": { "type": "string" },
+                "mayUse": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" } },
+                "folders": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          },
+          "modules": {
+            "type": "array",
+            "items": { "type": "object", "required": ["id", "name"], "properties": { "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, "name": { "type": "string" } } }
+          },
+          "mayUse": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" } }
+        }
+      }
+    },
+    "boundaries": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "folder", "uses", "entry"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "folder": { "type": "string" },
+          "uses": { "type": "array", "items": { "type": "string" } },
+          "entry": { "type": "string" }
+        }
+      }
+    },
+    "principles": { "type": "array", "items": { "type": "string" } },
+    "patterns": { "type": "array", "items": { "type": "string" } },
+    "exceptions": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["id", "rule", "component", "reason"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^\\S+$" },
+          "rule": { "type": "string" },
+          "component": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "reason": { "type": "string" },
+          "plan": { "type": "string" }
+        }
+      }
+    }
+  }
+}

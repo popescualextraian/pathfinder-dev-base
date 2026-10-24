@@ -25,6 +25,8 @@ cp -r "$root/tests/fixtures/wiki/good" "$proj/wiki-demo"
 mv "$proj/wiki-demo/CLAUDE.fixture.md" "$proj/wiki-demo/CLAUDE.md"
 mv "$proj/wiki-demo/dot-claude" "$proj/wiki-demo/.claude"
 mv "$proj/wiki-demo/dot-github" "$proj/wiki-demo/.github"
+cp -r "$root/tests/fixtures/architect/good" "$proj/arch-demo"
+mv "$proj/arch-demo/CLAUDE.fixture.md" "$proj/arch-demo/CLAUDE.md"
 git -C "$proj" init -q
 git -C "$proj" add -A
 git -C "$proj" -c user.name=smoke -c user.email=smoke@example.com commit -qm init
@@ -69,9 +71,17 @@ check "overlay step, overlay defaults and all skills" 'test -f ~/.overlay-step-r
   && [ "$(jq -r .hooks.on_start_required ~/.agentic/config.json)" = true ] \
   && test -f ~/.claude/skills/agentic-setup/SKILL.md && test -f ~/.claude/skills/overlay-skill/SKILL.md \
   && test -f ~/.claude/skills/smoke-skill/SKILL.md && test -f ~/.copilot/skills/smoke-skill/SKILL.md'
-check "agentic-wiki and the /wiki skill" 'agentic-wiki -C /work/wiki-demo check \
-  && test -f ~/.claude/skills/wiki/SKILL.md && test -f ~/.copilot/skills/wiki/SKILL.md \
+check "agentic-wiki" 'agentic-wiki -C /work/wiki-demo check \
   && grep -qx -- "- agentic-wiki" /opt/agentic/inventory.txt'
+check "agentic-arch: check is ok, deps finds the accepted-finding id, dependency-cruiser is installed" '
+  [ "$(agentic-arch -C /work/arch-demo check | tail -n 1)" = "architect: ok" ] \
+  && { agentic-arch -C /work/arch-demo deps > /tmp/arch-deps.json || [ $? -eq 1 ]; } \
+  && grep -q "layers/orders-api/imports-order-store" /tmp/arch-deps.json \
+  && node /opt/agentic/arch/node_modules/dependency-cruiser/bin/dependency-cruiser.mjs --version \
+  && grep -qx -- "- agentic-arch" /opt/agentic/inventory.txt'
+check "the architect skill is in both homes; the parked wiki is not" '
+  test -f ~/.claude/skills/architect/SKILL.md && test -f ~/.copilot/skills/architect/SKILL.md \
+  && test ! -e ~/.claude/skills/wiki && test ! -e ~/.copilot/skills/wiki'
 check "on-start hook ran" 'test -f ~/.on-start-ran'
 check "setup lines: plugin for both harnesses, MCP with a reference, narrowed agent, instructions, volume" '
   claude plugin list 2>/dev/null | grep -q hello@smoke-marketplace && copilot plugin list 2>/dev/null | grep -q hello \

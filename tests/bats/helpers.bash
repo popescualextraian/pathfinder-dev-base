@@ -76,3 +76,16 @@ EOF2
 }
 # curl_body N: the body of the Nth curl call.
 curl_body() { grep '^body: ' "$CURL_LOG" | sed -n "${1}p" | sed 's/^body: //'; }
+
+# A copy of the architect "good" fixture (the shop) at $A, with CLAUDE.md under its real name and
+# the contract plans and full review in docs/architecture/reviews/.
+arch_repo() {
+  A="$BATS_TEST_TMPDIR/shop"
+  cp -r "$REPO_ROOT/tests/fixtures/architect/good" "$A"
+  mv "$A/CLAUDE.fixture.md" "$A/CLAUDE.md"
+  local c="$REPO_ROOT/tests/fixtures/architect/contract" r="$A/docs/architecture/reviews"
+  mkdir -p "$r/plans"
+  cp "$c/full.json" "$r/full.json"
+  cp "$c"/2026-*.json "$r/plans/"
+  export A
+}

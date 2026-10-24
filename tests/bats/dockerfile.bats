@@ -49,10 +49,22 @@ D="$REPO_ROOT/image/Dockerfile"
   grep -qx 'bridge/node_modules' "$REPO_ROOT/.dockerignore"
 }
 
+@test ".dockerignore keeps the architect tools' node_modules out of the build context" {
+  grep -qx 'image/arch/node_modules' "$REPO_ROOT/.dockerignore"
+}
+
 @test "Claude keeps .claude.json in the mounted ~/.claude, so hand-made settings survive a recreate" {
   grep -Eq '^ +CLAUDE_CONFIG_DIR=/home/dev/.claude \\$' "$D"
 }
 
 @test "ccusage is pinned to an exact version" {
   grep -Eq '(^| )ccusage@[0-9]+\.[0-9]+\.[0-9]+( |$)' "$D"
+}
+
+@test "the architect tools are installed from the lockfile in their own layer before the agentic layer" {
+  grep -Eq '^COPY image/arch/package.json image/arch/package-lock.json /opt/agentic/arch/$' "$D"
+  grep -Eq 'cd /opt/agentic/arch .*PATH=/opt/node/\$\{NODE_HARNESS\}/bin:\$PATH npm ci --omit=dev --no-audit --no-fund' "$D"
+  grep -Eq '^COPY image/arch/validate.mjs /opt/agentic/arch/validate.mjs$' "$D"
+  [ "$(grep -n 'npm ci --omit=dev' "$D" | cut -d: -f1)" -lt "$(grep -n '^COPY image/lib ' "$D" | cut -d: -f1)" ]
+  [ "$(grep -n 'COPY image/arch/validate.mjs' "$D" | cut -d: -f1)" -gt "$(grep -n '^COPY image/lib ' "$D" | cut -d: -f1)" ]
 }

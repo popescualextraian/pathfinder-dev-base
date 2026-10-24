@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architecture plan review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "kind", "title", "plan", "baseCommit", "reviewedAt", "size", "summary", "changes", "findings", "passed"],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "plan" },
+    "title": { "type": "string", "minLength": 1 },
+    "plan": { "type": "string" },
+    "baseCommit": { "type": "string", "minLength": 1 },
+    "reviewedAt": { "type": "string", "minLength": 1 },
+    "size": { "enum": ["S", "M", "L"] },
+    "summary": { "type": "string" },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["component", "change", "line"],
+        "properties": {
+          "component": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "change": { "enum": ["new", "changed", "removed"] },
+          "line": { "type": "string" },
+          "proposed": {
+            "type": "object", "additionalProperties": false, "required": ["name", "part", "layer", "summary"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "part": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+              "layer": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+              "module": { "oneOf": [{ "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, { "type": "null" }] },
+              "summary": { "type": "string" },
+              "talks_to": {
+                "type": "array",
+                "items": {
+                  "type": "object", "additionalProperties": false, "required": ["to", "via"],
+                  "properties": { "to": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" }, "via": { "enum": ["call", "rest", "event", "file", "other"] } }
+                }
+              }
+            }
+          }
+        },
+        "if": { "properties": { "change": { "const": "new" } }, "required": ["change"] },
+        "then": { "required": ["proposed"] }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "rule", "component", "severity", "text", "status"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^\\S+$" },
+          "rule": { "type": "string", "minLength": 1 },
+          "component": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "severity": { "enum": ["error", "warn", "info"] },
+          "text": { "type": "string" },
+          "alternative": { "type": "string" },
+          "status": { "enum": ["open", "fixed", "accepted"] }
+        }
+      }
+    },
+    "passed": { "type": "array", "items": { "type": "string" } }
+  }
+}

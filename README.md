@@ -2,8 +2,8 @@
 
 A container for agentic development. One base image with the tools agents need (git, Claude
 Code, Copilot CLI, AWS and Azure CLI, gh, Java 21 and Maven, Node 22, Python 3.12, Docker CLI,
-Playwright with Chromium) and the `/agentic-setup` and `/wiki` skills. Each project extends it in
-the standard ways: `.env` for secrets and settings, one-line `setup:` commands for plugins,
+Playwright with Chromium) and the `/agentic-setup` and `/architect` skills. Each project extends
+it in the standard ways: `.env` for secrets and settings, one-line `setup:` commands for plugins,
 marketplaces, MCP servers, skills, files and mounts, and plain Dockerfile lines for anything else.
 The project owns its technologies; this repository owns the agentic part.
 
@@ -258,15 +258,37 @@ The USD figures are the list price of the tokens (ccusage, offline), an estimate
 bills differently. Install in an existing project, prices, other harnesses and the contracts:
 [`docs/cost.md`](docs/cost.md).
 
-## Project wiki (WIP)
+## Project wiki (parked)
 
-> **Work in progress:** the wiki skill is not finished yet; commands and page layout may change.
+The wiki skill is parked: it is no longer installed by default. Add it to a project with
+`agentic add plugin wiki@agentic`; when the project was initialised without the recommended lines,
+run `agentic add marketplace /opt/agentic/marketplace` first. `/wiki seed` then writes what agents cannot read from the code
+into `docs/wiki/`: components and their boundaries, decisions, contracts, concepts, flows and the
+shared code to reuse. It also writes a lean CLAUDE.md that imports the wiki index, and path rules.
+`/wiki update` keeps the pages true after a change. `agentic-wiki check` (still in the image)
+validates all of it. The skill decides where each statement belongs:
+`marketplace/plugins/wiki/skills/wiki/reference/routing.md`. For architecture documentation see
+the architect skill (`/architect`).
 
-`/wiki seed` writes what agents cannot read from the code into `docs/wiki/`: components and their
-boundaries, decisions, contracts, concepts, flows and the shared code to reuse. It also writes a
-lean CLAUDE.md that imports the wiki index, and path rules. `/wiki update` keeps the pages true
-after a change. `agentic-wiki check` validates all of it. The skill decides where each statement
-belongs: `skills/wiki/reference/routing.md`.
+## Architecture doc and the architect skill (WIP)
+
+The `architect` skill keeps a light description of the architecture in `docs/architecture/` and
+checks plans and code against it. The doc directs, it does not teach: it names the style, pins the
+project's own choices and lists the rules; the code shows the rest.
+
+- Layout: `architecture.md` (style, parts, layers, boundaries, principles, patterns, exceptions),
+  `components/<id>.md`, optional `flows/`, `decisions/` and `catalog/`, `omitted.yaml`; generated:
+  `index.md` (imported into CLAUDE.md), `model.json`, `rules.depcruise.cjs`; reviews in
+  `reviews/full.json` and `reviews/plans/<slug>.json`.
+- Modes: `/architect seed` (once), `update [<range>]`, `plan <plan-file>` (advisory review before
+  you apply a plan), `review [--full]`, `accept <finding-id> "<reason>"`, `new <template>` (a new
+  project), `audit`.
+- `agentic-arch [-C DIR]`: `build` (index, model, rules), `check` (prints `architect: ok` or one line
+  per problem), `affected <range>` (changed files by component), `deps [--affected <sha>]`
+  (dependency-cruiser findings as JSON; exit 1 when there are findings) and `sync` (mirrors the
+  index for Copilot).
+
+Details: `docs/architecture.md`. The parked wiki is described above.
 
 ## Philosophy
 

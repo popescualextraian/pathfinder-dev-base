@@ -47,3 +47,9 @@ setup() {
   PATH="$B:$PATH" run "$I"
   grep -qx -- '- agentic-wiki' <<<"$output"
 }
+
+@test "lists agentic-arch among the commands" {
+  printf '#!/bin/sh\nexit 2\n' > "$B/agentic-arch"; chmod +x "$B/agentic-arch"
+  PATH="$B:$PATH" run "$I"
+  grep -qx -- '- agentic-arch' <<<"$output"
+}

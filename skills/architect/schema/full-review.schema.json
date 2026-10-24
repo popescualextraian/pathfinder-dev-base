@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architecture full review",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "kind", "commit", "reviewedAt", "components", "findings"],
+  "properties": {
+    "version": { "const": 1 },
+    "kind": { "const": "full" },
+    "commit": { "type": "string", "minLength": 1 },
+    "reviewedAt": { "type": "string", "minLength": 1 },
+    "components": {
+      "type": "object",
+      "propertyNames": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["reviewedAt"],
+        "properties": { "reviewedAt": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "rule", "component", "severity", "source", "text", "status", "since"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^\\S+$" },
+          "rule": { "type": "string", "minLength": 1 },
+          "component": { "type": "string", "pattern": "^[a-z0-9-]{1,60}$" },
+          "severity": { "enum": ["error", "warn", "info"] },
+          "source": { "enum": ["depcruise", "llm", "jscpd", "knip"] },
+          "text": { "type": "string" },
+          "status": { "enum": ["open", "fixed", "accepted"] },
+          "since": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

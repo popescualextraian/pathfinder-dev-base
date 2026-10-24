@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 load helpers
 
-setup() { S="$REPO_ROOT/skills/wiki"; }
+setup() { S="$REPO_ROOT/marketplace/plugins/wiki/skills/wiki"; }
 
 @test "the wiki skill has a name, a description and all its parts" {
   [ "$(sed -n 1p "$S/SKILL.md")" = --- ]

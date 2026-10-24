@@ -1,0 +1,4 @@
+# Paths that deliberately belong to no component.
+paths:
+  - path: backend/src/main.ts
+    reason: process entry point, wires the API handlers

@@ -14,6 +14,7 @@ and never patches base files. Projects use it with `base_image:` in `agentic.yam
 | `/opt/agentic/defaults/agentic.yaml` | Organisation defaults, merged under each project's `agentic.yaml` (the project wins; lists are replaced). It cannot hold `setup:`. |
 | `/opt/agentic/defaults/recommended` | Recommended setup lines, one per line (`docs/setup.md`), replacing the base's. `agentic init --base IMAGE` writes them into a project's `setup:`, where the project can see and delete them. |
 | `/usr/local/share/ca-certificates/*.crt` | Organisation CA certificates; any `*.crt` under this folder is trusted by the system, Java, Node, Python and Chromium after `update-ca-certificates`, `agentic-trust-java` and `agentic-trust-nss`. |
+| `/opt/agentic/catalog/architect/{styles,principles,patterns,templates}/<id>.md` | Extra entries for the architect skill's catalog (`agentic-arch`, `/architect`). An entry with a built-in id replaces it; a project's own `docs/architecture/catalog/` still wins over the overlay. |
 | `/opt/agentic/worker.d/<name>.sh` | Worker-mode adapters, started with `AGENTIC_WORKER_MODE=<name>`. |
 
 The base guarantees for an adapter: bash, curl, tar, git and Node are present; the entrypoint

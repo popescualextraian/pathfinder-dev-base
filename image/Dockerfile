@@ -99,6 +99,10 @@ RUN cd /opt/agentic/bridge && export PATH=/opt/node/${NODE_HARNESS}/bin:$PATH \
  && printf '#!/bin/sh\nPATH=/opt/node/%s/bin:$PATH exec node /opt/agentic/bridge/dist/main.js "$@"\n' "${NODE_HARNESS}" > /usr/local/bin/agentic-bridge \
  && chmod 755 /usr/local/bin/agentic-bridge
 
+# The architect tools: dependency-cruiser pinned by the lockfile, installed here and never fetched at run time.
+COPY image/arch/package.json image/arch/package-lock.json /opt/agentic/arch/
+RUN cd /opt/agentic/arch && PATH=/opt/node/${NODE_HARNESS}/bin:$PATH npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+
 # User dev, mount points and the container marker
 RUN (userdel -r ubuntu 2>/dev/null || true) \
  && groupadd -g 1000 dev && useradd -m -u 1000 -g 1000 -s /bin/bash dev \
@@ -114,6 +118,7 @@ COPY image/bin /opt/agentic/bin
 COPY image/task /opt/agentic/task
 COPY image/hooks.d /opt/agentic/hooks.d
 COPY image/cost /opt/agentic/cost
+COPY image/arch/validate.mjs /opt/agentic/arch/validate.mjs
 COPY marketplace /opt/agentic/marketplace
 COPY derive /opt/agentic/derive
 COPY config /opt/agentic/config

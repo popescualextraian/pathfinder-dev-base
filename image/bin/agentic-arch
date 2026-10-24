@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# Builds and checks the architecture doc in docs/architecture/; the deterministic half of /architect.
+# Usage: agentic-arch [-C DIR] build | check | affected <git diff range> | deps [--affected <sha>] | sync
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+AGENTIC_DIR="${AGENTIC_DIR:-$(cd "$here/.." && pwd)}"
+# shellcheck source=../lib/wiki.sh
+source "$AGENTIC_DIR/lib/wiki.sh"
+# shellcheck source=../lib/arch.sh
+source "$AGENTIC_DIR/lib/arch.sh"
+usage() { echo "usage: agentic-arch [-C DIR] build | check | affected <git diff range> | deps [--affected <sha>] | sync" >&2; exit 2; }
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ "${1:-}" = -C ]; then
+  [ "$#" -ge 2 ] || usage
+  ROOT="$(cd "$2" && pwd)"; shift 2
+fi
+need_arch() {
+  [ -f "$ROOT/$ARCH_DIR/architecture.md" ] || { echo "agentic-arch: no $ARCH_DIR in $ROOT" >&2; exit 2; }
+}
+
+cmd_build() {
+  need_arch
+  local model index
+  arch_top >/dev/null || { echo "agentic-arch: $ARCH_DIR/architecture.md has no valid front matter" >&2; exit 1; }
+  model="$(arch_model)"
+  index="$(arch_index)"
+  printf '%s\n' "$model" > "$ROOT/$ARCH_DIR/model.json"
+  printf '%s\n' "$index" > "$ROOT/$ARCH_DIR/index.md"
+  # Hook for Task 5: rules.depcruise.cjs is written only once arch_rules exists.
+  if declare -F arch_rules >/dev/null; then arch_rules > "$ROOT/$ARCH_DIR/rules.depcruise.cjs"; fi
+}
+
+# check_generated: build on a copy of the doc must reproduce the generated files, CRLF aside.
+check_generated() {
+  local tmp f
+  tmp="$(mktemp -d)"
+  mkdir -p "$tmp/docs"
+  cp -r "$ROOT/$ARCH_DIR" "$tmp/docs/"
+  if ! bash "${BASH_SOURCE[0]}" -C "$tmp" build >/dev/null 2>&1; then
+    echo "$ARCH_DIR: could not rebuild the generated files; run agentic-arch build to see why"
+    rm -rf "$tmp"; return 0
+  fi
+  for f in index.md model.json rules.depcruise.cjs; do
+    if [ -f "$tmp/$ARCH_DIR/$f" ] && { [ ! -f "$ROOT/$ARCH_DIR/$f" ] \
+         || ! cmp -s <(tr -d '\r' < "$tmp/$ARCH_DIR/$f") <(tr -d '\r' < "$ROOT/$ARCH_DIR/$f"); }; then
+      echo "$ARCH_DIR/$f: generated content is stale; run agentic-arch build"
+    fi
+  done
+  rm -rf "$tmp"
+}
+
+cmd_check() {
+  local top comps n=0 line
+  if [ ! -f "$ROOT/$ARCH_DIR/architecture.md" ]; then echo "agentic-arch: no $ARCH_DIR; nothing to check"; return 0; fi
+  if ! top="$(arch_top)"; then
+    echo "$ARCH_DIR/architecture.md: missing or invalid front matter"
+    echo "agentic-arch: 1 problem(s)" >&2; return 1
+  fi
+  comps="$(arch_components)"
+  while IFS= read -r line; do
+    if [ -z "$line" ]; then continue; fi
+    echo "$line"
+    case "$line" in warn:*) ;; *) n=$((n + 1)) ;; esac
+  done < <(arch_check_shape "$top" "$comps"; arch_check_structure "$top" "$comps"; arch_check_catalog "$top" "$comps"
+           arch_check_sources "$comps"; arch_check_links; arch_check_limits "$comps"; arch_check_context
+           check_generated; arch_check_exceptions "$top")
+  if [ "$n" -gt 0 ]; then echo "agentic-arch: $n problem(s)" >&2; return 1; fi
+  echo "architect: ok"
+}
+
+# cmd_affected RANGE: maps the files git diff lists under ROOT, relative to it, to the component with
+# the longest matching source.
+cmd_affected() {
+  local files f e best src id
+  declare -A owner=()
+  files="$(git -C "$ROOT" diff --name-only --relative "$1")" || exit 2
+  while IFS=$'\t' read -r src id; do
+    owner["${src%/}"]="$id"
+  done < <(arch_owners)
+  while IFS= read -r f; do
+    case "$f" in
+      ""|"$ARCH_DIR"/*|.claude/*|.github/*|CLAUDE.md) continue ;;
+    esac
+    best=""
+    for e in "${!owner[@]}"; do
+      if [ "$f" = "$e" ] || [[ "$f" == "$e"/* ]]; then
+        if [ "${#e}" -gt "${#best}" ]; then best="$e"; fi
+      fi
+    done
+    if [ -z "$best" ]; then echo "unclaimed $f"
+    elif [ "${owner[$best]}" = - ]; then echo "omitted $f"
+    else echo "component ${owner[$best]} $f"; fi
+  done <<<"$files"
+}
+
+# cmd_deps [--affected SHA]: dependency-cruiser with the generated rules over the component sources
+# and layer folders; prints the violations as findings, a JSON array sorted by id. A file belongs to
+# its longest owner: a component, or a layer folder whose layer id fills the component slot. A break
+# from a file no component or layer owns (omitted or unclaimed) goes to stderr and still exits 1.
+# With --affected, only breaks from files changed since SHA (committed, staged, unstaged or
+# untracked) are kept.
+cmd_deps() {
+  local tools cruiser rules="$ARCH_DIR/rules.depcruise.cjs" since="" out changed='null' roots=() src owners res
+  case "$#" in
+    0) ;;
+    2) [ "$1" = --affected ] || usage; since="$2" ;;
+    *) usage ;;
+  esac
+  tools="${ARCH_TOOLS:-}"
+  if [ -z "$tools" ]; then
+    tools="$AGENTIC_DIR/arch"; [ -d "$tools" ] || tools="$here/../arch"
+  fi
+  cruiser="$tools/node_modules/dependency-cruiser/bin/dependency-cruiser.mjs"
+  [ -f "$cruiser" ] || { echo "agentic-arch: dependency-cruiser is not installed (npm ci in image/arch)" >&2; exit 2; }
+  need_arch
+  [ -f "$ROOT/$rules" ] || { echo "agentic-arch: no $rules; run agentic-arch build" >&2; exit 2; }
+  owners="$(arch_rule_owners)" || { echo "agentic-arch: $ARCH_DIR/architecture.md has no valid front matter" >&2; exit 2; }
+  # scan roots: existing component sources and layer folders, deduplicated
+  while IFS= read -r src; do
+    if [ -e "$ROOT/$src" ]; then roots+=("$src"); fi
+  done < <(jq -r '[.[] | select(.id != null) | .p] | unique | .[]' <<<"$owners")
+  [ "${#roots[@]}" -gt 0 ] || { echo "agentic-arch: no component sources to scan" >&2; exit 2; }
+  if [ -n "$since" ]; then
+    changed="$({ git -C "$ROOT" diff --name-only --relative "$since" -- && git -C "$ROOT" ls-files --others --exclude-standard; } | jq -Rsc 'split("\n") | map(select(. != ""))')" \
+      || { echo "agentic-arch: cannot list the files changed since $since" >&2; exit 2; }
+  fi
+  out="$(cd "$ROOT" && "$(arch_node)" "$cruiser" --config "$rules" --output-type json "${roots[@]}")" \
+    || { echo "agentic-arch: dependency-cruiser failed" >&2; exit 2; }
+  if [ "$(jq -r '.summary.totalCruised // 0' <<<"$out")" -eq 0 ]; then
+    echo "agentic-arch: dependency-cruiser found no JavaScript or TypeScript modules under the component sources" >&2; exit 2
+  fi
+  res="$(jq -c --argjson owners "$owners" --argjson changed "$changed" '
+    def owner($f): [$owners[] | .p as $p | select($f == $p or ($f | startswith($p + "/")))] | max_by(.p | length) | .id;
+    # slug($f): the file name without extension, for a target no component or layer owns
+    def slug($f): $f | split("/") | last | sub("\\.[^.]*$"; "") | ascii_downcase | gsub("[^a-z0-9-]+"; "-");
+    [.summary.violations[] | select($changed == null or (.from as $f | $changed | index([$f])))
+      | {f: owner(.from), t: (owner(.to) // slug(.to)), v: .}]
+    | {findings: (map(select(.f != null)
+        | {id: "\(.v.rule.name | split(":")[0])/\(.f)/imports-\(.t)", rule: .v.rule.name, component: .f,
+           severity: .v.rule.severity, source: "depcruise", text: "\(.v.from) imports \(.v.to)"})
+        | sort_by(.id, .text) | unique_by(.id)),
+       unowned: (map(select(.f == null) | "agentic-arch: \(.v.from) imports \(.v.to) (\(.v.rule.name)), but no component or layer owns \(.v.from)") | unique)}' <<<"$out")"
+  out="$(jq '.findings' <<<"$res")"
+  printf '%s\n' "$out"
+  jq -r '.unowned[]' <<<"$res" >&2
+  if [ "$out" != '[]' ] || [ "$(jq '.unowned | length' <<<"$res")" -gt 0 ]; then return 1; fi
+}
+
+# cmd_sync: puts the index, minus its generated-note line, into .github/copilot-instructions.md.
+cmd_sync() {
+  if [ -f "$ROOT/$ARCH_DIR/index.md" ]; then
+    mkdir -p "$ROOT/.github"
+    tail -n +2 "$ROOT/$ARCH_DIR/index.md" | wiki_put_block "$ROOT/.github/copilot-instructions.md" architecture-index
+  fi
+  echo "synced .github/copilot-instructions.md"
+}
+
+[ "$#" -ge 1 ] || usage
+cmd="$1"; shift
+case "$cmd" in
+  build) cmd_build ;;
+  check) cmd_check ;;
+  affected) need_arch; [ "$#" -eq 1 ] || usage; cmd_affected "$1" ;;
+  deps) cmd_deps "$@" ;;
+  sync) need_arch; cmd_sync ;;
+  *) usage ;;
+esac
