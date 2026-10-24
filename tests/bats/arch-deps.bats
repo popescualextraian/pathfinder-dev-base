@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
 load helpers
+bats_require_minimum_version 1.5.0
 
 setup() {
   make_tmp_home
@@ -97,6 +98,34 @@ rule() { node -e 'const r = require(process.argv[1]); console.log(JSON.stringify
   rule 'layers:commons>service' | jq -e '.[0].to.path | index("^backend/src/schedule/service/")'
   # the outer component's rules leave the nested owners out
   rule 'layers:boot>service' | jq -e '.[0].from.path == ["^backend/src/"] and (.[0].from.pathNot | index("^backend/src/commons/"))'
+}
+
+@test "a break from a file owned only by a layer folder carries the layer id, not an outer component" {
+  need_tools
+  f="$P/backend/src/schedule/service/planner.ts"
+  echo "import { schedule } from '../api/schedule-api';" >> "$f"
+  echo "import { listItems } from '../../backlog/service/backlog-service';" >> "$f"
+  deps "$P"
+  [ "$status" -eq 1 ]
+  [ "$(ids)" = boundaries/service/imports-backlog-service,layers/service/imports-schedule-api ]
+  [ "$(jq -r '[.[].component] | unique | join(",")' <<<"$output")" = service ]
+  # the outer component no longer reaches the folder: the folder is scanned on its own
+  sed -i 's#^  - backend/src/$#  - backend/src/main.ts#' "$P/docs/architecture/components/main.md"
+  deps "$P"
+  [ "$status" -eq 1 ]
+  [ "$(ids)" = boundaries/service/imports-backlog-service,layers/service/imports-schedule-api ]
+}
+
+@test "a break from an omitted file is reported on stderr, never dropped" {
+  need_tools
+  mkdir -p "$P/backend/src/tools"
+  echo "import { listItems } from '../backlog/service/backlog-service';" > "$P/backend/src/tools/seed.ts"
+  printf 'paths:\n  - { path: backend/src/tools/, reason: one-off scripts }\n' > "$P/docs/architecture/omitted.yaml"
+  "$ARCH" -C "$P" build
+  run --separate-stderr "$ARCH" -C "$P" deps
+  [ "$status" -eq 1 ]
+  [ "$output" = '[]' ]
+  [ "$stderr" = 'agentic-arch: backend/src/tools/seed.ts imports backend/src/backlog/service/backlog-service.ts (boundaries:backlog-package:entry), but no component or layer owns backend/src/tools/seed.ts' ]
 }
 
 @test "the rules file is generated, valid JS and stable" {

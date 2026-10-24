@@ -19,6 +19,11 @@ read the code for what they cannot see.
 2. `agentic-arch deps` (full) or `agentic-arch deps --affected <last-commit>` (incremental). Exit 1
    means findings, not failure; exit 2 means no TS/JS sources or no dependency-cruiser: say so in
    the summary and go on. Its findings keep their id and get `source: "depcruise"`.
+   A file belongs to its longest owner. For a file owned only by a layer's `folders`, the layer id
+   takes the component slot (`layers/<layer-id>/imports-<to>`, `component: <layer-id>`); `check`
+   accepts it. A break from a file no component or layer owns (omitted or unclaimed) is not in the
+   JSON: deps prints it on stderr and exits 1. Give that file an owner, or list the break in the
+   summary.
 3. Only when the project already has them in its own tooling: jscpd for DRY (copied blocks,
    `source: "jscpd"`) and knip for YAGNI (unused exports and files, `source: "knip"`). Never
    install them.

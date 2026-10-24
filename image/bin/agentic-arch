@@ -93,11 +93,14 @@ cmd_affected() {
   done <<<"$files"
 }
 
-# cmd_deps [--affected SHA]: dependency-cruiser with the generated rules over the component sources;
-# prints the violations as findings, a JSON array sorted by id. With --affected, only findings from
-# files changed since SHA (committed, staged, unstaged or untracked) are kept.
+# cmd_deps [--affected SHA]: dependency-cruiser with the generated rules over the component sources
+# and layer folders; prints the violations as findings, a JSON array sorted by id. A file belongs to
+# its longest owner: a component, or a layer folder whose layer id fills the component slot. A break
+# from a file no component or layer owns (omitted or unclaimed) goes to stderr and still exits 1.
+# With --affected, only breaks from files changed since SHA (committed, staged, unstaged or
+# untracked) are kept.
 cmd_deps() {
-  local tools cruiser rules="$ARCH_DIR/rules.depcruise.cjs" since="" out changed='null' roots=() src
+  local tools cruiser rules="$ARCH_DIR/rules.depcruise.cjs" since="" out changed='null' roots=() src owners res
   case "$#" in
     0) ;;
     2) [ "$1" = --affected ] || usage; since="$2" ;;
@@ -111,10 +114,11 @@ cmd_deps() {
   [ -f "$cruiser" ] || { echo "agentic-arch: dependency-cruiser is not installed (npm ci in image/arch)" >&2; exit 2; }
   need_arch
   [ -f "$ROOT/$rules" ] || { echo "agentic-arch: no $rules; run agentic-arch build" >&2; exit 2; }
-  # scan roots: existing component sources, deduplicated
+  owners="$(arch_rule_owners)" || { echo "agentic-arch: $ARCH_DIR/architecture.md has no valid front matter" >&2; exit 2; }
+  # scan roots: existing component sources and layer folders, deduplicated
   while IFS= read -r src; do
     if [ -e "$ROOT/$src" ]; then roots+=("$src"); fi
-  done < <(arch_components | jq -r '[.[] | select(.fm != null) | (.fm.sources // [])[] | select(type == "string") | sub("/+$"; "")] | unique | .[]')
+  done < <(jq -r '[.[] | select(.id != null) | .p] | unique | .[]' <<<"$owners")
   [ "${#roots[@]}" -gt 0 ] || { echo "agentic-arch: no component sources to scan" >&2; exit 2; }
   if [ -n "$since" ]; then
     changed="$({ git -C "$ROOT" diff --name-only --relative "$since" -- && git -C "$ROOT" ls-files --others --exclude-standard; } | jq -Rsc 'split("\n") | map(select(. != ""))')" \
@@ -125,16 +129,21 @@ cmd_deps() {
   if [ "$(jq -r '.summary.totalCruised // 0' <<<"$out")" -eq 0 ]; then
     echo "agentic-arch: dependency-cruiser found no JavaScript or TypeScript modules under the component sources" >&2; exit 2
   fi
-  out="$(jq --argjson owners "$(arch_owners | jq -Rsc 'split("\n") | map(select(. != "") | split("\t") | {p: (.[0] | sub("/+$"; "")), id: .[1]})')" \
-       --argjson changed "$changed" '
-    def owner($f): [$owners[] | .p as $p | select($f == $p or ($f | startswith($p + "/")))] | max_by(.p | length) | .id // "-";
+  res="$(jq -c --argjson owners "$owners" --argjson changed "$changed" '
+    def owner($f): [$owners[] | .p as $p | select($f == $p or ($f | startswith($p + "/")))] | max_by(.p | length) | .id;
+    # slug($f): the file name without extension, for a target no component or layer owns
+    def slug($f): $f | split("/") | last | sub("\\.[^.]*$"; "") | ascii_downcase | gsub("[^a-z0-9-]+"; "-");
     [.summary.violations[] | select($changed == null or (.from as $f | $changed | index([$f])))
-      | {f: owner(.from), t: owner(.to), v: .} | select(.f != "-" and .t != "-")
-      | {id: "\(.v.rule.name | split(":")[0])/\(.f)/imports-\(.t)", rule: .v.rule.name, component: .f,
-         severity: .v.rule.severity, source: "depcruise", text: "\(.v.from) imports \(.v.to)"}]
-    | sort_by(.id, .text) | unique_by(.id)' <<<"$out")"
+      | {f: owner(.from), t: (owner(.to) // slug(.to)), v: .}]
+    | {findings: (map(select(.f != null)
+        | {id: "\(.v.rule.name | split(":")[0])/\(.f)/imports-\(.t)", rule: .v.rule.name, component: .f,
+           severity: .v.rule.severity, source: "depcruise", text: "\(.v.from) imports \(.v.to)"})
+        | sort_by(.id, .text) | unique_by(.id)),
+       unowned: (map(select(.f == null) | "agentic-arch: \(.v.from) imports \(.v.to) (\(.v.rule.name)), but no component or layer owns \(.v.from)") | unique)}' <<<"$out")"
+  out="$(jq '.findings' <<<"$res")"
   printf '%s\n' "$out"
-  [ "$out" = '[]' ] || return 1
+  jq -r '.unowned[]' <<<"$res" >&2
+  if [ "$out" != '[]' ] || [ "$(jq '.unowned | length' <<<"$res")" -gt 0 ]; then return 1; fi
 }
 
 # cmd_sync: puts the index, minus its generated-note line, into .github/copilot-instructions.md.

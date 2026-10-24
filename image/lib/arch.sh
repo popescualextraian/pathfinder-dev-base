@@ -87,8 +87,9 @@ arch_owners() {
   fi
 }
 
-# arch_rule_owners: JSON [{p, slash, part, layer}] of what owns which path: component sources,
-# layer folders, and omitted paths (part and layer null). p has no trailing slash.
+# arch_rule_owners: JSON [{p, slash, part, layer, id}] of what owns which path: component sources
+# (id: the component), layer folders (id: the layer), and omitted paths (part, layer and id null).
+# p has no trailing slash.
 arch_rule_owners() {
   local top comps omitted='[]'
   top="$(arch_top)" || return 1
@@ -97,12 +98,12 @@ arch_rule_owners() {
     omitted="$(yq -o=json -I0 '.paths // []' "$ROOT/$ARCH_DIR/omitted.yaml" | jq -c '[.[] | select(type == "object") | .path]')"
   fi
   jq -n --argjson top "$top" --argjson comps "$comps" --argjson om "$omitted" '
-    def own($s; $part; $layer): {p: ($s | sub("/+$"; "")), slash: ($s | endswith("/")), part: $part, layer: $layer};
+    def own($s; $part; $layer; $id): {p: ($s | sub("/+$"; "")), slash: ($s | endswith("/")), part: $part, layer: $layer, id: $id};
     ($top.parts[0].id) as $p0
-    | [($comps[] | select(.fm != null) | .fm as $fm | ($fm.sources // [])[] | select(type == "string")
-          | own(.; $fm.part // $p0; $fm.layer)),
-       ($top.parts[] | .id as $part | .layers[] | .id as $layer | (.folders // [])[] | own(.; $part; $layer)),
-       ($om[] | select(type == "string") | own(.; null; null))]'
+    | [($comps[] | select(.fm != null) | .fm as $fm | ($fm.id // .id) as $id | ($fm.sources // [])[] | select(type == "string")
+          | own(.; $fm.part // $p0; $fm.layer; $id)),
+       ($top.parts[] | .id as $part | .layers[] | .id as $layer | (.folders // [])[] | own(.; $part; $layer; $layer)),
+       ($om[] | select(type == "string") | own(.; null; null; null))]'
 }
 
 # arch_rules: rules.depcruise.cjs text. Rules forbid, per part, the layers a layer may not use, the
