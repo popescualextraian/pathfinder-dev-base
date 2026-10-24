@@ -93,6 +93,50 @@ cmd_affected() {
   done <<<"$files"
 }
 
+# cmd_deps [--affected SHA]: dependency-cruiser with the generated rules over the component sources;
+# prints the violations as findings, a JSON array sorted by id. With --affected, only findings from
+# files changed since SHA (committed, staged, unstaged or untracked) are kept.
+cmd_deps() {
+  local tools cruiser rules="$ARCH_DIR/rules.depcruise.cjs" since="" out changed='null' roots=() src
+  case "$#" in
+    0) ;;
+    2) [ "$1" = --affected ] || usage; since="$2" ;;
+    *) usage ;;
+  esac
+  tools="${ARCH_TOOLS:-}"
+  if [ -z "$tools" ]; then
+    tools="$AGENTIC_DIR/arch"; [ -d "$tools" ] || tools="$here/../arch"
+  fi
+  cruiser="$tools/node_modules/dependency-cruiser/bin/dependency-cruiser.mjs"
+  [ -f "$cruiser" ] || { echo "agentic-arch: dependency-cruiser is not installed (npm ci in image/arch)" >&2; exit 2; }
+  need_arch
+  [ -f "$ROOT/$rules" ] || { echo "agentic-arch: no $rules; run agentic-arch build" >&2; exit 2; }
+  # scan roots: existing component sources, deduplicated
+  while IFS= read -r src; do
+    if [ -e "$ROOT/$src" ]; then roots+=("$src"); fi
+  done < <(arch_components | jq -r '[.[] | select(.fm != null) | (.fm.sources // [])[] | select(type == "string") | sub("/+$"; "")] | unique | .[]')
+  [ "${#roots[@]}" -gt 0 ] || { echo "agentic-arch: no component sources to scan" >&2; exit 2; }
+  if [ -n "$since" ]; then
+    changed="$({ git -C "$ROOT" diff --name-only --relative "$since" -- && git -C "$ROOT" ls-files --others --exclude-standard; } | jq -Rsc 'split("\n") | map(select(. != ""))')" \
+      || { echo "agentic-arch: cannot list the files changed since $since" >&2; exit 2; }
+  fi
+  out="$(cd "$ROOT" && node "$cruiser" --config "$rules" --output-type json "${roots[@]}")" \
+    || { echo "agentic-arch: dependency-cruiser failed" >&2; exit 2; }
+  if [ "$(jq -r '.summary.totalCruised // 0' <<<"$out")" -eq 0 ]; then
+    echo "agentic-arch: dependency-cruiser found no JavaScript or TypeScript modules under the component sources" >&2; exit 2
+  fi
+  out="$(jq --argjson owners "$(arch_owners | jq -Rsc 'split("\n") | map(select(. != "") | split("\t") | {p: (.[0] | sub("/+$"; "")), id: .[1]})')" \
+       --argjson changed "$changed" '
+    def owner($f): [$owners[] | .p as $p | select($f == $p or ($f | startswith($p + "/")))] | max_by(.p | length) | .id // "-";
+    [.summary.violations[] | select($changed == null or (.from as $f | $changed | index([$f])))
+      | {f: owner(.from), t: owner(.to), v: .} | select(.f != "-" and .t != "-")
+      | {id: "\(.v.rule.name | split(":")[0])/\(.f)/imports-\(.t)", rule: .v.rule.name, component: .f,
+         severity: .v.rule.severity, source: "depcruise", text: "\(.v.from) imports \(.v.to)"}]
+    | sort_by(.id, .text) | unique_by(.id)' <<<"$out")"
+  printf '%s\n' "$out"
+  [ "$out" = '[]' ] || return 1
+}
+
 # cmd_sync: puts the index, minus its generated-note line, into .github/copilot-instructions.md.
 cmd_sync() {
   if [ -f "$ROOT/$ARCH_DIR/index.md" ]; then
@@ -108,6 +152,7 @@ case "$cmd" in
   build) cmd_build ;;
   check) cmd_check ;;
   affected) need_arch; [ "$#" -eq 1 ] || usage; cmd_affected "$1" ;;
+  deps) cmd_deps "$@" ;;
   sync) need_arch; cmd_sync ;;
   *) usage ;;
 esac

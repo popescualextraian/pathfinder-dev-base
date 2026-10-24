@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "style": {
+    "id": "modular-monolith",
+    "name": "Modular monolith, layered"
+  },
+  "parts": [
+    {
+      "id": "backend",
+      "name": "Backend",
+      "layers": [
+        {
+          "id": "boot",
+          "name": "Boot",
+          "mayUse": [
+            "api",
+            "commons"
+          ]
+        },
+        {
+          "id": "api",
+          "name": "API",
+          "mayUse": [
+            "service",
+            "commons"
+          ]
+        },
+        {
+          "id": "service",
+          "name": "Service",
+          "mayUse": [
+            "repository",
+            "commons"
+          ]
+        },
+        {
+          "id": "repository",
+          "name": "Repository",
+          "mayUse": [
+            "commons"
+          ]
+        },
+        {
+          "id": "commons",
+          "name": "Commons",
+          "mayUse": []
+        }
+      ],
+      "modules": [
+        {
+          "id": "backlog",
+          "name": "Backlog"
+        },
+        {
+          "id": "schedule",
+          "name": "Schedule"
+        }
+      ]
+    },
+    {
+      "id": "frontend",
+      "name": "Frontend",
+      "layers": [
+        {
+          "id": "ui",
+          "name": "UI",
+          "mayUse": []
+        }
+      ],
+      "modules": []
+    }
+  ],
+  "components": [
+    {
+      "id": "backlog-api",
+      "name": "Backlog API",
+      "part": "backend",
+      "layer": "api",
+      "module": "backlog",
+      "parent": null,
+      "summary": "Entry and handlers of the backlog package.",
+      "page": "components/backlog-api.md"
+    },
+    {
+      "id": "backlog-service",
+      "name": "Backlog service",
+      "part": "backend",
+      "layer": "service",
+      "module": "backlog",
+      "parent": null,
+      "summary": "Backlog rules.",
+      "page": "components/backlog-service.md"
+    },
+    {
+      "id": "backlog-store",
+      "name": "Backlog store",
+      "part": "backend",
+      "layer": "repository",
+      "module": "backlog",
+      "parent": null,
+      "summary": "Backlog storage.",
+      "page": "components/backlog-store.md"
+    },
+    {
+      "id": "schedule-api",
+      "name": "Schedule API",
+      "part": "backend",
+      "layer": "api",
+      "module": "schedule",
+      "parent": null,
+      "summary": "Entry and handlers of the schedule package.",
+      "page": "components/schedule-api.md"
+    },
+    {
+      "id": "main",
+      "name": "Main",
+      "part": "backend",
+      "layer": "boot",
+      "module": null,
+      "parent": null,
+      "summary": "Starts the process and wires the packages.",
+      "page": "components/main.md"
+    },
+    {
+      "id": "commons",
+      "name": "Commons",
+      "part": "backend",
+      "layer": "commons",
+      "module": null,
+      "parent": null,
+      "summary": "Logging shared by every package.",
+      "page": "components/commons.md"
+    },
+    {
+      "id": "web",
+      "name": "Web",
+      "part": "frontend",
+      "layer": "ui",
+      "module": null,
+      "parent": null,
+      "summary": "The browser app.",
+      "page": "components/web.md"
+    }
+  ],
+  "connections": []
+}

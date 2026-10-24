@@ -156,13 +156,18 @@ chk() {
   chk "docs/architecture/model.json: generated content is stale; run agentic-arch build"
 }
 
+@test "a stale rules file is reported" {
+  echo "// an edit by hand" >> "$D/rules.depcruise.cjs"
+  chk "docs/architecture/rules.depcruise.cjs: generated content is stale; run agentic-arch build"
+}
+
 @test "a missing generated file is stale" {
   rm "$D/index.md"
   chk "docs/architecture/index.md: generated content is stale"
 }
 
 @test "generated files with CRLF line endings are not stale" {
-  sed -i 's/$/\r/' "$D/index.md" "$D/model.json"
+  sed -i 's/$/\r/' "$D/index.md" "$D/model.json" "$D/rules.depcruise.cjs"
   run "$ARCH" -C "$A" check
   [ "$status" -eq 0 ]
   [ "$output" = "architect: ok" ]
