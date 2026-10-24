@@ -13,3 +13,13 @@ load helpers
   [ -f "$REPO_ROOT/image/bin/agentic-wiki" ]
   [ -f "$REPO_ROOT/image/lib/wiki.sh" ]
 }
+
+@test "the README tells how to add the parked wiki, marketplace first when missing" {
+  sed -n '/^## Project wiki (parked)/,/^## /p' "$REPO_ROOT/README.md" | tr '\n' ' ' > "$BATS_TEST_TMPDIR/w"
+  grep -qF 'agentic add marketplace /opt/agentic/marketplace' "$BATS_TEST_TMPDIR/w"
+  grep -qF 'agentic add plugin wiki@agentic' "$BATS_TEST_TMPDIR/w"
+}
+
+@test "the README intro names the architect skill next to /agentic-setup" {
+  awk 'NR > 2 && /^$/ { exit } NR > 2' "$REPO_ROOT/README.md" | tr '\n' ' ' | grep -qE '/agentic-setup`.*`/architect`|`/architect`.*/agentic-setup`'
+}
