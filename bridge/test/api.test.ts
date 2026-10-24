@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { handle, checkAccess, eventView, type ApiTarget, type ApiRequest } from "../src/api.js";
+import { handle, serve, checkAccess, eventView, type ApiTarget, type ApiRequest } from "../src/api.js";
+import type { AppOutcome, AppView } from "../src/apps.js";
 import type { TaskEvent } from "../src/types.js";
 import type { Input, Outcome } from "../src/task.js";
 
 const tokens = { task: "task-token-0123456789", agent: "agent-token-0123456789" };
 const access = { hosts: ["bridge.internal"], origins: [] as string[] };
-function target(outcome: Outcome = { ok: true, effects: [] }) {
+const web: AppView = { name: "web", state: "running", ports: [3000], url: "/", since: 1, exit_code: null };
+function target(outcome: Outcome = { ok: true, effects: [] }, app: AppOutcome<AppView> = { ok: true, value: web }) {
   const seen: Input[] = [];
+  const appCalls: unknown[][] = [];
   const t: ApiTarget = {
     ready: () => true,
     status: () => ({ state: "idle" }),
@@ -14,8 +17,11 @@ function target(outcome: Outcome = { ok: true, effects: [] }) {
     sessions: () => [{ name: "plan" }, { name: "main" }] as never,
     events: (since, limit, keep = () => true) => (Array.from({ length: 5 }, (_, k) => ({ seq: k + 1, type: k % 2 ? "tool" : "state", name: k % 2 ? "plan" : "main", data: {} })) as never as TaskEvent[])
       .filter((e) => e.seq > since && keep(e)).slice(0, limit),
+    apps: async () => { appCalls.push(["list"]); return { ok: true, value: [web] }; },
+    appAction: async (name, verb) => { appCalls.push([verb, name]); return app; },
+    appLogs: async (name, lines) => { appCalls.push(["logs", name, lines]); return app.ok ? { ok: true, value: ["a", "b"] } : app; },
   };
-  return { t, seen };
+  return { t, seen, appCalls };
 }
 const req = (method: string, path: string, body?: unknown, h: Record<string, string> = {}, query = ""): ApiRequest => ({
   method, path, query: new URLSearchParams(query), body: body === undefined ? "" : typeof body === "string" ? body : JSON.stringify(body),
@@ -193,6 +199,69 @@ describe("handle", () => {
       expect(both).toEqual({ status: 200, ndjson: [] });
       const main = handle(req("GET", "/events", undefined, {}, "session=main&view=status"), target().t, tokens, access);
       expect((main.ndjson as { seq: number }[]).map((e) => e.seq)).toEqual([1, 3, 5]);
+    });
+  });
+
+  describe("apps", () => {
+    const agent = { authorization: `Bearer ${tokens.agent}` };
+    it("GET /apps lists them; a failure of the target passes through", async () => {
+      expect(await serve(req("GET", "/apps"), target().t, tokens, access)).toEqual({ status: 200, json: [web] });
+      const t = { ...target().t, apps: async () => ({ ok: false as const, status: 502 as const, code: "app_failed", message: "bad JSON" }) };
+      expect(await serve(req("GET", "/apps"), t, tokens, access)).toEqual({ status: 502, json: { error: { code: "app_failed", message: "bad JSON" } } });
+    });
+    it("start, stop and restart answer 202 with the app", async () => {
+      const { t, appCalls } = target();
+      for (const verb of ["start", "stop", "restart"]) {
+        expect(await serve(req("POST", `/apps/web/${verb}`), t, tokens, access)).toEqual({ status: 202, json: web });
+      }
+      expect(appCalls).toEqual([["start", "web"], ["stop", "web"], ["restart", "web"]]);
+    });
+    it("a name outside the app name rule is 404 and never reaches the target; refusals pass through", async () => {
+      const { t, appCalls } = target();
+      for (const name of ["Web", "a%3Bb", "a;b", "-x", "a b", "x".repeat(32), "%23"]) {
+        expect(await serve(req("POST", `/apps/${name}/start`), t, tokens, access)).toMatchObject({ status: 404 });
+      }
+      expect(await serve(req("POST", "/apps/web/kill"), t, tokens, access)).toMatchObject({ status: 404 });
+      expect(await serve(req("GET", "/apps/web/start"), t, tokens, access)).toMatchObject({ status: 404 });
+      expect(appCalls).toEqual([]);
+      const stopped = target(undefined, { ok: false, status: 409, code: "conflict", message: "the task is stopped" }).t;
+      expect(await serve(req("POST", "/apps/web/start"), stopped, tokens, access)).toEqual({ status: 409, json: { error: { code: "conflict", message: "the task is stopped" } } });
+    });
+    it("GET /apps/:name/logs: 200 lines by default, at most 2000, a bad count is 400", async () => {
+      const { t, appCalls } = target();
+      expect(await serve(req("GET", "/apps/web/logs"), t, tokens, access)).toEqual({ status: 200, json: { lines: ["a", "b"] } });
+      await serve(req("GET", "/apps/web/logs", undefined, {}, "lines=5000"), t, tokens, access);
+      await serve(req("GET", "/apps/web/logs", undefined, {}, "lines=7"), t, tokens, access);
+      for (const q of ["lines=0", "lines=-1", "lines=x", "lines=1.5", "lines="]) {
+        expect(await serve(req("GET", "/apps/web/logs", undefined, {}, q), t, tokens, access)).toMatchObject({ status: 400 });
+      }
+      expect(appCalls).toEqual([["logs", "web", 200], ["logs", "web", 2000], ["logs", "web", 7]]);
+    });
+    it("POST /app with the agent token records the event; a bad body is 400", async () => {
+      const { t, seen } = target();
+      expect(await serve(req("POST", "/app", { name: "web", action: "exited", exit_code: 3 }, agent), t, tokens, access)).toEqual({ status: 204 });
+      expect(handle(req("POST", "/app", { name: "web", action: "started" }, agent), t, tokens, access)).toEqual({ status: 204 });
+      expect(seen).toEqual([{ kind: "app", name: "web", action: "exited", exitCode: 3 }, { kind: "app", name: "web", action: "started", exitCode: null }]);
+      for (const b of [{}, { name: "Web", action: "started" }, { name: "a;b", action: "started" }, { name: "web", action: "prepare" },
+        { name: "web", action: "started", exit_code: "1" }, { name: "web", action: "started", exit_code: 1.5 }]) {
+        expect(handle(req("POST", "/app", b, agent), t, tokens, access)).toMatchObject({ status: 400 });
+      }
+      expect(seen).toHaveLength(2);
+      const refused = target({ ok: false, code: "bad_request", message: "unknown app api" }).t;
+      expect(handle(req("POST", "/app", { name: "api", action: "started" }, agent), refused, tokens, access)).toEqual({ status: 400, json: { error: { code: "bad_request", message: "unknown app api" } } });
+    });
+    it("the agent token cannot reach the control routes", async () => {
+      const { t, appCalls } = target();
+      for (const [m, p] of [["GET", "/apps"], ["POST", "/apps/web/start"], ["POST", "/apps/web/stop"], ["POST", "/apps/web/restart"], ["GET", "/apps/web/logs"]] as const) {
+        expect(await serve(req(m, p, undefined, agent), t, tokens, access)).toMatchObject({ status: 403 });
+      }
+      expect(appCalls).toEqual([]);
+    });
+    it("serve answers the other routes as handle does, and 503 until ready", async () => {
+      const { t } = target();
+      expect(await serve(req("GET", "/status"), t, tokens, access)).toEqual({ status: 200, json: { state: "idle" } });
+      expect(await serve(req("GET", "/apps"), { ...t, ready: () => false }, tokens, access)).toMatchObject({ status: 503 });
+      expect(await serve(req("GET", "/apps"), t, { task: "x".repeat(20), agent: "y".repeat(20) }, access)).toMatchObject({ status: 401 });
     });
   });
 });

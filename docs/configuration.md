@@ -35,4 +35,5 @@ Generated from `schema/agentic.schema.json` and `config/defaults.yaml` by
 | `harness.default` | "claude" / "copilot" | `"claude"` | Agent of agentic run without --agent, and of agentic setup. |
 | `docker` | object | `{"socket":false}` | Docker access. |
 | `docker.socket` | boolean | `false` | Mount the host Docker socket. It is host root; off by default. Changing it needs agentic build. |
+| `apps` | object |  | Applications the task container can run, each in tmux window app-<name>, controlled through the bridge (agentic-app, the UI). Keys per app: run, ports, url, dir, env, env_files, prepare, teardown, autostart, idle_stop. Changing them needs agentic build. At most 32 apps. |
 | `setup` | array | `[]` | The container's setup as agentic commands without the agentic prefix (docs/setup.md): add marketplace|plugin|mcp|skill|agent|command|workspace, copy, mount, volume. Replayed in order by agentic build and the start. |

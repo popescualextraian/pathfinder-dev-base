@@ -34,7 +34,7 @@ config_resolve() {
 # config_image_errs FILE: what only this image can decide, checked as the build checks it: every
 # tool has a preset here, and build-time paths stay inside .agentic/ (the build context).
 config_image_errs() {
-  local f="$1" k p top=" version project base_image targets tools hooks harness docker setup "
+  local f="$1" k p top=" version project base_image targets tools hooks harness docker apps setup "
   while IFS= read -r k; do
     [ -f "$AGENTIC_DIR/tools/$k.sh" ] && continue
     if [[ "$top" == *" $k "* ]]; then echo ".tools.$k: no preset $k in this image; $k is a top-level key, not a tool"
@@ -62,7 +62,7 @@ config_validate() {
   errs="$(jq -r -L "$AGENTIC_DIR/lib" --slurpfile s "$AGENTIC_DIR/schema/agentic.schema.json" '
     include "schema-check"; include "config-rules";
     errs($s[0]; "") as $e
-    | (if ($e | length) > 0 then $e else semantic_errs end) + secret_errs | .[]' "$1")" || return 1
+    | (if ($e | length) > 0 then $e else semantic_errs end) + apps_errs + secret_errs | .[]' "$1")" || return 1
   if [ -z "$errs" ]; then errs="$(config_image_errs "$1")"; fi
   if [ -z "$errs" ]; then errs="$(setup_errs "$1")"; fi
   if [ -n "$errs" ]; then printf '%s\n' "$errs"; return 1; fi

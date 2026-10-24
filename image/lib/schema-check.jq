@@ -16,6 +16,10 @@ def errs($s; $p):
            then ["\($p): must not be empty"] else [] end)
       + (if ($s | has("minimum")) and ($v | type) == "number" and $v < $s.minimum
            then ["\($p): must be at least \($s.minimum)"] else [] end)
+      + (if ($s | has("maxItems")) and ($v | type) == "array" and ($v | length) > $s.maxItems
+           then ["\($p): at most \($s.maxItems) items"] else [] end)
+      + (if ($s | has("maxProperties")) and ($v | type) == "object" and ($v | length) > $s.maxProperties
+           then ["\($p): at most \($s.maxProperties) entries"] else [] end)
       + (if ($v | type) == "object" then
            [ ($s.required // [])[] as $r | select(($v | has($r)) | not) | "\($p).\($r): is required" ]
            + [ $v | to_entries[] | .key as $k | .value as $x

@@ -146,6 +146,16 @@ flowchart LR
 Full guide: [`docs/detached-mode.md`](docs/detached-mode.md). States, API, events, files and
 environment: [`docs/tasks.md`](docs/tasks.md).
 
+### Apps in a task
+
+A project can declare its apps in `agentic.yaml` (`apps:`, see [`docs/configuration.md`](docs/configuration.md)):
+a command, the ports it listens on, and optionally `prepare`, `teardown`, `env_files`, `autostart` and
+`idle_stop`. In a task container, `agentic-app start|stop|restart|logs|list` runs each app in its own tmux window
+in the task's checkout, so it shows the task's changes; the bridge offers the same through `GET /apps` and
+`POST /apps/NAME/start|stop|restart` ([`docs/tasks.md`](docs/tasks.md#apps)). The image label `agentic.apps`
+lists the ports (never commands or env), so a launcher can publish them. Commands run only inside the
+container.
+
 ## Sessions
 
 A task can hold several named conversations with its agent: one container, one checkout or

@@ -111,3 +111,30 @@ normalise() { sed -E 's/agentic\.config\.hash="[0-9a-f]+"/agentic.config.hash="H
   run bash "$R" "$C"
   if grep -q agentic-apply <<<"$output"; then return 1; fi
 }
+
+apps_label() { sed -nE 's/.*agentic\.apps="([^"]*)".*/\1/p' <<<"$1"; }
+
+@test "no apps gives an empty apps label" {
+  run bash "$R" "$C"
+  [ "$(apps_label "$output")" = "e30=" ]
+}
+
+@test "the apps label holds only ports, url and autostart" {
+  cp -r "$C" "$BATS_TEST_TMPDIR/ac"
+  cat >> "$BATS_TEST_TMPDIR/ac/agentic.yaml" <<'YAML'
+apps:
+  web:
+    run: npm start
+    ports: [3000]
+    env: {NODE_ENV: development}
+    prepare: npm ci
+    autostart: true
+  api:
+    run: ./serve
+    url: /health
+YAML
+  run bash "$R" "$BATS_TEST_TMPDIR/ac"
+  [ "$status" -eq 0 ]
+  run bash -c "base64 -d <<<'$(apps_label "$output")'"
+  [ "$(jq -cS . <<<"$output")" = '{"api":{"autostart":false,"ports":[],"url":"/health"},"web":{"autostart":true,"ports":[3000],"url":"/"}}' ]
+}

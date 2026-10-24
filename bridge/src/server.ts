@@ -2,7 +2,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
-import { checkAccess, eventView, handle, MAX_BODY, type AccessOptions, type ApiResponse, type ApiTarget, type Tokens } from "./api.js";
+import { checkAccess, eventView, MAX_BODY, serve, type AccessOptions, type ApiResponse, type ApiTarget, type Tokens } from "./api.js";
 import type { TaskEvent } from "./types.js";
 
 export interface ServerOptions {
@@ -66,14 +66,11 @@ export function startServer(o: ServerOptions): Promise<{ port: number; close(): 
     });
     req.on("end", () => {
       if (aborted) return;
-      let r: ApiResponse;
-      try {
-        r = handle({ method: req.method ?? "GET", path: url.pathname, query: url.searchParams, headers: headersOf(req),
-          body: Buffer.concat(chunks).toString("utf8") }, o.target, o.tokens, o.access);
-      } catch {
-        r = fail(500, "internal", "internal error");
-      }
-      reply(res, r);
+      // an app route answers when agentic-app is done (a start may run the app's prepare)
+      void (async () => serve({ method: req.method ?? "GET", path: url.pathname, query: url.searchParams, headers: headersOf(req),
+        body: Buffer.concat(chunks).toString("utf8") }, o.target, o.tokens, o.access))()
+        .catch((): ApiResponse => fail(500, "internal", "internal error"))
+        .then((r) => { if (!res.headersSent && !res.destroyed) reply(res, r); });
     });
   });
 
