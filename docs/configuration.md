@@ -28,6 +28,7 @@ Generated from `schema/agentic.schema.json` and `config/defaults.yaml` by
 | `tools.psql` | false or string |  | PostgreSQL client major (e.g. 16). |
 | `tools.apt` | array | `[]` | Plain apt packages, optionally pinned (name=version). |
 | `tools.extra_dockerfile` | string | `".agentic/Dockerfile.extra"` | Dockerfile lines appended to the derived image, run as root, inside .agentic/. |
+| `stack` | array |  | Compose files inside .agentic/ (e.g. .agentic/compose.stack.yaml), merged in order: the services each task gets its own copy of. Checked by the stack rules and baked into the image as the label agentic.stack, without values from .env. Changing them needs agentic build. |
 | `hooks` | object | `{"on_start":".agentic/hooks/on-start.sh","on_start_required":false}` | Project hooks. |
 | `hooks.on_start` | string | `".agentic/hooks/on-start.sh"` | Script run as dev at every container start, with the full environment. |
 | `hooks.on_start_required` | boolean | `false` | When true, a failing on_start stops the container. |

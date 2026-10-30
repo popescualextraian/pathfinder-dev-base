@@ -27,7 +27,7 @@ Success criteria:
 | # | Decision | Why |
 |---|---|---|
 | S-1 | **The stack is plain compose files, listed in `stack:` in `agentic.yaml`.** No services syntax of our own. | Any project's needs fit; teams already have compose files; nothing to learn. |
-| S-2 | **The stack is baked into the image at build** as the label `agentic.stack`: `docker compose config --no-interpolate --format json` over the listed files. | Agents can edit the checkout, so the stack must not be read from it at run time; a change takes effect only after the user's `agentic build`. A launcher reads it from the image, like `agentic.apps`. No value from `.env` reaches the label. |
+| S-2 | **The stack is baked into the image at build** as the label `agentic.stack`: the listed files as written, `[{file, content}]` in base64, after the build checked the rules on compose's merged model (`docker compose config --format json --env-file /dev/null`). | Compose's uninterpolated export misparses short volume syntax, so the files themselves travel and compose resolves them at run. | Also: agents can edit the checkout, so the stack must not be read from it at run time; a change takes effect only after the user's `agentic build`. A launcher reads it from the image, like `agentic.apps`. No value from `.env` reaches the label. |
 | S-3 | **One stack per container**, compose project `<project>-<creator task id>` (lowercased). `--in` tasks share the stack of the container they run in. | The stack follows the container's life, which `run`, `stop` and `clean` already manage. |
 | S-4 | **The agent container is not in the stack.** It is created as today and then connected to the stack's network `<stack project>_default`. | Agentic keeps owning the agent container (mounts, labels, tokens, caps, bridge port); the stack stays any compose file. |
 | S-5 | **Rules, not an image list** (section 5): what a service may do is checked, not which image it runs. Checked at build and again at run, after interpolation. | Generic for every project, and it closes the way to the host that a compose file opens. |
@@ -39,11 +39,11 @@ Success criteria:
 ```yaml
 # agentic.yaml
 stack:
-  - backend/compose.yaml          # relative to the project root; inside it
-  - .agentic/compose.stack.yaml
+  - .agentic/compose.stack.yaml   # inside .agentic/, the build context (like tools.extra_dockerfile)
+  - .agentic/compose.mocks.yaml
 ```
 
-The files are merged in order, as `docker compose -f a -f b` merges them. A path outside the project root, a
+The files are merged in order, as `docker compose -f a -f b` merges them. A path outside `.agentic/`, a
 missing file or a stack that breaks the rules fails the build, naming the file.
 
 ## 4. Lifecycle
@@ -52,7 +52,7 @@ missing file or a stack that breaks the rules fails the build, naming the file.
 
 | Moment | What the host does |
 |---|---|
-| `run` (new container) | write `F` from the label; check the rules after interpolation; `docker compose -p S -f F --env-file .agentic/.env up -d --wait`; create the agent container as today; `docker network connect S_default <container>`. A failure rolls back the stack too. |
+| `run` (new container) | write the label's files under `F`'s directory and `F` as their merged, interpolated model (`config --format json --env-file .agentic/.env`); check the rules after interpolation; `docker compose -p S -f F --env-file .agentic/.env up -d --wait`; create the agent container as today; `docker network connect S_default <container>`. A failure rolls back the stack too. |
 | `run --in ID` | `up -d --wait` on the creator's stack if it is not running. |
 | `stop` | after the container stops: `docker compose -p S stop`. |
 | `resume`, any verb that starts the container | `up -d --wait` before the container starts. |
@@ -75,15 +75,17 @@ A service is refused when it has any of:
   fixed host ports would clash between tasks and other addresses expose the service beyond the machine;
 - `container_name` (names would clash between tasks);
 - `build` (images only in version 1), `env_file`, `configs` or `secrets` with `file:`;
-- a network or volume declared `external`.
+- a network or volume declared `external`, a volume with `driver_opts` or a driver other than `local`, a
+  network with a driver other than `bridge`; `volumes_from`; `cgroup_parent`;
+- a top-level `config` or `secret` read from a `file`.
 
 The same list is the policy a launcher enforces (section 8).
 
 ## 6. Changes in this repository
 
 - `schema/agentic.schema.json`: `stack` (array of strings); `docs/configuration.md` regenerated.
-- `derive/render-dockerfile.sh`: resolve the files with `docker compose config --no-interpolate`, check the
-  rules, write the label.
+- `derive/render-dockerfile.sh`: merge the files with `docker compose config --format json --env-file /dev/null`,
+  check the rules (`image/lib/stack-rules.jq`), write the files as the label. **Done** (with the schema).
 - `lib/host/stack.sh` (new): `stack_up`, `stack_stop`, `stack_down`, `stack_rules`; `bin/agentic`: the
   calls in section 4.
 - `agentic doctor`: `docker compose version` when the image has a stack; lists running stacks.

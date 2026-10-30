@@ -13,7 +13,7 @@ IMG=/opt/agentic   # paths as they are inside the image, whatever AGENTIC_DIR is
 cdir="${1:-${AGENTIC_CONFIG_MOUNT:-/agentic-config}}"
 [ -f "$cdir/agentic.yaml" ] || { say "no agentic.yaml in $cdir"; exit 1; }
 RESOLVED="$(mktemp)"
-trap 'rm -f "$RESOLVED"' EXIT
+trap 'rm -f "$RESOLVED" "$RESOLVED.err"' EXIT
 config_resolve "$cdir" > "$RESOLVED"
 if ! errs="$(config_validate "$RESOLVED")"; then printf '%s\n' "$errs" >&2; exit 1; fi
 
@@ -77,6 +77,24 @@ while IFS= read -r l; do
   esac
 done < <(jq -r '.setup // [] | .[]' "$RESOLVED")
 if inside .tools.extra_dockerfile && [ -f "$cdir/$REL" ]; then extra="$REL"; fi
+
+# stack: compose files inside .agentic/, checked by the stack rules on compose's merged model and
+# carried as written ([{file, content}]) in the label agentic.stack. .env is not read here.
+stack_json='[]' stack_args=() stack_ok=1
+while IFS= read -r f; do
+  case "/$f/" in */../*) problems+=("stack: $f must be inside .agentic/"); stack_ok=0; continue ;; esac
+  case "$f" in .agentic/*) ;; *) problems+=("stack: $f must be inside .agentic/"); stack_ok=0; continue ;; esac
+  if [ ! -f "$cdir/${f#.agentic/}" ]; then problems+=("stack: $f does not exist"); stack_ok=0; continue; fi
+  stack_args+=(-f "$cdir/${f#.agentic/}")
+  stack_json="$(jq -c --arg f "$f" --rawfile c "$cdir/${f#.agentic/}" '. + [{file: $f, content: $c}]' <<<"$stack_json")"
+done < <(jq -r '.stack // [] | .[]' "$RESOLVED")
+if [ "${#stack_args[@]}" -gt 0 ] && [ "$stack_ok" = 1 ]; then
+  if model="$(docker compose -p agentic-stack --project-directory "$cdir" --env-file /dev/null "${stack_args[@]}" config --format json 2>"$RESOLVED.err")"; then
+    while IFS= read -r m; do problems+=("stack: $m"); done < <(jq -r -f "$AGENTIC_DIR/lib/stack-rules.jq" <<<"$model")
+  else
+    problems+=("stack: $(grep -v 'level=warning' "$RESOLVED.err" | tail -n 1)")
+  fi
+fi
 if [ "${#problems[@]}" -gt 0 ]; then printf '%s\n' "${problems[@]}" >&2; exit 1; fi
 
 hash="$(sha256sum < "$RESOLVED" | cut -c1-16)"
@@ -120,4 +138,5 @@ echo "USER dev"
 # the label carries only what the UI needs (ports, url, autostart); commands and env stay in the resolved config
 apps_b64="$(jq -c '(.apps // {}) | map_values({ports: (.ports // []), url: (.url // "/"), autostart: (.autostart // false)})' "$RESOLVED" | tr -d '\n' | base64 -w0)"
 echo "LABEL agentic.project=\"$(cfg .project)\" agentic.config.hash=\"$hash\" agentic.docker_socket=\"$socket\" agentic.harness=\"$(cfg .harness.default)\" agentic.run=\"$(printf '%s' "$run_tsv" | base64 -w0)\" agentic.apps=\"$apps_b64\""
+if [ "$stack_json" != '[]' ]; then echo "LABEL agentic.stack=\"$(printf '%s' "$stack_json" | base64 -w0)\""; fi
 echo "WORKDIR /work"

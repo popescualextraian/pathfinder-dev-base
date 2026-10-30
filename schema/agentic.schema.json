@@ -35,6 +35,7 @@
         "extra_dockerfile": {"description": "Dockerfile lines appended to the derived image, run as root, inside .agentic/.", "type": "string"}
       }
     },
+    "stack": {"description": "Compose files inside .agentic/ (e.g. .agentic/compose.stack.yaml), merged in order: the services each task gets its own copy of. Checked by the stack rules and baked into the image as the label agentic.stack, without values from .env. Changing them needs agentic build.", "type": "array", "items": {"type": "string", "minLength": 1}},
     "hooks": {
       "description": "Project hooks.", "type": "object", "additionalProperties": false,
       "properties": {

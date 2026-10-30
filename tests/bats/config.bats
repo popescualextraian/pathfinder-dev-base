@@ -298,3 +298,13 @@ APPS_OK=$'version: 2\nproject: demo\napps:\n  web:\n    run: npm start\n    port
   [[ "$output" == *".apps.web.url: does not match"* ]]
   [[ "$output" == *".apps.web.idle_stop: does not match"* ]]
 }
+
+@test "stack is a list of compose file paths" {
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\nstack: [.agentic/compose.stack.yaml]'
+  run "$AC" validate "$P"
+  [ "$status" -eq 0 ]
+  write "$P/agentic.yaml" $'version: 2\nproject: demo\nstack: .agentic/compose.stack.yaml'
+  run "$AC" validate "$P"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *".stack: expected array"* ]]
+}
