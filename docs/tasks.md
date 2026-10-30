@@ -169,6 +169,11 @@ The bridge listens on `0.0.0.0:8765` inside the container (`AGENTIC_BRIDGE_PORT`
 publishes it as `127.0.0.1::8765` (a random host port, loopback only) and reads the port with
 `docker port` on every call, because `docker start` may change it.
 
+The task container joins the project network `agentic-<project>` with the dev container and the
+project's services (setup.md, "Services"). Other containers there can reach the bridge by name,
+but a request needs the task token, and a `Host` that is a container name gets 403 unless it is
+listed in `AGENTIC_BRIDGE_HOSTS`.
+
 Every request, WebSocket upgrade included, needs `Authorization: Bearer <token>`:
 
 - **task token** (`AGENTIC_TASK_TOKEN`): every route.

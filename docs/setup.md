@@ -155,6 +155,63 @@ accept that.
 | Anything installed by hand, files outside the mounts | no | — |
 | Build caches | only with a `volume` line | named volume |
 
+## Services: a database next to the container
+
+Every container of the project (the dev container, `agentic shell`, `agentic run` tasks and
+`takeover`) joins the Docker network `agentic-<project>`, created when missing. A service that
+joins the same network is reachable by its name, with no Docker socket and no published port.
+Keep the services in a compose file and start them on the host; the container only connects.
+
+The application's repository keeps its plain `compose.yaml`, so it works without agentic:
+
+```yaml
+# compose.yaml in the application's repository
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+    ports: ["5432:5432"]
+    volumes: [db-data:/var/lib/postgresql/data]
+volumes:
+  db-data:
+```
+
+`.agentic/compose.yaml` adds only the network:
+
+```yaml
+# .agentic/compose.yaml: joins the services to the agentic network
+services:
+  db:
+    networks: [default, agentic]
+networks:
+  agentic:
+    name: agentic-<project>
+    external: true
+```
+
+```bash
+# on the host, after any agentic command has created the network
+docker compose -f compose.yaml -f .agentic/compose.yaml up -d db
+```
+
+The application in the container then uses `db:5432`; give it the address in `.agentic/.env`
+the way it reads it natively (for Spring Boot `SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/app`).
+
+- **Shared by every task.** Tasks running in parallel use the same database. For isolation, give
+  each its own database or schema (the task id is in `AGENTIC_TASK_ID`), or use Testcontainers,
+  which needs `docker.socket: true`.
+- **Older containers.** `agentic dev` connects a dev container created before the network; a
+  task container created before it stays off it (also for `--in` and `resume`) until it is
+  cleaned and a new task creates its container.
+- **Remotely** (ECS, Container Apps) agentic creates no network: the launcher runs the services
+  beside the container, and `.env` carries their address.
+- **Another launcher** (a UI or scheduler that starts task containers itself) puts them on its own
+  network. List that network in `.agentic/compose.yaml` too, and give the service a project-unique
+  alias there (`aliases: [<project>-db]`), since other projects' tasks share that network.
+
 ## Git: push credentials and identity
 
 No SSH keys reach the container; git pushes over https with a token from `.env`. One command sets

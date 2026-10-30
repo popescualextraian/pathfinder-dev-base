@@ -28,3 +28,11 @@ load helpers
   if grep -q 'agentic-env add GIT_CONFIG' "$s"; then return 1; fi
   grep -q 'identity from the host' "$s"
 }
+
+@test "the setup skill joins services through the project network, not the image or the socket" {
+  s="$REPO_ROOT/skills/agentic-setup/SKILL.md"
+  grep -q 'agentic-<project>' "$s"
+  grep -q '.agentic/compose.yaml' "$s"
+  grep -q 'external: true' "$s"
+  grep -q 'parallel tasks share the database' "$s"
+}

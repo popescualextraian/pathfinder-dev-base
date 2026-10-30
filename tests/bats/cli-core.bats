@@ -118,6 +118,22 @@ in_project() { (cd "$PROJ/${2:-}" && bash -c "source '$A'; $1"); }
   grep -qx "GIT_AUTHOR_EMAIL=dev@example.com" <<<"$output"
 }
 
+@test "every container of the project joins the project network, which is created when missing" {
+  DOCKER_NO_NETWORK=1 run in_project 'build_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
+  [ "$status" -eq 0 ]
+  grep -qx -- "--network" <<<"$output"
+  grep -qx "agentic-demo" <<<"$output"
+  [ "$(docker_sub network 2 | tr '\n' ' ')" = "network create --label agentic.project=demo agentic-demo " ]
+}
+
+@test "an existing project network is used as it is" {
+  run in_project 'build_run_args img; printf "%s\n" "${RUN_ARGS[@]}"'
+  [ "$status" -eq 0 ]
+  grep -qx "agentic-demo" <<<"$output"
+  run grep -qx "create" "$DOCKER_LOG"
+  [ "$status" -ne 0 ]
+}
+
 @test "the Docker socket is mounted only when the image label says so" {
   SOCK="$BATS_TEST_TMPDIR/docker.sock"
   python3 -c 'import socket,sys;s=socket.socket(socket.AF_UNIX);s.bind(sys.argv[1])' "$SOCK"

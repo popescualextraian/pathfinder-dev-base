@@ -128,12 +128,25 @@ build_run_args() {
   RUN_ARGS+=(-v "$data/harness/claude:/home/dev/.claude" -v "$data/harness/copilot:/home/dev/.copilot")
 }
 
+# project_network: the Docker network every container of the project joins, so it reaches the
+# project's own services (a compose file's db) by name. Created when missing; a lost race is fine.
+project_network() { printf 'agentic-%s\n' "$(project_name)"; }
+ensure_network() {
+  local net; net="$(project_network)"
+  docker network inspect "$net" >/dev/null 2>&1 \
+    || docker network create --label "agentic.project=$(project_name)" "$net" >/dev/null 2>&1 \
+    || docker network inspect "$net" >/dev/null 2>&1 || die "could not create the Docker network $net"
+}
+
 # shared_run_args IMAGE: appends what every container of the project gets to RUN_ARGS: the .env
-# file, git identity, proxy, the opt-in Docker socket and the setup lines' mounts and volumes.
+# file, git identity, proxy, the project network, the opt-in Docker socket and the setup lines'
+# mounts and volumes.
 shared_run_args() {
   local img="$1" root cfg v name email sock
   root="$(project_root)"; cfg="$root/.agentic"
   check_env_file "$cfg/.env"
+  ensure_network
+  RUN_ARGS+=(--network "$(project_network)")
   if [ -f "$cfg/.env" ]; then RUN_ARGS+=(--env-file "$cfg/.env"); fi
   # the host's git identity, for what .env leaves unset (-e would win over --env-file)
   name="$(pgit -C "$root" config user.name || true)"; email="$(pgit -C "$root" config user.email || true)"

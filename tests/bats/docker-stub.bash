@@ -2,7 +2,8 @@
 # Controls: DOCKER_LABEL (image inspect -f output), DOCKER_IMAGE_EXISTS (1/0),
 # DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output),
 # DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PORTS (docker port without a port), DOCKER_PS (docker ps ids, space-separated),
-# DOCKER_MOUNTS (inspect .Mounts output, printed as is),
+# DOCKER_MOUNTS (inspect .Mounts output, printed as is), DOCKER_NETWORKS (inspect .NetworkSettings output),
+# DOCKER_NO_NETWORK (network inspect fails, as for a network not yet created),
 # DOCKER_BRIDGE_RC (exit code of the `pgrep` that tells whether a bridge runs; default 0, running),
 # DOCKER_BRIDGE_RC_SEQ (exit codes of successive pgrep calls, space-separated; the last one repeats),
 # DOCKER_WT_ERR (makes a worktree.sh exec fail with this message), DOCKER_EXEC_RC (exit code of any other
@@ -20,6 +21,7 @@ case "$1" in
     if [ "$3" = -f ]; then echo "${DOCKER_LABEL:-}"; exit 0; else [ "${DOCKER_IMAGE_EXISTS:-1}" = 1 ]; exit $?; fi ;;
   inspect)
     if [[ "$*" == *.Mounts* ]]; then printf '%s' "${DOCKER_MOUNTS:-}"; exit 0; fi
+    if [[ "$*" == *.NetworkSettings* ]]; then printf '%s' "${DOCKER_NETWORKS:-}"; exit 0; fi
     if [[ "$*" == *State.Status* ]]; then
       # with a docker.known file, a task container not listed in it (made by `run --name` or by a test) is missing
       if [ -f "$BATS_TEST_TMPDIR/docker.known" ] && [[ "${@: -1}" == *-task-* ]] && ! grep -qxF -- "${@: -1}" "$BATS_TEST_TMPDIR/docker.known"; then
@@ -31,6 +33,7 @@ case "$1" in
       echo "$DOCKER_STATUS"; exit 0
     fi
     [ -n "${DOCKER_RUNNING:-}" ] && echo "$DOCKER_RUNNING" || exit 1 ;;
+  network) if [ "$2" = inspect ] && [ -n "${DOCKER_NO_NETWORK:-}" ]; then exit 1; fi ;;
   stop) [ -z "${DOCKER_STOP_FAIL:-}" ] || exit 1 ;;
   start) echo running > "$BATS_TEST_TMPDIR/docker.status"
     if [ -z "${DOCKER_NO_READY:-}" ] && [ -f "$BATS_TEST_TMPDIR/docker.ready" ]; then : > "$(cat "$BATS_TEST_TMPDIR/docker.ready")"; fi ;;

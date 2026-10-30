@@ -48,7 +48,7 @@ record() {
            AGENTIC_CREATED_CONTAINER=1; do grep -qx "$l" "$H/T-1/env"; done
   [ "$(cat "$H/T-1/container")" = "$(printf 'agentic-demo-task-T-1\n1\nT-1')" ]
   call="$(docker_run_with agentic-task-hold)"
-  for l in -d --init agentic-demo-task-T-1 agentic.kind=task agentic.task=T-1 agentic.project=demo 127.0.0.1::8765 ALL \
+  for l in -d --init agentic-demo-task-T-1 agentic.kind=task agentic.task=T-1 agentic.project=demo 127.0.0.1::8765 agentic-demo ALL \
            no-new-privileges "$PROJ:/work" "$T:/tasks" "$AGENTIC_WORKSPACES/demo/events:/events" AGENTIC_TASK_DIR=/tasks/T-1; do
     grep -qx -- "$l" <<<"$call"
   done

@@ -120,8 +120,22 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
 }
 
 @test "dev starts a stopped container" {
-  DOCKER_RUNNING=false run ag dev
+  DOCKER_RUNNING=false DOCKER_NETWORKS="bridge agentic-demo " run ag dev
   grep -qx -- '--- start' "$DOCKER_LOG"
+  run grep -qx "connect" "$DOCKER_LOG"
+  [ "$status" -ne 0 ]
+}
+
+@test "dev connects a running container created before the project network to it" {
+  DOCKER_RUNNING=true DOCKER_NETWORKS="bridge " run ag dev
+  [ "$status" -eq 0 ]
+  [ "$(docker_sub network 2 | tr '\n' ' ')" = "network connect agentic-demo agentic-demo-dev " ]
+}
+
+@test "dev connects a container created before the project network to it" {
+  DOCKER_RUNNING=false DOCKER_NETWORKS="bridge " run ag dev
+  [ "$status" -eq 0 ]
+  [ "$(docker_sub network 2 | tr '\n' ' ')" = "network connect agentic-demo agentic-demo-dev " ]
 }
 
 @test "dev stop and recreate" {

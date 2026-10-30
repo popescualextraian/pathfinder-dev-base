@@ -88,7 +88,7 @@ detect_tools() {
   if [ -n "$(_files "$root" Chart.yaml)" ]; then out+=("helm=$DEFAULT_HELM"); notes+=("Helm charts found; installs Helm $DEFAULT_HELM"); fi
   # Hints for the setup skill
   if [ -n "$(_files "$root" 'docker-compose*.yml')$(_files "$root" 'compose*.yaml')" ]; then
-    notes+=("a compose file exists; tests that start containers need docker.socket: true")
+    notes+=("a compose file exists; join its services to the network agentic-<project> with .agentic/compose.yaml (docs/setup.md, Services); Testcontainers needs docker.socket: true")
   fi
   [ "${#out[@]}" -eq 0 ] || printf '%s\n' "${out[@]}"
   [ "${#notes[@]}" -eq 0 ] || printf 'note=%s\n' "${notes[@]}"

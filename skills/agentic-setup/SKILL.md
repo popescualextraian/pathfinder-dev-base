@@ -105,6 +105,26 @@ Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_
   Read access is checked, push rights are not. The user can run the same thing from the host:
   `agentic login git`.
 
+## Services: a database, a broker
+
+Every container of the project joins the Docker network `agentic-<project>` (`project:` in
+`agentic.yaml`). A service on that network is reachable by its name, without `docker.socket`.
+When the project needs a database or another service (the user asks, or you find a compose file,
+a datasource URL, Flyway or Liquibase migrations, a Postgres or Testcontainers dependency):
+
+- Keep the service out of the image and out of `hooks/on-start.sh`; it runs beside the container.
+- The application's own `compose.yaml` stays as it is; it is the user's. If there is none, show
+  the user the service definition for their repository and let them add it.
+- Write `.agentic/compose.yaml` that only joins the services to the network:
+  `services: {db: {networks: [default, agentic]}}` and
+  `networks: {agentic: {name: agentic-<project>, external: true}}`.
+- Add the address with `agentic-env add` the way the application reads it natively (for Spring
+  Boot `SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/<name>`, plus user and password of the
+  local database you defined).
+- In the hand-over, give the host command: `docker compose -f <repo>/compose.yaml -f
+  .agentic/compose.yaml up -d`. Say that parallel tasks share the database, and that
+  Testcontainers still needs `docker.socket: true`. Full guide: "Services" in docs/setup.md.
+
 ## Procedure
 
 0. **Fix a broken config first**: if `~/.agentic/config-errors.txt` exists, `agentic.yaml` is
@@ -127,8 +147,10 @@ Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_
 3. **Find gaps you can see** and fix them, noting each reason for the hand-over. Typical ones:
    - a module targets a JDK that `tools.java.versions` lacks;
    - the Maven wrapper pins a different Maven than `tools.maven`;
-   - tests use a compose file or Testcontainers while `docker.socket` is false (explain that
-     the socket is host root before suggesting it);
+   - tests use Testcontainers while `docker.socket` is false (explain that the socket is host
+     root before suggesting it);
+   - the application needs a database or another service that is not on the project network
+     (see **Services** above);
    - Jira keys appear in commit messages or branch names but no Jira MCP server is set up;
    - Terraform has no exact version;
    - a git remote (`git -C /work remote -v`, or each `/work/<name>` in a workspace folder,
@@ -155,6 +177,7 @@ Git is configured through `.env` only, the way git itself reads it (`GIT_CONFIG_
    | a file in the image | `copy` line (never a secret) |
    | git, cloud, model settings | `.env` (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`, `GIT_CONFIG_*`, `GH_HOST`, `AWS_PROFILE`, `ANTHROPIC_MODEL`, `COPILOT_MODEL`) |
    | a cache that should survive a recreate | `volume` line |
+   | a database, broker or other service | compose on the host, joined by `.agentic/compose.yaml` |
 
 6. **Write and validate**: add setup lines with `agentic-setup-edit --dir /work/.agentic add`,
    edit the other files, then run `agentic-config validate /work/.agentic` and fix every error it

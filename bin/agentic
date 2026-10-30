@@ -378,6 +378,14 @@ dev_start() {
     "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" sleep infinity >/dev/null
 }
 
+# dev_connect NAME: a dev container created before the project network joins it.
+dev_connect() {
+  local net; net="$(project_network)"
+  if [[ " $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$1" 2>/dev/null) " == *" $net "* ]]; then return 0; fi
+  ensure_network
+  docker network connect "$net" "$1" >/dev/null || die "could not connect $1 to the network $net"
+}
+
 dev_status() {
   local name="$1" img="$2" running cur latest
   if ! running="$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)"; then
@@ -416,8 +424,8 @@ cmd_dev() {
       docker exec -it "$name" dev-shell ;;
     attach)
       case "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)" in
-        true) ;;
-        false) docker start "$name" >/dev/null ;;
+        true) dev_connect "$name" ;;
+        false) dev_connect "$name"; docker start "$name" >/dev/null ;;
         *) dev_start "$name" "$img" "$wsl" ;;
       esac
       docker exec -it "$name" dev-shell ;;

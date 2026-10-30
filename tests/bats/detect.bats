@@ -85,10 +85,12 @@ setup() {
   grep -qx 'helm=3.16.1' <<<"$output"
 }
 
-@test "a compose file suggests the Docker socket" {
+@test "a compose file suggests the project network for its services, the socket only for Testcontainers" {
   printf 'services: {}\n' > "$R/docker-compose.yml"
   run detect_tools "$R"
-  grep -q '^note=.*docker.socket' <<<"$output"
+  grep -q '^note=.*agentic-<project>' <<<"$output"
+  grep -q '^note=.*\.agentic/compose\.yaml' <<<"$output"
+  grep -q '^note=.*Testcontainers.*docker.socket' <<<"$output"
 }
 
 @test "node_modules and .git are never searched" {
