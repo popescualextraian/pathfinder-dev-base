@@ -67,6 +67,13 @@ base_image_of() { local b; b="$(yaml_top "$(cfg_dir)/agentic.yaml" base_image)";
 image_exists() { docker image inspect "$1" >/dev/null 2>&1; }
 image_label() { docker image inspect -f "{{ index .Config.Labels \"$2\" }}" "$1" 2>/dev/null || true; }
 
+# app_ports IMAGE: the ports of the image's apps (the agentic.apps label), one per line, each once.
+app_ports() {
+  local data; data="$(image_label "$1" agentic.apps)"
+  [ -n "$data" ] || return 0
+  base64 -d <<<"$data" | jq -r '[.[].ports[]] | unique | .[]'
+}
+
 dotenv_value() {
   if [ -f "$1" ]; then grep -E "^$2=" "$1" | tail -1 | cut -d= -f2- || true; fi
 }

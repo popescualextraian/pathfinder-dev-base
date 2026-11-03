@@ -743,6 +743,15 @@ lib() { (cd "$PROJ" && source "$REPO_ROOT/lib/host/common.sh" && source "$REPO_R
   grep -qx 'port 8080 -> 127.0.0.1:49214' <<<"$output"
 }
 
+@test "run publishes every app port on a random loopback port, once with --publish of the same port" {
+  export DOCKER_APPS="$(printf '%s' '{"web":{"ports":[3000],"url":"/","autostart":false},"api":{"ports":[8080],"url":"/","autostart":false}}' | base64 -w0)"
+  run ag run --id T-33 --publish 8080 --publish 4000 "serve"
+  [ "$status" -eq 0 ]
+  call="$(docker_run_with agentic-task-hold)"
+  for p in 127.0.0.1::3000 127.0.0.1::8080 127.0.0.1::4000; do grep -qx -- "$p" <<<"$call"; done
+  [ "$(grep -cx -- 127.0.0.1::8080 <<<"$call")" = 1 ]
+}
+
 @test "status --json shows no ports for a task without any, also when its container is gone" {
   record T-31 suspended
   DOCKER_PORTS='8765/tcp -> 127.0.0.1:49153' run ag status T-31 --json

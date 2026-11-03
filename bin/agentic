@@ -374,8 +374,13 @@ dev_start() {
   image_exists "$img" || die "$img is not built; run agentic build"
   build_run_args "$img"
   if [ "$wsl" = 1 ]; then host_args wsl; else host_args; fi
+  # one dev container per project, so each app port keeps its own number on the host
+  local ports p
+  ports="$(app_ports "$img" | tr '\n' ' ')"
+  for p in $ports; do RUN_ARGS+=(-p "127.0.0.1:$p:$p"); done
   docker run -d --name "$name" --restart unless-stopped --label agentic.kind=dev \
-    "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" sleep infinity >/dev/null
+    "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" sleep infinity >/dev/null \
+    || die "could not start $name${ports:+; is one of the app ports ${ports% } in use on this host?}"
 }
 
 # dev_connect NAME: a dev container created before the project network joins it.
@@ -562,7 +567,8 @@ cmd_run() {
       if [ -f "$data/$v" ] && [ ! -L "$data/$v" ]; then (umask 077; set -o noclobber; read_agent_file "$data/$v" > "$dir/home/$v"); fi
     done
     read -ra extra <<<"${AGENTIC_TASK_DOCKER_ARGS:-}"
-    for v in ${publish[@]+"${publish[@]}"}; do extra+=(-p "127.0.0.1::$v"); done
+    # the apps' ports and --publish, each once; several tasks run at once, so random host ports
+    for v in $(printf '%s\n' ${publish[@]+"${publish[@]}"} | cat - <(app_ports "$img") | sort -un); do extra+=(-p "127.0.0.1::$v"); done
     rm -f "$dir/.ready"
     docker run -d --init --name "$c" --cap-drop ALL --security-opt no-new-privileges --label agentic.kind=task --label "agentic.task=$id" \
       -p "127.0.0.1::$TASK_PORT" "${RUN_ARGS[@]}" -v "$ws/tasks:/tasks" -v "$ws/events:/events" -e "AGENTIC_TASK_DIR=/tasks/$id" \

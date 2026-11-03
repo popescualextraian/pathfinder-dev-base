@@ -43,7 +43,7 @@ creates anything and rolls back what it created on any failure.
   uses container paths (`/work/...`), so host git cannot open `.worktrees/<id>`, and a host
   `git worktree prune` would drop its metadata; work on it inside the container.
 - `--publish PORT`: publish container port `PORT` on a random host port on `127.0.0.1`, like the
-  bridge port. `run --json` and `status` show the mapping (`ports`). It is refused with `--in`:
+  bridge port. The ports of the project's apps are published this way without it. `run --json` and `status` show the mapping (`ports`). It is refused with `--in`:
   ports are fixed when the container is created. The app must listen on `0.0.0.0` in the
   container; no authentication is added.
 - `--auto-clean`: when the task ends normally, the bridge removes its worktree, stops, and ends
@@ -257,8 +257,9 @@ The agent token on any other route gets 403; an unknown route gets 404. Grants: 
 A project declares its apps under `apps:` in `agentic.yaml` (docs/configuration.md; the schema checks
 them). Each runs inside the task container, in the task's checkout, in its own tmux window `app-<name>`
 on a tmux server of its own, so it shows the task's changes and outlives the agent's shell. The image
-carries only `{ports, url, autostart}` per app, as the label `agentic.apps`, so a launcher can publish the
-ports; commands and env never reach a label. Commands run only inside the container, by `agentic-app`.
+carries only `{ports, url, autostart}` per app, as the label `agentic.apps`, from which `agentic run`
+publishes the ports on random loopback ports and `agentic dev` on the same ports; commands and env
+never reach a label. Commands run only inside the container, by `agentic-app`.
 
 `agentic-app list [--json] | start|stop|restart NAME | logs NAME [--lines N]` works in the container.
 `agentic-app` reads the apps from the config resolved at container start (`~/.agentic/config.json`),

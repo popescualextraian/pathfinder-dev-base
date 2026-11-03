@@ -1,5 +1,5 @@
 # A docker stand-in. Every call is logged to $DOCKER_LOG ("--- <subcommand>" then one argument per line).
-# Controls: DOCKER_LABEL (image inspect -f output), DOCKER_IMAGE_EXISTS (1/0),
+# Controls: DOCKER_LABEL (image inspect -f output), DOCKER_APPS (the agentic.apps label instead), DOCKER_IMAGE_EXISTS (1/0),
 # DOCKER_RUN_OUT and DOCKER_RUN_RC (docker run), DOCKER_RUNNING (inspect .State.Running output),
 # DOCKER_STATUS (inspect .State.Status), DOCKER_PORT (docker port), DOCKER_PORTS (docker port without a port), DOCKER_PS (docker ps ids, space-separated),
 # DOCKER_MOUNTS (inspect .Mounts output, printed as is), DOCKER_NETWORKS (inspect .NetworkSettings output),
@@ -18,6 +18,7 @@ install_docker_stub() {
 { echo "--- $1"; printf '%s\n' "$@"; } >> "$DOCKER_LOG"
 case "$1" in
   image)
+    if [ "$3" = -f ] && [[ "$4" == *'"agentic.apps"'* ]]; then echo "${DOCKER_APPS:-}"; exit 0; fi
     if [ "$3" = -f ]; then echo "${DOCKER_LABEL:-}"; exit 0; else [ "${DOCKER_IMAGE_EXISTS:-1}" = 1 ]; exit $?; fi ;;
   inspect)
     if [[ "$*" == *.Mounts* ]]; then printf '%s' "${DOCKER_MOUNTS:-}"; exit 0; fi

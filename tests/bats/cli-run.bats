@@ -111,6 +111,21 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   [ "$(docker_sub exec | tr '\n' ' ')" = "exec -it agentic-demo-dev dev-shell " ]
 }
 
+@test "dev publishes every app port on the same loopback port" {
+  DOCKER_APPS="$(printf '%s' '{"web":{"ports":[3000],"url":"/","autostart":false},"api":{"ports":[8080,9000],"url":"/","autostart":false}}' | base64 -w0)" run ag dev
+  [ "$status" -eq 0 ]
+  run1="$(docker_sub run)"
+  for p in 127.0.0.1:3000:3000 127.0.0.1:8080:8080 127.0.0.1:9000:9000; do grep -qx -- "$p" <<<"$run1"; done
+}
+
+@test "dev publishes nothing without apps, and names the ports when the start fails" {
+  run ag dev
+  run ! grep -q -- '127.0.0.1:' <<<"$(docker_sub run)"
+  DOCKER_RUN_RC=1 DOCKER_APPS="$(printf '%s' '{"web":{"ports":[3000],"url":"/","autostart":false}}' | base64 -w0)" run ag dev
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"3000"* ]]
+}
+
 @test "dev attaches to a running container without starting anything" {
   DOCKER_RUNNING=true run ag dev
   [ "$status" -eq 0 ]

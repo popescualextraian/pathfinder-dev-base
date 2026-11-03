@@ -104,7 +104,8 @@ outside world:
   the result back. Your machine never runs git on the project; the credentials the container
   uses are the ones your project already passes in dev mode.
 - `--in ID` runs a new task in the container of task `ID`, one task at a time.
-- `--publish 3100` lets you open an app the task starts on port 3100: `agentic status ID` shows
+- The ports of the apps in `agentic.yaml` are published by themselves; `--publish 3100` adds
+  another port the task listens on. `agentic status ID` shows
   `port 3100 -> 127.0.0.1:49213`, so you browse `http://127.0.0.1:49213`. The app must listen on
   `0.0.0.0` inside the container (many dev servers default to `localhost`). The port is reachable
   from your machine only, with no authentication added. The host port changes when the container

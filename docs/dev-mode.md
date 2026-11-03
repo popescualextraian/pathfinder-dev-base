@@ -16,6 +16,11 @@ come back later. Everything keeps running while you are away.
 | `agentic dev --host-profile wsl\|none` | Forces the WSL host conveniences on or off (see below). |
 | `agentic shell [CMD...]` | A separate throwaway container, removed on exit. It is not part of the dev session. |
 
+The ports of the apps in `agentic.yaml` are published on the same ports on `127.0.0.1`, so an app
+on port 3000 opens at `http://127.0.0.1:3000`. The app must listen on `0.0.0.0` in the container.
+A port already in use on your machine stops the start; ports follow `agentic.yaml` only after
+`agentic build` and `agentic dev recreate`.
+
 The container restarts with Docker (`--restart unless-stopped`). What survives:
 
 | Survives | Detach, terminal closed | `stop` / Docker restart | `recreate` |
