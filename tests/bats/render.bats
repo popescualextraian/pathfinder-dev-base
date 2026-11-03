@@ -138,3 +138,55 @@ YAML
   run bash -c "base64 -d <<<'$(apps_label "$output")'"
   [ "$(jq -cS . <<<"$output")" = '{"api":{"autostart":false,"ports":[],"url":"/health"},"web":{"autostart":true,"ports":[3000],"url":"/"}}' ]
 }
+
+# fake_compose JSON: a docker on PATH whose `compose ... config` prints JSON and logs its arguments.
+fake_compose() {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '%s' "$1" > "$BATS_TEST_TMPDIR/model.json"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" > "%s/compose.args"\ncat "%s/model.json"\n' \
+    "$BATS_TEST_TMPDIR" "$BATS_TEST_TMPDIR" > "$BATS_TEST_TMPDIR/bin/docker"
+  chmod +x "$BATS_TEST_TMPDIR/bin/docker"
+  export PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+}
+stack_cfg() { printf 'version: 2\nproject: demo\nstack: [%s]\n' "$1" > "$C/agentic.yaml"; }
+
+@test "a stack writes its files, in order, as the label agentic.stack and is checked without .env" {
+  fake_compose '{"services":{"db":{"image":"postgres:17"}}}'
+  printf 'services:\n  db:\n    image: postgres:17\n' > "$C/a.yaml"; printf 'services: {}\n' > "$C/b.yaml"
+  stack_cfg '.agentic/a.yaml, .agentic/b.yaml'
+  run bash "$R" "$C"
+  [ "$status" -eq 0 ]
+  b64="$(grep -o 'agentic.stack="[^"]*"' <<<"$output" | sed 's/^agentic.stack="//; s/"$//')"
+  [ "$(base64 -d <<<"$b64" | jq -c '[.[].file]')" = '[".agentic/a.yaml",".agentic/b.yaml"]' ]
+  [ "$(base64 -d <<<"$b64" | jq -r '.[0].content')" = "$(cat "$C/a.yaml")" ]
+  grep -qx -- '--env-file' "$BATS_TEST_TMPDIR/compose.args"
+  grep -qx /dev/null "$BATS_TEST_TMPDIR/compose.args"
+  [ "$(grep -A1 -x -- '-f' "$BATS_TEST_TMPDIR/compose.args" | grep -v -- '^-' | tr '\n' ' ')" = "$C/a.yaml $C/b.yaml " ]
+}
+
+@test "without a stack there is no agentic.stack label" {
+  run bash "$R" "$C"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"agentic.stack="* ]]
+}
+
+@test "a stack file outside .agentic/ or missing fails the build" {
+  fake_compose '{"services":{}}'
+  stack_cfg 'compose.yaml'
+  run bash "$R" "$C"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"stack: compose.yaml must be inside .agentic/"* ]]
+  stack_cfg '.agentic/missing.yaml'
+  run bash "$R" "$C"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"stack: .agentic/missing.yaml does not exist"* ]]
+}
+
+@test "a stack that breaks the rules fails the build, naming the service and the rule" {
+  fake_compose '{"services":{"db":{"image":"x","privileged":true}}}'
+  printf 'services: {}\n' > "$C/a.yaml"
+  stack_cfg '.agentic/a.yaml'
+  run bash "$R" "$C"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"stack: service db: privileged"* ]]
+}
