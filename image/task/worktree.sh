@@ -15,11 +15,12 @@ wt="$work/.worktrees/$id"
 # check_one DIR PATH [EXCLUDE...]: nothing uncommitted in worktree PATH of repository DIR, and no
 # commit that only the task branch has (not on a remote, not on DIR's HEAD).
 check_one() {
-  local dir="$1" path="$2"; shift 2
+  local dir="$1" path="$2" st; shift 2
   # a worktree folder that is gone leaves its branch: that still counts
   if [ -d "$path" ]; then
     if [ $# -gt 0 ]; then set -- -- . "$@"; fi
-    [ -z "$(git -C "$path" status --porcelain "$@")" ] || die "$path has uncommitted changes; commit and push them, or clean with --force"
+    st="$(git -C "$path" status --porcelain "$@")" || die "$path is no worktree; cannot check it"
+    [ -z "$st" ] || die "$path has uncommitted changes; commit and push them, or clean with --force"
   else
     git -C "$dir" rev-parse -q --verify "refs/heads/$branch" >/dev/null || return 0
   fi
@@ -41,12 +42,21 @@ drop() {
 if [ "${AGENTIC_LAYOUT:-}" = multi ]; then
   root="$(dirname "$work")" target="$(basename "$work")" wt="$root/.worktrees/$id"
   # candidates: folders that are no symlink and have a .git (directory, or file: skipped on add)
-  cands=() excl=()
+  cands=()
   for d in "$root"/*/; do
     d="${d%/}"
-    if [ ! -L "$d" ] && [ -e "$d/.git" ]; then cands+=("${d##*/}"); excl+=(":(exclude)${d##*/}"); fi
+    if [ ! -L "$d" ] && [ -e "$d/.git" ]; then cands+=("${d##*/}"); fi
   done
-  rootgit=0; [ -e "$root/.git" ] && rootgit=1
+  # rootgit: the task root is a worktree of a repository; live: repositories that have a worktree in it
+  # (skipped ones have none and are left alone, branch included)
+  rootgit=0
+  if [ -f "$wt/.git" ] || { [ ! -e "$wt" ] && [ -e "$root/.git" ]; }; then rootgit=1; fi
+  live_repos() {
+    live=() excl=()
+    for n in ${cands[@]+"${cands[@]}"}; do
+      if [ -d "$root/$n/.git" ] && [ -f "$wt/$n/.git" ]; then live+=("$n"); excl+=(":(exclude)$n"); fi
+    done
+  }
   # add_one NAME: worktree of repository NAME; sets reason and fails when it must be skipped
   add_one() {
     local d="$root/$1" g
@@ -56,17 +66,19 @@ if [ "${AGENTIC_LAYOUT:-}" = multi ]; then
     git -C "$d" worktree add -q -b "$branch" -- "$wt/$1" HEAD >/dev/null 2>&1 || { reason="worktree add failed"; return 1; }
   }
   check_all() {
-    for n in ${cands[@]+"${cands[@]}"}; do check_one "$root/$n" "$wt/$n"; done
+    live_repos
+    for n in ${live[@]+"${live[@]}"}; do check_one "$root/$n" "$wt/$n"; done
     if [ "$rootgit" = 1 ]; then check_one "$root" "$wt" ${excl[@]+"${excl[@]}"}; fi
   }
   drop_all() {
-    for n in ${cands[@]+"${cands[@]}"}; do drop "$root/$n" "$wt/$n"; done
+    live_repos
+    for n in ${live[@]+"${live[@]}"}; do drop "$root/$n" "$wt/$n"; done
     if [ "$rootgit" = 1 ]; then drop "$root" "$wt"
     elif [ -d "$wt" ]; then rmdir "$wt" 2>/dev/null || die "$wt is not empty; remove what is left in it"; fi
   }
   case "$cmd" in
     add)
-      [ -d "$work/.git" ] || die "$work is no git repository"
+      if [ -L "$work" ] || [ ! -d "$work/.git" ]; then die "$work is no git repository"; fi
       [ ! -e "$wt" ] || die "$wt exists"
       mkdir -p "$root/.worktrees"
       if [ "$rootgit" = 1 ]; then

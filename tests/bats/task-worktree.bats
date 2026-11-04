@@ -101,7 +101,7 @@ setup_multi() {
   run --separate-stderr bash "$S" add "$R/webapp" T-1 agentic/T-1-x
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"agentic-worktree: skipped sub: .git is a file"* ]]
-  [ ! -e "$MW/link" ]; [ ! -e "$MW/sub/.git" ]
+  [ ! -e "$MW/link" ]; [ ! -e "$MW/sub" ]
 }
 
 @test "add skips a repository without a commit or mid-rebase" {
@@ -146,4 +146,37 @@ setup_multi() {
   local r; for r in "$R" "$R/webapp" "$R/api"; do
     [ -z "$(git -C "$r" branch --list agentic/T-1-x)" ]
   done
+}
+
+@test "remove --force and check leave a skipped repository with a broken .git alone" {
+  setup_multi; mkdir "$R/sub"; echo "gitdir: /nowhere" > "$R/sub/.git"
+  bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null 2>&1
+  bash "$S" check "$R/webapp" T-1 agentic/T-1-x
+  bash "$S" remove "$R/webapp" T-1 agentic/T-1-x --force
+  [ ! -e "$MW" ]
+  [ -z "$(git -C "$R/webapp" branch --list agentic/T-1-x)" ]
+}
+
+@test "a plain root with a skipped repository the agent wrote into: remove fails loudly, keeps the folder" {
+  setup_multi; rm -rf "$R/.git"; mkdir "$R/api/.git/rebase-merge"
+  bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null 2>&1
+  mkdir -p "$MW/api"; echo n > "$MW/api/notes.txt"
+  run bash "$S" remove "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]; [[ "$output" == *"not empty"* ]]
+  [ -f "$MW/api/notes.txt" ]
+}
+
+@test "multi add refuses a symlinked target" {
+  setup_multi; ln -s "$R/webapp" "$R/lnk"
+  run bash "$S" add "$R/lnk" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]; [ ! -e "$MW" ]
+}
+
+@test "a repository that already has the branch keeps it through remove --force" {
+  setup_multi; git -C "$R/api" branch agentic/T-1-x
+  run --separate-stderr bash "$S" add "$R/webapp" T-1 agentic/T-1-x
+  [[ "$stderr" == *"skipped api: worktree add failed"* ]]
+  bash "$S" remove "$R/webapp" T-1 agentic/T-1-x --force
+  [ -n "$(git -C "$R/api" branch --list agentic/T-1-x)" ]
+  [ -z "$(git -C "$R/webapp" branch --list agentic/T-1-x)" ]
 }
