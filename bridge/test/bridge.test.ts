@@ -209,28 +209,29 @@ class StubAgent implements AgentLike {
 }
 
 let stubDir = "";
-async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch; dir?: string; apps?: Apps; autostart?: () => string[]; appNames?: () => string[] } = {}) {
+async function stubbed(opts: { idleMs?: number; fetch?: typeof fetch; dir?: string; apps?: Apps; autostart?: () => string[]; appNames?: () => string[]; env?: Record<string, string>; worktree?: (args: string[]) => { ok: boolean; out: string; err: string } } = {}) {
   const dir = opts.dir ?? taskDir();
   stubDir = dir;
   const cfg: Config = { ...loadConfig({ AGENTIC_TASK_TOKEN: "task-token-0123456789", AGENTIC_AGENT_TOKEN: "agent-token-0123456789",
-    AGENTIC_TASK_DIR: dir, AGENTIC_NOTIFY_WEBHOOK: "https://hooks.example.com/x" }), ...(opts.idleMs ? { idleTimeoutMs: opts.idleMs } : {}) };
+    AGENTIC_TASK_DIR: dir, AGENTIC_NOTIFY_WEBHOOK: "https://hooks.example.com/x", ...opts.env }), ...(opts.idleMs ? { idleTimeoutMs: opts.idleMs } : {}) };
   const store = new Store(dir, makeRedactor([cfg.tokens.task, cfg.tokens.agent]));
   const agents: StubAgent[] = [];
   const script: Array<(text: string) => Promise<string>> = [];
   const exits: number[] = [];
   const bodies: string[] = [];
+  const logs: string[] = [];
   const fetchStub = opts.fetch ?? ((async (_u: string, init: RequestInit) => { bodies.push(String(init.body)); return new Response(null, { status: 204 }); }) as unknown as typeof fetch);
   const bridge = new Bridge({
     store, config: cfg, paragraph: "",
     notifier: new Notifier({ eventsLog: null, webhook: cfg.webhook, project: "demo", log: () => {}, fetch: fetchStub, retryDelayMs: 1 }),
     agentFactory: (hooks) => { const a = new StubAgent(hooks, script); agents.push(a); return a; },
-    worktree: () => ({ ok: true, out: "", err: "" }), release: () => {},
-    exit: (c) => exits.push(c), now: () => new Date().toISOString(), log: () => {},
+    worktree: opts.worktree ?? (() => ({ ok: true, out: "", err: "" })), release: () => {},
+    exit: (c) => exits.push(c), now: () => new Date().toISOString(), log: (l) => { logs.push(l); },
     ...(opts.apps ? { apps: opts.apps } : {}), ...(opts.autostart ? { autostart: opts.autostart } : {}),
     ...(opts.appNames ? { appNames: opts.appNames } : {}),
   });
   running.push({ bridge, close: async () => {} });
-  return { bridge, store, agents, exits, bodies, script };
+  return { bridge, store, agents, exits, bodies, script, logs };
 }
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -344,7 +345,7 @@ describe("Bridge with a scripted agent", () => {
     const { bridge, store, agents, exits } = await stubbed({ idleMs: 300 });
     const now = new Date().toISOString();
     store.writeRecord({ version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "suspended",
-      reason: "idle timeout", session: "s1", branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [],
+      reason: "idle timeout", session: "s1", branch: null, target: null, work: "/work", root: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [],
       sessions: [newSession("main", null, now, { session: "s1" })], capabilities: null, summary: "", stopped_by_user: false, scheduled: false, run_timeout: null });
     bridge.boot();
     await tick(150);
@@ -810,6 +811,49 @@ describe("apps in the bridge", () => {
     });
     return { apps, calls };
   }
+
+  describe("task root", () => {
+    const multi = { AGENTIC_LAYOUT: "multi", AGENTIC_WORK: "/work/webapp", AGENTIC_WORKTREE: "1", AGENTIC_BRANCH: "b" };
+    const wtOut = (err = "") => () => ({ ok: true, out: "/work/.worktrees/T-1/webapp\n", err });
+    const listWork = (calls: Array<{ args: string[]; work: string }>) => [...new Set(calls.map((c) => c.work))];
+
+    it("multi: the apps run against the task root, whatever the target", async () => {
+      const { apps, calls } = fakeApps();
+      const { bridge, store } = await stubbed({ apps, env: multi, worktree: wtOut() });
+      bridge.boot();
+      const rec = store.readRecord();
+      expect([rec.work, rec.root]).toEqual(["/work/.worktrees/T-1/webapp", "/work/.worktrees/T-1"]);
+      expect(await bridge.apps()).toMatchObject({ ok: true, value: [{ name: "web" }, { name: "api" }] });
+      await bridge.appAction("api", "start");
+      expect(listWork(calls)).toEqual(["/work/.worktrees/T-1"]);
+    });
+
+    it("multi without a worktree: the apps run against /work", async () => {
+      const { apps, calls } = fakeApps();
+      const { bridge } = await stubbed({ apps, env: { AGENTIC_LAYOUT: "multi", AGENTIC_WORK: "/work/webapp" } });
+      bridge.boot();
+      await bridge.apps();
+      expect(listWork(calls)).toEqual(["/work"]);
+    });
+
+    it("single: root is the work directory", async () => {
+      const { apps, calls } = fakeApps();
+      const { bridge, store } = await stubbed({ apps, env: { AGENTIC_WORK: "/work/webapp" } });
+      bridge.boot();
+      await bridge.apps();
+      expect(store.readRecord().root).toBe("/work/webapp");
+      expect(listWork(calls)).toEqual(["/work/webapp"]);
+    });
+
+    it("skipped repositories become one error event each and a log line", async () => {
+      const { bridge, store, logs } = await stubbed({ env: multi, worktree: wtOut("agentic-worktree: skipped api: no commit\n") });
+      bridge.boot();
+      const errs = store.readEvents(0).filter((e) => e.type === "error");
+      expect(errs).toHaveLength(1);
+      expect(String(errs[0]!.data.message)).toContain("skipped api: no commit");
+      expect(logs.some((l) => l.includes("skipped api: no commit"))).toBe(true);
+    });
+  });
   const starts = (calls: Array<{ args: string[] }>) => calls.filter((c) => c.args[0] === "start").map((c) => c.args[1]);
 
   it("autostart starts each named app once per task, in the checkout, and not again on a resume", async () => {

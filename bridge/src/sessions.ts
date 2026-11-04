@@ -31,11 +31,12 @@ export function upgradeRecord(raw: unknown): TaskRecord {
     reason: r.reason ?? "", inbox: Array.isArray(r.sessions) ? [] : inbox ?? [], summary: r.summary ?? "",
     updated: r.updated ?? r.created ?? "",
   });
-  if (!Array.isArray(r.sessions)) return { ...rest, sessions: [main()], capabilities: null } as TaskRecord;
+  const root = r.root ?? r.work;
+  if (!Array.isArray(r.sessions)) return { ...rest, root, sessions: [main()], capabilities: null } as TaskRecord;
   const sessions = (r.sessions as unknown[]).filter((s): s is SessionRecord =>
     typeof (s as SessionRecord | null)?.name === "string" && NAME_RE.test((s as SessionRecord).name));
   if (!sessions.some((s) => s.name === MAIN)) sessions.unshift(main());
-  return { ...r, sessions, capabilities: r.capabilities ?? null } as TaskRecord;
+  return { ...r, root, sessions, capabilities: r.capabilities ?? null } as TaskRecord;
 }
 
 export function upgradeQuestion(raw: Question): Question {

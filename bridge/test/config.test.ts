@@ -19,6 +19,12 @@ describe("loadConfig", () => {
     expect([off.worktree, off.autoClean, off.target, off.container, off.createdContainer]).toEqual([false, false, null, null, false]);
   });
 
+  it("AGENTIC_LAYOUT=multi sets layout multi, anything else single", () => {
+    expect(loadConfig({ ...base, AGENTIC_LAYOUT: "multi" }).layout).toBe("multi");
+    expect(loadConfig({ ...base, AGENTIC_LAYOUT: "single" }).layout).toBe("single");
+    expect(loadConfig({ ...base }).layout).toBe("single");
+  });
+
   it("refuses missing or short tokens, an unknown agent and a bad ACP command", () => {
     expect(() => loadConfig({})).toThrow("AGENTIC_TASK_TOKEN");
     expect(() => loadConfig({ ...base, AGENTIC_AGENT_TOKEN: "short" })).toThrow("AGENTIC_AGENT_TOKEN");

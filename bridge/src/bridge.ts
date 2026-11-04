@@ -1,6 +1,7 @@
 // The orchestrator: feeds inputs to the state machine and performs its effects (spec §6).
 import { spawnSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ApiTarget } from "./api.js";
 import type { AppOutcome, Apps, AppVerb, AppView } from "./apps.js";
 import type { AgentHooks, AgentLike } from "./agent.js";
@@ -74,6 +75,7 @@ export class Bridge implements ApiTarget {
     store.checkWritable();
     const fresh = !store.hasRecord();
     let record: TaskRecord;
+    const warnings: string[] = [];
     if (fresh) {
       const prompt = store.readPrompt() ?? config.prompt;
       if (!prompt) throw new BridgeError(`no prompt: write ${store.path("prompt.md")} or set AGENTIC_PROMPT`);
@@ -89,12 +91,19 @@ export class Bridge implements ApiTarget {
           throw new BridgeError(`could not create the worktree: ${why}`);
         }
         worktree = work = path;
+        // each repository the script skipped is a warning, the task goes on
+        for (const l of r.err.split("\n")) {
+          if (!l.startsWith("agentic-worktree: skipped")) continue;
+          this.d.log(l);
+          warnings.push(l);
+        }
       }
+      const root = config.layout !== "multi" ? work : worktree ? dirname(worktree) : dirname(config.work);
       const now = this.d.now();
       record = {
         version: 1, task: config.task, project: config.project, agent: config.agent, model: config.model, state: "starting",
         reason: "", session: null, branch: config.worktree ? config.branch : null,
-        target: config.target, work, worktree, container: config.container, created_container: config.createdContainer, auto_clean: config.autoClean, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
+        target: config.target, work, root, worktree, container: config.container, created_container: config.createdContainer, auto_clean: config.autoClean, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [...config.allowed],
         sessions: [newSession(MAIN, config.model, now, { inbox: [{ kind: "prompt", text: config.scheduled ? `${prompt}${SCHEDULED_NOTE}` : prompt }] })],
         capabilities: null, summary: "", stopped_by_user: false,
         scheduled: config.scheduled, run_timeout: config.scheduled ? config.runTimeoutMs / 1000 : null,
@@ -102,6 +111,7 @@ export class Bridge implements ApiTarget {
     } else {
       record = upgradeRecord(store.readRecord());
       if (typeof record.work !== "string") record.work = config.work;
+      if (typeof record.root !== "string") record.root = record.work;
       record.cleaned = record.cleaned === true;
       record.created_container = record.created_container === true;
       record.scheduled = record.scheduled === true;
@@ -116,6 +126,7 @@ export class Bridge implements ApiTarget {
     }
     this.run({ kind: "boot", fresh });
     this.autostart();
+    for (const w of warnings) this.emit("error", { message: w }, null);
   }
 
   ready(): boolean {
@@ -156,7 +167,7 @@ export class Bridge implements ApiTarget {
 
   async apps(): Promise<AppOutcome<AppView[]>> {
     if (!this.d.apps) return { ok: true, value: [] };
-    return this.masked(await this.d.apps.list(this.m().record.work));
+    return this.masked(await this.d.apps.list(this.m().record.root));
   }
 
   async appAction(name: string, verb: AppVerb): Promise<AppOutcome<AppView>> {
@@ -165,14 +176,14 @@ export class Bridge implements ApiTarget {
     if (!this.d.apps) return { ok: false, status: 404, code: "not_found", message: `unknown app ${name}` };
     // a user's app action is activity: it restarts the idle timer, before and after (a start may take minutes)
     this.touch();
-    const r = this.masked(await this.d.apps.act(rec.work, name, verb));
+    const r = this.masked(await this.d.apps.act(rec.root, name, verb));
     if (!this.down) this.touch();
     return r;
   }
 
   async appLogs(name: string, lines: number): Promise<AppOutcome<string[]>> {
     if (!this.d.apps) return { ok: false, status: 404, code: "not_found", message: `unknown app ${name}` };
-    return this.masked(await this.d.apps.logs(this.m().record.work, name, lines));
+    return this.masked(await this.d.apps.logs(this.m().record.root, name, lines));
   }
 
   // masked: an app's output and refusals leave the bridge with the tokens masked
@@ -189,7 +200,7 @@ export class Bridge implements ApiTarget {
     if (existsSync(marker) || this.m().record.state === "stopped") return;
     const names = this.d.autostart();
     writeFileSync(marker, names.map((n) => `${n}\n`).join(""));
-    const work = this.m().record.work;
+    const work = this.m().record.root;
     void (async () => {
       for (const name of names) {
         if (this.down) return;
@@ -544,7 +555,7 @@ export class Bridge implements ApiTarget {
     if (apps) {
       let busy = false;
       try {
-        const r = await apps.list(this.m().record.work);
+        const r = await apps.list(this.m().record.root);
         busy = r.ok && r.value.some((a) => a.state === "running" || a.state === "preparing");
       } catch (err) {
         this.log(`idle check of the apps failed: ${message(err)}`);

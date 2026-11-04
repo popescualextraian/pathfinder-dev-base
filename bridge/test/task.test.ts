@@ -8,7 +8,7 @@ const rec = (over: Partial<TaskRecord> & { inbox?: InboxItem[] } = {}): TaskReco
   const { inbox = [{ kind: "prompt", text: "Fix the login bug" }], ...rest } = over;
   return {
     version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "starting", reason: "",
-    session: null, branch: null, target: null, work: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [],
+    session: null, branch: null, target: null, work: "/work", root: "/work", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: "t0", updated: "t0", seq: 0, allowed_actions: [],
     sessions: [newSession("main", null, "t0", { inbox, session: rest.session ?? null })], capabilities: null,
     summary: "", stopped_by_user: false, scheduled: false, run_timeout: null, ...rest,
   };

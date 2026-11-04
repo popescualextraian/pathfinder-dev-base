@@ -27,6 +27,7 @@ export interface Config {
   worktree: boolean;
   autoClean: boolean;
   target: string | null;
+  layout: "single" | "multi";
   container: string | null;
   createdContainer: boolean;
   scheduled: boolean;
@@ -91,6 +92,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     worktree: env.AGENTIC_WORKTREE === "1",
     autoClean: env.AGENTIC_AUTO_CLEAN === "1",
     target: opt(env.AGENTIC_TARGET),
+    layout: env.AGENTIC_LAYOUT === "multi" ? "multi" : "single",
     container: opt(env.AGENTIC_CONTAINER),
     createdContainer: env.AGENTIC_CREATED_CONTAINER === "1",
     scheduled: env.AGENTIC_SCHEDULED === "1",

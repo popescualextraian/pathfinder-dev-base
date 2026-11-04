@@ -8,6 +8,11 @@ const old = (over: Record<string, unknown> = {}) => ({
 });
 
 describe("upgradeRecord", () => {
+  it("an old record gets root = work", () => {
+    expect(upgradeRecord({ ...old(), work: "/work/x" }).root).toBe("/work/x");
+    expect(upgradeRecord({ ...old(), work: "/w", root: "/r" }).root).toBe("/r");
+  });
+
   it("turns an old record into one main session", () => {
     const r = upgradeRecord(old());
     expect(r.sessions).toEqual([{

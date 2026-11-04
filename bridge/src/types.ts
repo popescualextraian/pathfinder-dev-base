@@ -60,6 +60,7 @@ export interface TaskRecord {
   branch: string | null;
   target: string | null;
   work: string;
+  root: string; // what the apps run against: the task's worktree root of a multi task, else work
   worktree: string | null;
   container: string | null;
   created_container: boolean;
