@@ -12,18 +12,92 @@ cmd="$1" work="$2" id="$3" branch="$4" force="${5:-}"
 { [[ "$branch" != -* ]] && git check-ref-format --branch "$branch" >/dev/null 2>&1; } || die "bad branch name $branch"
 wt="$work/.worktrees/$id"
 
-# check: nothing uncommitted, and no commit that only the task branch has (not on a remote, not
-# on the checkout's HEAD).
-check() {
+# check_one DIR PATH [EXCLUDE...]: nothing uncommitted in worktree PATH of repository DIR, and no
+# commit that only the task branch has (not on a remote, not on DIR's HEAD).
+check_one() {
+  local dir="$1" path="$2"; shift 2
   # a worktree folder that is gone leaves its branch: that still counts
-  if [ -d "$wt" ]; then
-    [ -z "$(git -C "$wt" status --porcelain)" ] || die "$wt has uncommitted changes; commit and push them, or clean with --force"
+  if [ -d "$path" ]; then
+    if [ $# -gt 0 ]; then set -- -- . "$@"; fi
+    [ -z "$(git -C "$path" status --porcelain "$@")" ] || die "$path has uncommitted changes; commit and push them, or clean with --force"
   else
-    git -C "$work" rev-parse -q --verify "refs/heads/$branch" >/dev/null || return 0
+    git -C "$dir" rev-parse -q --verify "refs/heads/$branch" >/dev/null || return 0
   fi
-  [ -z "$(git -C "$work" log --oneline --not --remotes HEAD --not --end-of-options "$branch" 2>/dev/null)" ] \
-    || die "$wt has commits on no remote branch ($branch); push them, or clean with --force"
+  [ -z "$(git -C "$dir" log --oneline --not --remotes HEAD --not --end-of-options "$branch" 2>/dev/null)" ] \
+    || die "$path has commits on no remote branch ($branch); push them, or clean with --force"
 }
+check() { check_one "$work" "$wt"; }
+
+# drop DIR PATH: remove worktree PATH of repository DIR and the task branch there.
+drop() {
+  if [ -d "$2" ]; then git -C "$1" worktree remove --force -- "$2"; fi
+  git -C "$1" worktree prune
+  if git -C "$1" rev-parse -q --verify "refs/heads/$branch" >/dev/null; then git -C "$1" branch -D -- "$branch" >/dev/null; fi
+}
+
+# Multi mode: WORK is ROOT/<target>; ROOT holds several repositories (spec multi-repo-tasks §3).
+# The task is ROOT/.worktrees/ID: a worktree of ROOT (a plain folder if ROOT is no repository)
+# holding a worktree of each repository, all on BRANCH.
+if [ "${AGENTIC_LAYOUT:-}" = multi ]; then
+  root="$(dirname "$work")" target="$(basename "$work")" wt="$root/.worktrees/$id"
+  # candidates: folders that are no symlink and have a .git (directory, or file: skipped on add)
+  cands=() excl=()
+  for d in "$root"/*/; do
+    d="${d%/}"
+    if [ ! -L "$d" ] && [ -e "$d/.git" ]; then cands+=("${d##*/}"); excl+=(":(exclude)${d##*/}"); fi
+  done
+  rootgit=0; [ -e "$root/.git" ] && rootgit=1
+  # add_one NAME: worktree of repository NAME; sets reason and fails when it must be skipped
+  add_one() {
+    local d="$root/$1" g
+    [ -d "$d/.git" ] || { reason=".git is a file"; return 1; }
+    git -C "$d" rev-parse -q --verify HEAD >/dev/null 2>&1 || { reason="no commit"; return 1; }
+    for g in rebase-merge rebase-apply; do [ ! -d "$d/.git/$g" ] || { reason="mid-rebase"; return 1; }; done
+    git -C "$d" worktree add -q -b "$branch" -- "$wt/$1" HEAD >/dev/null 2>&1 || { reason="worktree add failed"; return 1; }
+  }
+  check_all() {
+    for n in ${cands[@]+"${cands[@]}"}; do check_one "$root/$n" "$wt/$n"; done
+    if [ "$rootgit" = 1 ]; then check_one "$root" "$wt" ${excl[@]+"${excl[@]}"}; fi
+  }
+  drop_all() {
+    for n in ${cands[@]+"${cands[@]}"}; do drop "$root/$n" "$wt/$n"; done
+    if [ "$rootgit" = 1 ]; then drop "$root" "$wt"
+    elif [ -d "$wt" ]; then rmdir "$wt" 2>/dev/null || die "$wt is not empty; remove what is left in it"; fi
+  }
+  case "$cmd" in
+    add)
+      [ -d "$work/.git" ] || die "$work is no git repository"
+      [ ! -e "$wt" ] || die "$wt exists"
+      mkdir -p "$root/.worktrees"
+      if [ "$rootgit" = 1 ]; then
+        git -C "$root" rev-parse -q --verify HEAD >/dev/null || die "$root has no commit to start a worktree from"
+        ex="$(git -C "$root" rev-parse --git-path info/exclude)"; [[ "$ex" == /* ]] || ex="$root/$ex"
+        mkdir -p "$(dirname "$ex")"
+        grep -qx '.worktrees/' "$ex" 2>/dev/null || echo '.worktrees/' >> "$ex"
+        git -C "$root" worktree add -q -b "$branch" -- "$wt" HEAD >&2
+      else
+        mkdir "$wt"
+      fi
+      made=() reason=""
+      # the target first: it is never skipped
+      for n in "$target" ${cands[@]+"${cands[@]}"}; do
+        if [ "$n" = "$target" ] && [ ${#made[@]} -gt 0 ]; then continue; fi
+        if add_one "$n"; then made+=("$n")
+        elif [ "$n" = "$target" ]; then
+          for m in ${made[@]+"${made[@]}"}; do drop "$root/$m" "$wt/$m"; done
+          if [ "$rootgit" = 1 ]; then drop "$root" "$wt"; else rmdir "$wt"; fi
+          die "$work cannot get a worktree: $reason"
+        else echo "agentic-worktree: skipped $n: $reason" >&2; fi
+      done
+      printf '%s\n' "$wt/$target" ;;
+    check) check_all ;;
+    remove)
+      [ "$force" = --force ] || check_all
+      drop_all ;;
+    *) die "unknown command $cmd" ;;
+  esac
+  exit 0
+fi
 
 case "$cmd" in
   add)

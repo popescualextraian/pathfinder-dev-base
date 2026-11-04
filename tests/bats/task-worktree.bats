@@ -61,3 +61,89 @@ setup() {
   bash "$S" remove "$W" T-1 agentic/T-1-x --force
   run git -C "$W" rev-parse -q --verify refs/heads/agentic/T-1-x; [ "$status" -ne 0 ]
 }
+
+# multi mode: a root holding several repositories (spec multi-repo-tasks §3)
+setup_multi() {
+  R="$BATS_TEST_TMPDIR/root"; export AGENTIC_LAYOUT=multi
+  git init -q -b main "$R"; : > "$R/.gitignore"
+  git -C "$R" add .gitignore; git -C "$R" commit -qm init
+  local r; for r in webapp api; do
+    git init -q -b main "$R/$r"; git -C "$R/$r" commit -q --allow-empty -m init
+  done
+  MW="$R/.worktrees/T-1"
+}
+
+@test "multi add makes the root and every repository a worktree on the branch and prints the target's" {
+  setup_multi
+  run --separate-stderr bash "$S" add "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = "$MW/webapp" ]
+  [ "$(git -C "$MW" rev-parse --abbrev-ref HEAD)" = agentic/T-1-x ]
+  [ "$(git -C "$MW/webapp" rev-parse --abbrev-ref HEAD)" = agentic/T-1-x ]
+  [ "$(git -C "$MW/api" rev-parse --abbrev-ref HEAD)" = agentic/T-1-x ]
+  # the repository folders themselves are untracked here (the .gitignore lists nothing)
+  [ -z "$(git -C "$R" status --porcelain -- . ':(exclude)webapp' ':(exclude)api')" ]
+}
+
+@test "multi add with a root that is no git repository makes a plain folder" {
+  setup_multi; rm -rf "$R/.git"
+  bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null
+  [ -d "$MW" ]; [ ! -e "$MW/.git" ]
+  [ "$(git -C "$MW/webapp" rev-parse --abbrev-ref HEAD)" = agentic/T-1-x ]
+  [ "$(git -C "$MW/api" rev-parse --abbrev-ref HEAD)" = agentic/T-1-x ]
+  bash "$S" remove "$R/webapp" T-1 agentic/T-1-x
+  [ ! -e "$MW" ]
+}
+
+@test "add skips a symlinked repository and a .git file" {
+  setup_multi
+  ln -s "$R/api" "$R/link"; mkdir "$R/sub"; echo "gitdir: /nowhere" > "$R/sub/.git"
+  run --separate-stderr bash "$S" add "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"agentic-worktree: skipped sub: .git is a file"* ]]
+  [ ! -e "$MW/link" ]; [ ! -e "$MW/sub/.git" ]
+}
+
+@test "add skips a repository without a commit or mid-rebase" {
+  setup_multi
+  git init -q "$R/empty"; mkdir "$R/api/.git/rebase-merge"
+  run --separate-stderr bash "$S" add "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"skipped empty: no commit"* ]]
+  [[ "$stderr" == *"skipped api: mid-rebase"* ]]
+}
+
+@test "add rolls back when the target cannot get a worktree" {
+  setup_multi; git init -q "$R/empty"
+  run bash "$S" add "$R/empty" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]
+  [ ! -e "$MW" ]
+  [ -z "$(git -C "$R/webapp" branch --list agentic/T-1-x)" ]
+  [ -z "$(git -C "$R" branch --list agentic/T-1-x)" ]
+}
+
+@test "check ignores the repository folders in the root worktree" {
+  setup_multi
+  bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null
+  bash "$S" check "$R/webapp" T-1 agentic/T-1-x
+}
+
+@test "multi check refuses when any one repository has uncommitted changes, and remove removes nothing then" {
+  setup_multi
+  bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null
+  echo x > "$MW/api/f"
+  run bash "$S" check "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]; [[ "$output" == *"has uncommitted changes"* ]]
+  run bash "$S" remove "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]; [ -d "$MW/webapp" ]
+}
+
+@test "multi remove deletes every worktree and branch" {
+  setup_multi
+  bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null
+  bash "$S" remove "$R/webapp" T-1 agentic/T-1-x
+  [ ! -e "$MW" ]
+  local r; for r in "$R" "$R/webapp" "$R/api"; do
+    [ -z "$(git -C "$r" branch --list agentic/T-1-x)" ]
+  done
+}
