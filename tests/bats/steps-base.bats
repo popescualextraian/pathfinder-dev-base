@@ -199,3 +199,10 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ "$status" -eq 2 ]
   [ "$(cat "$HOME/.copilot/config.json")" = '[1]' ]
 }
+
+@test "05 in a task of the root itself (AGENTIC_WORK ROOT/.) clones into the root" {
+  root="$BATS_TEST_TMPDIR/root"; mkdir -p "$root"
+  AGENTIC_LAYOUT=multi AGENTIC_WORK="$root/." AGENTIC_REPO_URL="file://$O" run bash "$S/05-workspace.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$root/.agentic/agentic.yaml" ]
+}

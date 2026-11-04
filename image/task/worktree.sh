@@ -38,7 +38,8 @@ drop() {
 
 # Multi mode: WORK is ROOT/<target>; ROOT holds several repositories (spec multi-repo-tasks §3).
 # The task is ROOT/.worktrees/ID: a worktree of ROOT (a plain folder if ROOT is no repository)
-# holding a worktree of each repository, all on BRANCH.
+# holding a worktree of each repository, all on BRANCH. WORK ROOT/. is a task in the root itself: the
+# agent works in the task root, which must then be a worktree of ROOT; every repository is optional.
 if [ "${AGENTIC_LAYOUT:-}" = multi ]; then
   root="$(dirname "$work")" target="$(basename "$work")" wt="$root/.worktrees/$id"
   # candidates: folders that are no symlink and have a .git (directory, or file: skipped on add)
@@ -78,7 +79,8 @@ if [ "${AGENTIC_LAYOUT:-}" = multi ]; then
   }
   case "$cmd" in
     add)
-      if [ -L "$work" ] || [ ! -d "$work/.git" ]; then die "$work is no git repository"; fi
+      if [ "$target" = . ]; then [ "$rootgit" = 1 ] || die "$root is no git repository; a task in the root needs one"
+      elif [ -L "$work" ] || [ ! -d "$work/.git" ]; then die "$work is no git repository"; fi
       [ ! -e "$wt" ] || die "$wt exists"
       mkdir -p "$root/.worktrees"
       if [ "$rootgit" = 1 ]; then
@@ -93,6 +95,7 @@ if [ "${AGENTIC_LAYOUT:-}" = multi ]; then
       made=() reason=""
       # the target first: it is never skipped
       for n in "$target" ${cands[@]+"${cands[@]}"}; do
+        if [ "$n" = . ]; then continue; fi
         if [ "$n" = "$target" ] && [ ${#made[@]} -gt 0 ]; then continue; fi
         if add_one "$n"; then made+=("$n")
         elif [ "$n" = "$target" ]; then

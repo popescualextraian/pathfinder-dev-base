@@ -202,3 +202,23 @@ setup_multi() {
   [ -n "$(git -C "$R/api" branch --list agentic/T-1-x)" ]
   [ -z "$(git -C "$R/webapp" branch --list agentic/T-1-x)" ]
 }
+
+@test "multi add of the root (WORK ROOT/.) makes every worktree and prints the task root" {
+  setup_multi
+  run --separate-stderr bash "$S" add "$R/." T-1 agentic/T-1-x
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = "$MW/." ]
+  [ "$(git -C "$MW" rev-parse --abbrev-ref HEAD)" = agentic/T-1-x ]
+  [ "$(git -C "$MW/webapp" rev-parse --abbrev-ref HEAD)" = agentic/T-1-x ]
+  [ "$(git -C "$MW/api" rev-parse --abbrev-ref HEAD)" = agentic/T-1-x ]
+  bash "$S" remove "$R/." T-1 agentic/T-1-x
+  [ ! -e "$MW" ]
+}
+
+@test "multi add of the root refuses a root that is no git repository" {
+  setup_multi; rm -rf "$R/.git"
+  run bash "$S" add "$R/." T-1 agentic/T-1-x
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a task in the root needs one"* ]]
+  [ ! -e "$MW" ]
+}

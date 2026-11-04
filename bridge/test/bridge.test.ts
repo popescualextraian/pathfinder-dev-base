@@ -828,6 +828,17 @@ describe("apps in the bridge", () => {
       expect(listWork(calls)).toEqual(["/work/.worktrees/T-1"]);
     });
 
+    it("multi, a task in the root (AGENTIC_WORK /work/.): the agent and the apps work in the task root", async () => {
+      const { apps, calls } = fakeApps();
+      const env = { ...multi, AGENTIC_WORK: "/work/.", AGENTIC_TARGET: "." };
+      const { bridge, store } = await stubbed({ apps, env, worktree: () => ({ ok: true, out: "/work/.worktrees/T-1/.\n", err: "" }) });
+      bridge.boot();
+      const rec = store.readRecord();
+      expect([rec.work, rec.root]).toEqual(["/work/.worktrees/T-1/.", "/work/.worktrees/T-1"]);
+      await bridge.apps();
+      expect(listWork(calls)).toEqual(["/work/.worktrees/T-1"]);
+    });
+
     it("multi without a worktree: the apps run against /work", async () => {
       const { apps, calls } = fakeApps();
       const { bridge } = await stubbed({ apps, env: { AGENTIC_LAYOUT: "multi", AGENTIC_WORK: "/work/webapp" } });

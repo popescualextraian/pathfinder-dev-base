@@ -488,7 +488,7 @@ Task definition:
 | `AGENTIC_ALLOWED_ACTIONS` | none | comma-separated grants for the initial allowed actions |
 | `AGENTIC_LAYOUT` | none | `multi`: a multi-repository task; the project root is the parent of `AGENTIC_WORK`. The start steps clone `AGENTIC_REPO_URL` into the root (not into the target's folder), read `.agentic/` from the root, clone the `add workspace` URL lines into `<root>/<name>` and run the on-start hook in the root |
 | `AGENTIC_TARGET` | none | the target's name, recorded |
-| `AGENTIC_WORK` | `/work` | the repository the agent works in (`/work/<target>` in a multi-repository project) |
+| `AGENTIC_WORK` | `/work` | the repository the agent works in (`/work/<target>` in a multi-repository project; `/work/.` with `AGENTIC_TARGET=.` is a task in the root itself: the agent works in the task root, which needs a git root) |
 | `AGENTIC_WORKTREE` | none | `1`: the bridge makes a worktree and branch before the session |
 | `AGENTIC_BRANCH` | none | the worktree's branch name (only with `AGENTIC_WORKTREE`) |
 | `AGENTIC_AUTO_CLEAN` | none | `1`: the bridge cleans up after a normal turn |

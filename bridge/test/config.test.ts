@@ -83,6 +83,7 @@ describe("agentEnvironment", () => {
     const multi = { ...base, AGENTIC_LAYOUT: "multi", AGENTIC_WORK: "/work/webapp", AGENTIC_TASK_ID: "T-1" };
     expect(agentEnvironment(base, loadConfig({ ...multi, AGENTIC_WORKTREE: "1" })).AGENTIC_APPS_ROOT).toBe("/work/.worktrees/T-1");
     expect(agentEnvironment(base, loadConfig(multi)).AGENTIC_APPS_ROOT).toBe("/work");
+    expect(agentEnvironment(base, loadConfig({ ...multi, AGENTIC_WORK: "/work/.", AGENTIC_WORKTREE: "1" })).AGENTIC_APPS_ROOT).toBe("/work/.worktrees/T-1");
   });
 
   it("leaves AGENTIC_APPS_ROOT unset for a single task", () => {
