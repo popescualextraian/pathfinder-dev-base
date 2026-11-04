@@ -163,6 +163,7 @@ schema. When the user asks for one, or a repository shows how it is started:
 - `env` takes plain values only (a profile, the API's address on another app's port); secrets go
   to `.env` through `agentic-env`. A file the app expects (`.env.local`) goes to
   `.agentic/files/` and an `env_files` entry; never a secret in it.
+  An `env_files` `to` is like `dir`: in a workspace folder it starts with the repository's name.
 - `autostart: true` only when the user asks; `idle_stop` (`30m`) for an app that is heavy to
   keep running.
 - In the hand-over, say: changing `apps:` needs `agentic build` and a new container;

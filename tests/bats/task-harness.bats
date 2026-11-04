@@ -68,3 +68,7 @@ setup() {
   harness_resume_argv claude 1234; [ "${ARGV[*]}" = "claude --dangerously-skip-permissions --resume 1234" ]
   harness_resume_argv copilot 1234; [ "${ARGV[*]}" = "copilot --allow-all --resume=1234" ]
 }
+
+@test "the task prompt tells the agent to give each repository its own pull or merge request" {
+  grep -q 'own pull or merge request' "$REPO_ROOT/image/task/task-prompt.md"
+}

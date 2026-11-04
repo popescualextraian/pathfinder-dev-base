@@ -47,6 +47,11 @@ load helpers
   grep -q 'NAME.prepared' "$s"
 }
 
+@test "the setup skill writes env_files to from the root in a multi project" {
+  s="$REPO_ROOT/skills/agentic-setup/SKILL.md"
+  sed -n '/^## Apps/,/^## /p' "$s" | grep 'env_files' | grep '`to`' | grep -q "repository's name"
+}
+
 @test "the setup skill opens with a catalog when started without a request" {
   s="$REPO_ROOT/skills/agentic-setup/SKILL.md"
   grep -q '## Start: the catalog' "$s"

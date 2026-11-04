@@ -42,6 +42,18 @@ creates anything and rolls back what it created on any failure.
 - `--worktree`: the task gets its own worktree and branch, made in the container. Its git metadata
   uses container paths (`/work/...`), so host git cannot open `.worktrees/<id>`, and a host
   `git worktree prune` would drop its metadata; work on it inside the container.
+  In a multi-repository project (`layout: multi`) the task gets a task root, `/work/.worktrees/<id>`:
+  the root's worktree, or a plain folder when the root is no git repository. Every repository sits
+  in it at `<id>/<repo>`, all on the task's branch, and the agent starts in `<id>/<target>`. A
+  repository that cannot get a worktree (no commit, a `.git` file, a rebase under way) is skipped
+  with an `error` event; the target never is. `clean` checks and removes every worktree, and keeps
+  the whole task when any one has uncommitted or unpushed work.
+
+  | | `--worktree` | `--no-worktree` |
+  |---|---|---|
+  | Agent's directory | `/work/.worktrees/<id>/<target>` | `/work/<target>` |
+  | App `dir` resolves against | the task root | `/work` |
+  | `agentic takeover` | `-w` the agent's directory | `-w` the agent's directory |
 - `--publish PORT`: publish container port `PORT` on a random host port on `127.0.0.1`, like the
   bridge port. The ports of the project's apps are published this way without it. `run --json` and `status` show the mapping (`ports`). It is refused with `--in`:
   ports are fixed when the container is created. The app must listen on `0.0.0.0` in the
@@ -260,6 +272,11 @@ on a tmux server of its own, so it shows the task's changes and outlives the age
 carries only `{ports, url, autostart}` per app, as the label `agentic.apps`, from which `agentic run`
 publishes the ports on random loopback ports and `agentic dev` on the same ports; commands and env
 never reach a label. Commands run only inside the container, by `agentic-app`.
+
+In a multi-repository project, `dir` and the `to` of `env_files` are relative to the task root
+(`/work` without a worktree) and start with the repository's name (`webapp/frontend`); an old-style
+value fails `agentic-app start` with a message naming the fix. `GET /apps` lists every app,
+whatever the task's target. Single-repository projects are unchanged.
 
 `agentic-app list [--json] | start|stop|restart NAME | logs NAME [--lines N]` works in the container.
 `agentic-app` reads the apps from the config resolved at container start (`~/.agentic/config.json`),
