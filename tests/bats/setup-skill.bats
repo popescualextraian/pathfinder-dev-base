@@ -36,3 +36,23 @@ load helpers
   grep -q 'external: true' "$s"
   grep -q 'parallel tasks share the database' "$s"
 }
+
+@test "the setup skill adds apps from what each repository's own instructions say" {
+  s="$REPO_ROOT/skills/agentic-setup/SKILL.md"
+  grep -q '## Apps' "$s"
+  grep -q '`AGENTS.md` of every repository' "$s"
+  grep -q 'subfolders with their own build file' "$s"
+  grep -q '0.0.0.0' "$s"
+  grep -q 'agentic-app start NAME' "$s"
+  grep -q 'NAME.prepared' "$s"
+}
+
+@test "the setup skill opens with a catalog when started without a request" {
+  s="$REPO_ROOT/skills/agentic-setup/SKILL.md"
+  grep -q '## Start: the catalog' "$s"
+  for e in 'First-time setup' 'Tell me what you want' 'Configure an app' 'Show what is installed' 'Review the current setup'; do
+    grep -qF "$e" "$s" || { echo "missing: $e"; return 1; }
+  done
+  # the catalog comes before the rules, so it is the first thing done
+  [ "$(grep -n '## Start: the catalog' "$s" | cut -d: -f1)" -lt "$(grep -n '^## Rules' "$s" | cut -d: -f1)" ]
+}

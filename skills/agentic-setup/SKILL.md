@@ -15,6 +15,23 @@ extended three ways: `.env` for secrets and settings tools read natively, `setup
 `.agentic/Dockerfile.extra`. Reference for the other fields:
 `/opt/agentic/schema/agentic.schema.json` (descriptions included).
 
+## Start: the catalog
+
+If `~/.agentic/config-errors.txt` exists, do step 0 of **Procedure** first and say so. Then, when
+the user's message already says what they want, do that; otherwise show this catalog and ask which
+one, as a numbered list they can answer with a number:
+
+| # | Entry | What you do |
+|---|---|---|
+| 1 | First-time setup (autodetect) | the whole **Procedure** |
+| 2 | Tell me what you want | the user describes it; pick the rung from step 5 |
+| 3 | Configure an app (dev server, API, frontend) | **Apps** |
+| 4 | Show what is installed | change nothing; a bullet list, one group each: tools and versions (`/opt/agentic/inventory.txt`), setup lines (`agentic-setup-edit --dir /work/.agentic list`), MCP servers, plugins and skills, apps and services (`agentic.yaml`, `.agentic/compose.yaml`), the `.env` key names (`agentic-env names`, never values) |
+| 5 | Review the current setup | steps 1 and 3 and `agentic-config validate`; report the gaps, change nothing until the user picks which to fix |
+
+Under each entry the rules below still hold, and each that changes a file ends with step 6
+(validate) and step 7 (hand-over) of **Procedure**. When one is done, offer the catalog again.
+
 ## Rules
 
 - Work autonomously. Make the changes inside `/work/.agentic/` yourself; do not ask permission
@@ -125,6 +142,33 @@ a datasource URL, Flyway or Liquibase migrations, a Postgres or Testcontainers d
   .agentic/compose.yaml up -d`. Say that parallel tasks share the database, and that
   Testcontainers still needs `docker.socket: true`. Full guide: "Services" in docs/setup.md.
 
+## Apps: a dev server, an API, a frontend
+
+`apps:` in `agentic.yaml` lists what the container can run: `agentic-app start NAME` (also
+`stop`, `restart`, `logs`, `list`) runs each app in its own tmux window, and the bridge's `/apps`
+routes and the UI drive the same script. The user may call one a deployment, a run config or
+"how to start X". Each app carries its own setup; the field descriptions are under `apps` in the
+schema. When the user asks for one, or a repository shows how it is started:
+
+- Find the commands in what the repository already says, most specific first: the `CLAUDE.md` and
+  `AGENTS.md` of every repository (in a workspace folder, each `/work/<name>`, and of
+  subfolders with their own build file), then the README, `package.json` scripts, the Maven or
+  Gradle run task, a Procfile, a Dockerfile's `CMD`. Ask only when they disagree or say nothing.
+- One app per thing that is started: `dir` is relative to the checkout, `/work` here (in a
+  workspace folder it starts with the repository's name), `prepare` installs dependencies
+  (`npm ci`), `run` stays in the foreground, `ports` are the ports it listens on, `url` the path
+  to open.
+- The server must listen on 0.0.0.0, not localhost, or the published port reaches nothing: add
+  the flag or the setting the framework reads (`--host 0.0.0.0`, `server.address`).
+- `env` takes plain values only (a profile, the API's address on another app's port); secrets go
+  to `.env` through `agentic-env`. A file the app expects (`.env.local`) goes to
+  `.agentic/files/` and an `env_files` entry; never a secret in it.
+- `autostart: true` only when the user asks; `idle_stop` (`30m`) for an app that is heavy to
+  keep running.
+- In the hand-over, say: changing `apps:` needs `agentic build` and a new container;
+  `prepare` runs once per container, and a rerun after its inputs change needs
+  `rm ~/.agentic/apps/NAME.prepared` and `agentic-app restart NAME`.
+
 ## Procedure
 
 0. **Fix a broken config first**: if `~/.agentic/config-errors.txt` exists, `agentic.yaml` is
@@ -151,6 +195,8 @@ a datasource URL, Flyway or Liquibase migrations, a Postgres or Testcontainers d
      root before suggesting it);
    - the application needs a database or another service that is not on the project network
      (see **Services** above);
+   - a repository or subproject says how it is started but has no app in `apps:` (see **Apps**
+     above);
    - Jira keys appear in commit messages or branch names but no Jira MCP server is set up;
    - Terraform has no exact version;
    - a git remote (`git -C /work remote -v`, or each `/work/<name>` in a workspace folder,
@@ -178,6 +224,7 @@ a datasource URL, Flyway or Liquibase migrations, a Postgres or Testcontainers d
    | git, cloud, model settings | `.env` (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`, `GIT_CONFIG_*`, `GH_HOST`, `AWS_PROFILE`, `ANTHROPIC_MODEL`, `COPILOT_MODEL`) |
    | a cache that should survive a recreate | `volume` line |
    | a database, broker or other service | compose on the host, joined by `.agentic/compose.yaml` |
+   | something the user starts and opens (dev server, API) | an entry under `apps:` (see **Apps**) |
 
 6. **Write and validate**: add setup lines with `agentic-setup-edit --dir /work/.agentic add`,
    edit the other files, then run `agentic-config validate /work/.agentic` and fix every error it
