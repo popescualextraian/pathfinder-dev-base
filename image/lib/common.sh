@@ -30,6 +30,13 @@ is_placeholder() {
 # token VAR: the variable's value, empty when unset or a placeholder.
 token() { local v="${!1:-}"; if is_placeholder "$v"; then v=""; fi; printf '%s' "$v"; }
 
+# work_root: the project root. In a multi-repository task (AGENTIC_LAYOUT=multi) AGENTIC_WORK is the
+# target, /work/<target>, and the root is its parent; otherwise AGENTIC_WORK itself.
+work_root() {
+  local w="${AGENTIC_WORK:-/work}"
+  if [ "${AGENTIC_LAYOUT:-}" = multi ]; then dirname "$w"; else printf '%s\n' "$w"; fi
+}
+
 config_dir() { cat "$AGENTIC_STATE/config-dir" 2>/dev/null || true; }
 
 # config_path REL: a config path (".agentic/x") as a path inside the config directory.

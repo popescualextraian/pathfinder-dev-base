@@ -3,11 +3,11 @@
 # shellcheck source=setup-line.sh
 source "$AGENTIC_DIR/lib/setup-line.sh"
 
-# config_find: the directory holding agentic.yaml; nothing when there is none. Fails, with a
+# config_find: the directory holding agentic.yaml (the mount, else the project root's .agentic/); nothing when there is none. Fails, with a
 # message, when AGENTIC_CONFIG_B64 is set but does not decode.
 config_find() {
   local d
-  for d in "${AGENTIC_CONFIG_MOUNT:-/agentic-config}" "${AGENTIC_WORK:-/work}/.agentic"; do
+  for d in "${AGENTIC_CONFIG_MOUNT:-/agentic-config}" "$(work_root)/.agentic"; do
     if [ -f "$d/agentic.yaml" ]; then printf '%s\n' "$d"; return 0; fi
   done
   if [ -n "${AGENTIC_CONFIG_B64:-}" ]; then

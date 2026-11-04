@@ -80,3 +80,13 @@ conf() { jq -n --args '{version: 2, project: "demo", setup: $ARGS.positional}' "
   [ -d "$AGENTIC_WORKSPACES_DIR/repos/api/.git" ]
   [ ! -e "$AGENTIC_WORK/api" ]
 }
+
+@test "a multi task clones into its root, also when the root is a repository" {
+  conf "add workspace https://example.invalid/api.git"
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="url.file://$R.insteadOf" GIT_CONFIG_VALUE_0="https://example.invalid/api.git"
+  root="$BATS_TEST_TMPDIR/root"; git init -q "$root"
+  AGENTIC_LAYOUT=multi AGENTIC_WORK="$root/api" run bash "$S"
+  [ "$status" -eq 0 ]
+  [ -d "$root/api/.git" ]
+  [ ! -e "$AGENTIC_WORKSPACES_DIR/repos/api" ]
+}

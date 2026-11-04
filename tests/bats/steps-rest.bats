@@ -84,6 +84,15 @@ config() { printf '%s\n' "$1" > "$AGENTIC_CONFIG_MOUNT/agentic.yaml"; bash "$S/1
   [ "$(cat "$HOME/hook-var")" = hello ]
 }
 
+@test "90 runs the hook in the root of a multi task" {
+  mkdir -p "$AGENTIC_CONFIG_MOUNT/hooks" "$AGENTIC_WORK/web"
+  printf 'pwd > "$HOME/hook-pwd"\n' > "$AGENTIC_CONFIG_MOUNT/hooks/on-start.sh"
+  config $'version: 2\nproject: demo'
+  AGENTIC_LAYOUT=multi AGENTIC_WORK="$AGENTIC_WORK/web" run bash "$S/90-project-hook.sh"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$HOME/hook-pwd")" = "$AGENTIC_WORK" ]
+}
+
 @test "90 failure warns, or stops the start when the hook is required" {
   mkdir -p "$AGENTIC_CONFIG_MOUNT/hooks"; echo 'exit 3' > "$AGENTIC_CONFIG_MOUNT/hooks/on-start.sh"
   config $'version: 2\nproject: demo'

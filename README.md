@@ -154,7 +154,10 @@ a command, the ports it listens on, and optionally `prepare`, `teardown`, `env_f
 in the task's checkout, so it shows the task's changes; the bridge offers the same through `GET /apps` and
 `POST /apps/NAME/start|stop|restart` ([`docs/tasks.md`](docs/tasks.md#apps)). The image label `agentic.apps`
 lists the ports (never commands or env), so a launcher can publish them. Commands run only inside the
-container.
+container. A multi-repository project also gets the labels `agentic.layout=multi`, `agentic.target` (the
+`target:` line, else the first workspace) and `agentic.workspaces` (the folder names of the `add workspace` URL
+lines, comma separated), so a launcher that clones (the UI) starts a task at the root with
+`AGENTIC_LAYOUT=multi` and `AGENTIC_WORK=/work/<target>`; a single project gets `agentic.layout=single`.
 
 ## Sessions
 

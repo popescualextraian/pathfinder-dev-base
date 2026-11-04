@@ -6,6 +6,7 @@ source "${AGENTIC_DIR:-/opt/agentic}/lib/common.sh"
 check=0; [ "${1:-}" = --check ] && check=1
 work="${AGENTIC_WORK:-/work}"; ws="${AGENTIC_WORKSPACES_DIR:-/workspaces}"
 trust=("$work")
+root="$(work_root)"; [ "$root" = "$work" ] || trust+=("$root")
 if [ -d "$ws" ]; then
   trust+=("$ws")
   for d in "$ws"/*/ "$ws"/repos/*/; do [ -e "$d.git" ] && trust+=("${d%/}"); done

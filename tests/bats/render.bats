@@ -190,3 +190,34 @@ stack_cfg() { printf 'version: 2\nproject: demo\nstack: [%s]\n' "$1" > "$C/agent
   [ "$status" -eq 1 ]
   [[ "$output" == *"stack: service db: privileged"* ]]
 }
+
+@test "a multi project carries its layout, target and cloned workspaces as labels" {
+  printf 'version: 2\nproject: demo\nlayout: multi\ntarget: api\nsetup:\n  - add workspace https://example.invalid/web.git\n  - add workspace https://example.invalid/api.git\n  - add workspace ../lib\n' > "$C/agentic.yaml"
+  run bash "$R" "$C"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'LABEL agentic.layout="multi" agentic.target="api" agentic.workspaces="web,api"'* ]]
+}
+
+@test "a multi project without target: takes the first workspace" {
+  printf 'version: 2\nproject: demo\nlayout: multi\nsetup:\n  - add workspace https://example.invalid/web.git\n' > "$C/agentic.yaml"
+  run bash "$R" "$C"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'agentic.target="web" agentic.workspaces="web"'* ]]
+}
+
+@test "a multi target that is no cloned workspace gives no layout labels and says so" {
+  printf 'version: 2\nproject: demo\nlayout: multi\ntarget: nope\nsetup:\n  - add workspace https://example.invalid/web.git\n' > "$C/agentic.yaml"
+  run bash "$R" "$C"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"agentic.layout="* ]]
+  [[ "$output" == *"target nope is not one of the cloned workspaces (web)"* ]]
+}
+
+@test "a single project says its layout; no layout key gives no label" {
+  printf 'version: 2\nproject: demo\nlayout: single\n' > "$C/agentic.yaml"
+  run bash "$R" "$C"
+  [[ "$output" == *'LABEL agentic.layout="single"'* ]]
+  printf 'version: 2\nproject: demo\n' > "$C/agentic.yaml"
+  run bash "$R" "$C"
+  [[ "$output" != *"agentic.layout="* ]]
+}

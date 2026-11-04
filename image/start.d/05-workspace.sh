@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Clones AGENTIC_REPO_URL into an empty /work. A mounted /work is left alone.
+# Clones AGENTIC_REPO_URL into an empty /work. A mounted /work is left alone. In a multi-repository
+# task the URL is the project root and goes to the root, never to the target's folder.
 set -uo pipefail
 source "${AGENTIC_DIR:-/opt/agentic}/lib/common.sh"
 source "$AGENTIC_DIR/lib/gitenv.sh"
 check=0; [ "${1:-}" = --check ] && check=1
-work="${AGENTIC_WORK:-/work}"
+work="$(work_root)"
 
 if [ -n "$(ls -A "$work" 2>/dev/null)" ]; then exit 0; fi
 if [ -z "${AGENTIC_REPO_URL:-}" ]; then

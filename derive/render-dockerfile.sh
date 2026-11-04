@@ -138,5 +138,23 @@ echo "USER dev"
 # the label carries only what the UI needs (ports, url, autostart); commands and env stay in the resolved config
 apps_b64="$(jq -c '(.apps // {}) | map_values({ports: (.ports // []), url: (.url // "/"), autostart: (.autostart // false)})' "$RESOLVED" | tr -d '\n' | base64 -w0)"
 echo "LABEL agentic.project=\"$(cfg .project)\" agentic.config.hash=\"$hash\" agentic.docker_socket=\"$socket\" agentic.harness=\"$(cfg .harness.default)\" agentic.run=\"$(printf '%s' "$run_tsv" | base64 -w0)\" agentic.apps=\"$apps_b64\""
+# the layout labels tell a launcher (the UI) where a task works: a multi project starts at its root with
+# a target among the workspace folders the container clones (the URL workspace lines)
+layout="$(cfg .layout)"
+if [ "$layout" = multi ]; then
+  ws_names=()
+  while IFS= read -r l; do
+    parse_line "$l" 2>/dev/null || continue
+    if [ "$L_KIND" = workspace ] && [ "$L_OPT" = url ]; then ws_names+=("$L_KEY"); fi
+  done < <(jq -r '.setup // [] | .[]' "$RESOLVED")
+  target="$(cfg .target)"; [ -n "$target" ] || target="${ws_names[0]:-}"
+  if [ "${#ws_names[@]}" -eq 0 ] || [[ " ${ws_names[*]} " != *" $target "* ]]; then
+    say "layout multi: target ${target:-(none)} is not one of the cloned workspaces (${ws_names[*]:-none}); no layout labels"
+  else
+    echo "LABEL agentic.layout=\"multi\" agentic.target=\"$target\" agentic.workspaces=\"$(IFS=,; echo "${ws_names[*]}")\""
+  fi
+elif [ -n "$layout" ]; then
+  echo "LABEL agentic.layout=\"$layout\""
+fi
 if [ "$stack_json" != '[]' ]; then echo "LABEL agentic.stack=\"$(printf '%s' "$stack_json" | base64 -w0)\""; fi
 echo "WORKDIR /work"

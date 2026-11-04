@@ -132,6 +132,13 @@ setup:
   [ "$(config_find)" = "$AGENTIC_CONFIG_MOUNT" ]
 }
 
+@test "config_find in a multi task reads the root's .agentic, not the target's" {
+  source "$AGENTIC_DIR/lib/common.sh"; source "$AGENTIC_DIR/lib/config.sh"
+  export AGENTIC_CONFIG_MOUNT="$BATS_TEST_TMPDIR/none" AGENTIC_LAYOUT=multi AGENTIC_WORK="$BATS_TEST_TMPDIR/root/web"
+  mkdir -p "$BATS_TEST_TMPDIR/root/.agentic"; touch "$BATS_TEST_TMPDIR/root/.agentic/agentic.yaml"
+  [ "$(config_find)" = "$BATS_TEST_TMPDIR/root/.agentic" ]
+}
+
 @test "agentic-config says so when AGENTIC_CONFIG_B64 is not valid base64" {
   export AGENTIC_CONFIG_MOUNT="$BATS_TEST_TMPDIR/none" AGENTIC_WORK="$BATS_TEST_TMPDIR/none"
   AGENTIC_CONFIG_B64='%%%not-base64' run "$AC" validate

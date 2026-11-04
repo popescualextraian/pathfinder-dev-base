@@ -32,6 +32,14 @@ config() { mkdir -p "$AGENTIC_CONFIG_MOUNT"; printf '%s\n' "$1" > "$AGENTIC_CONF
   [ "$(git -C "$AGENTIC_WORK" branch --show-current)" = feature ]
 }
 
+@test "05 in a multi task clones the root URL into the root, not into the target's folder" {
+  root="$BATS_TEST_TMPDIR/root"; mkdir -p "$root"
+  AGENTIC_LAYOUT=multi AGENTIC_WORK="$root/web" AGENTIC_REPO_URL="file://$O" run bash "$S/05-workspace.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$root/.agentic/agentic.yaml" ]
+  [ ! -e "$root/web" ]
+}
+
 @test "05 warns when /work is empty and there is no URL" {
   run bash "$S/05-workspace.sh"
   [ "$status" -eq 2 ]
