@@ -39,10 +39,24 @@ notify() {
   rm -f "$hdr"
 }
 
+# multi: the project has several repositories, so the task root's folders are the repositories
+multi() { [ "$(jq -r '.layout // "single"' "$conf" 2>/dev/null)" = multi ]; }
+# multi_die D: refuses a path that does not start with a repository's folder, naming the fix
+multi_die() {
+  local r="" f hint=""
+  for f in "$(work)"/*/; do
+    f="${f%/}"
+    [ ! -L "$f" ] && [ -e "$f/.git" ] && [ "${f##*/}" != .worktrees ] && { r="${f##*/}"; break; }
+  done
+  [ -z "$r" ] || hint=" ($r/$1)"
+  die "dir $1 does not exist under $(work); in a project with several repositories, dir starts with the repository's name$hint"
+}
+
 # appdir NAME: the checkout plus the app's dir; fails when it does not exist.
 appdir() {
   local d; d="$(field "$1" dir)"
   [ -z "$d" ] || case "/$d/" in //*|*/../*) die "dir $d must be a relative path inside the checkout" ;; esac
+  [ -z "$d" ] || [ -d "$(work)/$d" ] || ! multi || multi_die "$d"
   [ -z "$d" ] || [ -d "$(work)/$d" ] || die "dir $d does not exist in the checkout ($(work))"
   if [ -n "$d" ]; then printf '%s/%s\n' "$(work)" "$d"; else work; fi
 }
@@ -76,6 +90,7 @@ copy_env_files() {
   root="$(realpath -m -- "$(work)")"
   while IFS=$'\t' read -r from to; do
     case "/$from/ /$to/" in //*|*/../*|*\ //*) echo "agentic-app: env_files: $from -> $to is not a relative path without ..; skipped" >&2; continue ;; esac
+    if multi && [ ! -d "$root/${to%%/*}" ]; then multi_die "$to"; fi
     if [ -z "$cdir" ]; then echo "agentic-app: env_files: $from is no file in .agentic/; skipped" >&2; continue; fi
     # resolved, symlinks included, each must stay under its root
     src="$(realpath -m -- "$cdir/$from")"; dst="$(realpath -m -- "$root/$to")"

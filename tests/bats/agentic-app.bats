@@ -546,3 +546,44 @@ no_ctl() {
   [ "$status" -eq 0 ]
   [ "$(jq -r 'map(.name) | join(",")' <<<"$output")" = bad,stubborn,web ]
 }
+
+# multi: AGENTIC_WORK is a task root whose folders are repositories
+multi_root() {
+  R="$BATS_TEST_TMPDIR/root"
+  mkdir -p "$R/webapp/frontend" "$R/api"
+  echo "gitdir: x" > "$R/webapp/.git"
+  AGENTIC_WORK="$R"; export AGENTIC_WORK
+  jq -n --arg d "$1" '{layout: "multi", apps: {web: {run: "pwd; sleep 30", dir: $d}}}' > "$AGENTIC_STATE/config.json"
+}
+
+@test "multi: a dir that is not under the root names the fix" {
+  multi_root frontend
+  run "$X" start web
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dir frontend does not exist under $R; in a project with several repositories, dir starts with the repository's name (webapp/frontend)"* ]]
+}
+
+@test "multi: a root-relative dir starts from any task root" {
+  multi_root webapp/frontend
+  run "$X" start web
+  [ "$status" -eq 0 ]
+  [ "$(pane web | head -1)" = "$R/webapp/frontend" ]
+}
+
+@test "multi: env_files to outside any folder of the root is refused" {
+  multi_root webapp/frontend
+  conf '.apps.web.env_files = [{from: "web.env", to: ".env.local"}]'
+  echo A=1 > "$BATS_TEST_TMPDIR/work/.agentic/web.env"
+  run "$X" start web
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"dir starts with the repository's name (webapp/.env.local)"* ]]
+  [ ! -e "$R/.env.local" ]
+}
+
+@test "list returns every app whatever AGENTIC_WORK is" {
+  multi_root webapp/frontend
+  conf '.apps.b = {run: "true", dir: "api"} | .apps.c = {run: "true", dir: "api"}'
+  AGENTIC_WORK="$R/.worktrees/T-1"
+  run bash -c "'$X' list --json | jq length"
+  [ "$output" = 3 ]
+}
