@@ -102,6 +102,14 @@ am() { (cd "$M" && bash "$A" "$@" </dev/null); }
   grep -qx "$M:/work" <<<"$(docker_run_with agentic-task-hold)"
 }
 
+@test "run writes AGENTIC_LAYOUT into the env file" {
+  multi
+  am run --id T-a --target web "x"
+  grep -qx AGENTIC_LAYOUT=multi "$H/T-a/env"
+  ag run --id T-b "x"
+  grep -qx AGENTIC_LAYOUT=single "$H/T-b/env"
+}
+
 @test "an unknown target, --target on a single repository, a missing layout and a bad --model are refused" {
   multi
   run am run --target nope "x"; [ "$status" -eq 1 ]; [[ "$output" == *"nope is not a repository of the project; choose one of: api web"* ]]

@@ -359,8 +359,8 @@ sched_fire() {
       else worktree_cmd "$id" remove >/dev/null 2>&1 || kept="unpushed work"; fi
     else
       # the bridge removes the worktree on a clean auto-clean; a folder left in the checkout is unchecked work
-      local work wt; work="$(dotenv_value "$(host_file "$id" env)" AGENTIC_WORK 2>/dev/null || true)"
-      wt="$(project_root)${work#/work}/.worktrees/$id"
+      local wt; wt="$(task_wt_root "$id" 2>/dev/null || true)"
+      wt="$(project_root)${wt#/work}"
       if [ -e "$wt" ] || [ -L "$wt" ]; then kept="worktree not checked"; fi
     fi
   fi

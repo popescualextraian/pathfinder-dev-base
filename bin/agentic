@@ -550,6 +550,7 @@ cmd_run() {
     printf 'AGENTIC_TASK_TOKEN=%s\nAGENTIC_AGENT_TOKEN=%s\n' "$(new_token)" "$(new_token)"
     printf 'AGENTIC_TASK_ID=%s\nAGENTIC_TASK_DIR=/tasks/%s\nAGENTIC_PROJECT=%s\nAGENTIC_AGENT=%s\nAGENTIC_MODEL=%s\n' "$id" "$id" "$p" "$agent" "$model"
     printf 'AGENTIC_WORK=%s\nAGENTIC_TARGET=%s\nAGENTIC_CONTAINER=%s\nAGENTIC_CREATED_CONTAINER=%s\n' "$work" "$tname" "$c" "$created"
+    printf 'AGENTIC_LAYOUT=%s\n' "$(yaml_top "$(cfg_dir)/agentic.yaml" layout)"
     printf 'AGENTIC_ALLOWED_ACTIONS=%s\nAGENTIC_WORKTREE=%s\nAGENTIC_BRANCH=%s\nAGENTIC_AUTO_CLEAN=%s\n' \
       "$(IFS=,; echo "${allow[*]+"${allow[*]}"}")" "$worktree" "$branch" "$autoclean"
     if [ -n "$sched" ]; then
@@ -830,7 +831,7 @@ cmd_takeover() {
   esac
   # the directory from the host's own file, never from the record
   work="$(dotenv_value "$envf" AGENTIC_WORK)"
-  if task_has_worktree "$id"; then work="$work/.worktrees/$id"; fi
+  if task_has_worktree "$id"; then work="$(task_wt_dir "$id")"; fi
   case "$(container_status "$id")" in
     running)
       if bridge_running "$c"; then

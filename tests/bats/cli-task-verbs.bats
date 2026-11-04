@@ -249,6 +249,34 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   [ -z "$(docker_sub run)" ]
 }
 
+@test "takeover of a multi worktree task opens the target inside the task root" {
+  record T-1 idle
+  printf 'AGENTIC_WORK=/work/web\nAGENTIC_WORKTREE=1\nAGENTIC_LAYOUT=multi\n' >> "$H/T-1/env"
+  AGENTIC_STOP_TIMEOUT=1 run ag takeover T-1
+  [ "$status" -eq 0 ]
+  grep -qx -- /work/.worktrees/T-1/web <<<"$(docker_call_with exec claude)"
+}
+
+@test "an env file without AGENTIC_LAYOUT keeps the single paths" {
+  record T-1 idle
+  printf 'AGENTIC_WORK=/work/web\nAGENTIC_WORKTREE=1\nAGENTIC_BRANCH=agentic/T-1-x\n' >> "$H/T-1/env"
+  AGENTIC_STOP_TIMEOUT=1 run ag takeover T-1
+  [ "$status" -eq 0 ]
+  grep -qx -- /work/web/.worktrees/T-1 <<<"$(docker_call_with exec claude)"
+  DOCKER_BRIDGE_RC=1 run ag clean T-1
+  run ! grep -q AGENTIC_LAYOUT <<<"$(docker_call_with exec /opt/agentic/task/worktree.sh)"
+}
+
+@test "clean of a multi task passes the layout to worktree.sh" {
+  record T-1 stopped
+  printf 'AGENTIC_WORK=/work/web\nAGENTIC_WORKTREE=1\nAGENTIC_BRANCH=agentic/T-1-x\nAGENTIC_LAYOUT=multi\n' >> "$H/T-1/env"
+  DOCKER_BRIDGE_RC=1 run ag clean T-1
+  [ "$status" -eq 0 ]
+  wt="$(docker_call_with exec /opt/agentic/task/worktree.sh)"
+  grep -qx -- AGENTIC_LAYOUT=multi <<<"$wt"
+  [ "$(grep -nx -- -e <<<"$wt" | head -1 | cut -d: -f1)" -lt "$(grep -nx agentic-demo-task-T-1 <<<"$wt" | cut -d: -f1)" ]
+}
+
 @test "follow passes the task token through the host env file" {
   record T-11 idle
   ag follow T-11 --since 3

@@ -302,11 +302,25 @@ start_bridge() {
 
 # task_has_worktree ID: run gave the task a worktree (its host env file says so).
 task_has_worktree() { local envf; envf="$(host_file "$1" env)" && [ "$(dotenv_value "$envf" AGENTIC_WORKTREE)" = 1 ]; }
+# task_wt_root ID: the task root in the container: with several repositories a sibling of the
+# target (/work/.worktrees/ID), else inside the work directory.
+task_wt_root() {
+  local envf work; envf="$(host_file "$1" env)" || return 1; work="$(dotenv_value "$envf" AGENTIC_WORK)"
+  if [ "$(dotenv_value "$envf" AGENTIC_LAYOUT)" = multi ]; then echo "$(dirname "$work")/.worktrees/$1"
+  else echo "$work/.worktrees/$1"; fi
+}
+# task_wt_dir ID: the agent's directory in the task root.
+task_wt_dir() {
+  local envf root; envf="$(host_file "$1" env)" || return 1; root="$(task_wt_root "$1")"
+  if [ "$(dotenv_value "$envf" AGENTIC_LAYOUT)" = multi ]; then echo "$root/$(basename "$(dotenv_value "$envf" AGENTIC_WORK)")"
+  else echo "$root"; fi
+}
 # worktree_cmd ID check|remove [--force]: the worktree script in the task's container, with the work
 # directory and branch from the host env file.
 worktree_cmd() {
   local envf; envf="$(host_file "$1" env)" || return 1
-  docker exec "$(task_container "$1")" bash /opt/agentic/task/worktree.sh "$2" "$(dotenv_value "$envf" AGENTIC_WORK)" "$1" \
+  local lay; lay="$(dotenv_value "$envf" AGENTIC_LAYOUT)"
+  docker exec ${lay:+-e "AGENTIC_LAYOUT=$lay"} "$(task_container "$1")" bash /opt/agentic/task/worktree.sh "$2" "$(dotenv_value "$envf" AGENTIC_WORK)" "$1" \
     "$(dotenv_value "$envf" AGENTIC_BRANCH)" ${3:+"$3"}
 }
 
