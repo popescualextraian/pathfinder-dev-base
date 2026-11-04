@@ -78,4 +78,14 @@ describe("agentEnvironment", () => {
     expect(env.AGENTIC_TASK_DIR).toBe("/task");
     expect(env.PATH).toBe("/bin");
   });
+
+  it("sets AGENTIC_APPS_ROOT for a multi task: the task root with a worktree, the project root without", () => {
+    const multi = { ...base, AGENTIC_LAYOUT: "multi", AGENTIC_WORK: "/work/webapp", AGENTIC_TASK_ID: "T-1" };
+    expect(agentEnvironment(base, loadConfig({ ...multi, AGENTIC_WORKTREE: "1" })).AGENTIC_APPS_ROOT).toBe("/work/.worktrees/T-1");
+    expect(agentEnvironment(base, loadConfig(multi)).AGENTIC_APPS_ROOT).toBe("/work");
+  });
+
+  it("leaves AGENTIC_APPS_ROOT unset for a single task", () => {
+    expect(agentEnvironment(base, loadConfig({ ...base, AGENTIC_WORKTREE: "1" })).AGENTIC_APPS_ROOT).toBeUndefined();
+  });
 });

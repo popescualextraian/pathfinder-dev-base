@@ -808,7 +808,7 @@ cmd_task_shell() {
 
 cmd_takeover() {
   need_config; need_task "${1:-}"
-  local id="$1" agent session c envf work argv=() tty=(-i) sess=""
+  local id="$1" agent session c envf work apps_root argv=() tty=(-i) sess=""
   shift
   case "${1:-}" in
     --session) optval "$@"; sess="$2" ;;
@@ -832,6 +832,11 @@ cmd_takeover() {
   # the directory from the host's own file, never from the record
   work="$(dotenv_value "$envf" AGENTIC_WORK)"
   if task_has_worktree "$id"; then work="$(task_wt_dir "$id")"; fi
+  # a multi task's apps resolve against the task root, not the target
+  if [ "$(dotenv_value "$envf" AGENTIC_LAYOUT)" = multi ]; then
+    if task_has_worktree "$id"; then apps_root="$(task_wt_root "$id")"; else apps_root="$(dirname "$(dotenv_value "$envf" AGENTIC_WORK)")"; fi
+    tty+=(-e "AGENTIC_APPS_ROOT=$apps_root")
+  fi
   case "$(container_status "$id")" in
     running)
       if bridge_running "$c"; then
@@ -873,7 +878,9 @@ cmd_clean() {
       running) ;;
       missing)
         [ "$force" = 1 ] || die "the container of $id is gone, so its worktree cannot be checked; run agentic clean $id --force"
-        say "the container of $id is gone: remove .worktrees/$id and its branch in the checkout by hand" ;;
+        if [ "$(dotenv_value "$(host_file "$id" env)" AGENTIC_LAYOUT)" = multi ]; then
+          say "the container of $id is gone: remove /work/.worktrees/$id at the project root and its branch in every repository by hand"
+        else say "the container of $id is gone: remove .worktrees/$id and its branch in the checkout by hand"; fi ;;
       *) start_container "$id" ;;
     esac
     if [ "$(container_status "$id")" = running ]; then

@@ -836,6 +836,20 @@ describe("apps in the bridge", () => {
       expect(listWork(calls)).toEqual(["/work"]);
     });
 
+    it("a stored record without root runs the apps against work", async () => {
+      const { apps, calls } = fakeApps();
+      const { bridge, store } = await stubbed({ apps });
+      const now = new Date().toISOString();
+      const rec: Record<string, unknown> = { version: 1, task: "T-1", project: "demo", agent: "claude", model: null, state: "suspended",
+        reason: "idle timeout", session: "s1", branch: null, target: null, work: "/work/webapp", root: "", worktree: null, container: null, created_container: false, auto_clean: false, cleaned: false, created: now, updated: now, seq: 0, allowed_actions: [],
+        sessions: [newSession("main", null, now, { session: "s1" })], capabilities: null, summary: "", stopped_by_user: false, scheduled: false, run_timeout: null };
+      delete rec.root;
+      store.writeRecord(rec as never);
+      bridge.boot();
+      await bridge.apps();
+      expect(listWork(calls)).toEqual(["/work/webapp"]);
+    });
+
     it("single: root is the work directory", async () => {
       const { apps, calls } = fakeApps();
       const { bridge, store } = await stubbed({ apps, env: { AGENTIC_WORK: "/work/webapp" } });

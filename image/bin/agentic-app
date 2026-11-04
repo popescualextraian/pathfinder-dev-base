@@ -16,7 +16,7 @@ usage="usage: agentic-app list [--json] | start|stop|restart NAME | logs NAME [-
 die() { echo "agentic-app: $*" >&2; exit 1; }
 # the lock fd (8) never reaches tmux, a hook or the idle loop: a server it forks would hold it
 t() { "${TMUX_CMD[@]}" "$@" 8>&-; }
-work() { printf '%s\n' "${AGENTIC_WORK:-/work}"; }
+work() { printf '%s\n' "${AGENTIC_APPS_ROOT:-${AGENTIC_WORK:-/work}}"; }
 # field NAME KEY: a string field of an app, empty when unset
 field() { jq -r --arg n "$1" --arg k "$2" '.apps[$n][$k] // empty | strings' "$conf"; }
 # names: the configured app names that pass the name rule, one per line

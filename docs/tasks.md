@@ -276,7 +276,7 @@ never reach a label. Commands run only inside the container, by `agentic-app`.
 In a multi-repository project, `dir` and the `to` of `env_files` are relative to the task root
 (`/work` without a worktree) and start with the repository's name (`webapp/frontend`); an old-style
 value fails `agentic-app start` with a message naming the fix. `GET /apps` lists every app,
-whatever the task's target. Single-repository projects are unchanged.
+whatever the task's target. The agent's shell and `agentic takeover` get `AGENTIC_APPS_ROOT` (the task root) for this, so `agentic-app` resolves apps there while `AGENTIC_WORK` stays the target. Single-repository projects are unchanged.
 
 `agentic-app list [--json] | start|stop|restart NAME | logs NAME [--lines N]` works in the container.
 `agentic-app` reads the apps from the config resolved at container start (`~/.agentic/config.json`),

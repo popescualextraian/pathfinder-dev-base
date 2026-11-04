@@ -112,6 +112,13 @@ no_ctl() {
   [ -z "$(windows)" ]
 }
 
+@test "AGENTIC_APPS_ROOT wins over AGENTIC_WORK" {
+  mkdir -p "$BATS_TEST_TMPDIR/root/webapp/frontend"
+  conf '.apps.web.dir = "webapp/frontend"'
+  AGENTIC_APPS_ROOT="$BATS_TEST_TMPDIR/root" run bash "$X" start web
+  [ "$status" -eq 0 ]
+}
+
 @test "the apps come from the resolved config, never from the checkout's agentic.yaml" {
   printf 'apps:\n  web:\n    run: echo from-the-file; sleep 30\n' > "$AGENTIC_WORK/.agentic/agentic.yaml"
   bash "$X" start web

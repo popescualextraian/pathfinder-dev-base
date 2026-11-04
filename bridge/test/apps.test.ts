@@ -103,11 +103,11 @@ describe("spawnRunner", () => {
   };
 
   it.skipIf(process.platform === "win32")("passes arguments literally, never through a shell, with AGENTIC_WORK set", async () => {
-    const { p } = script(`process.stdout.write(JSON.stringify({ argv: process.argv.slice(2), work: process.env.AGENTIC_WORK, keep: process.env.KEEP })); process.stderr.write("e"); process.exit(3);`);
+    const { p } = script(`process.stdout.write(JSON.stringify({ argv: process.argv.slice(2), work: process.env.AGENTIC_WORK, root: process.env.AGENTIC_APPS_ROOT, keep: process.env.KEEP })); process.stderr.write("e"); process.exit(3);`);
     const run = spawnRunner(p, { ...process.env, KEEP: "1" });
     const r = await run(["start", "a; touch /tmp/pwned #$(id)"], 5000, "/work/x y");
     expect(r).toMatchObject({ code: 3, err: "e", timedOut: false });
-    expect(JSON.parse(r.out)).toEqual({ argv: ["start", "a; touch /tmp/pwned #$(id)"], work: "/work/x y", keep: "1" });
+    expect(JSON.parse(r.out)).toEqual({ argv: ["start", "a; touch /tmp/pwned #$(id)"], work: "/work/x y", root: "/work/x y", keep: "1" });
   });
 
   it.skipIf(process.platform === "win32")("ends a run past its timeout and says so", async () => {

@@ -118,7 +118,7 @@ export const autostartNames = (json: string): string[] => configured(json).filte
 // spawnRunner: CMD with an argument array and ENV plus AGENTIC_WORK; never throws.
 export function spawnRunner(cmd: string, env: NodeJS.ProcessEnv): Runner {
   return (args, timeoutMs, work) => new Promise((resolve) => {
-    execFile(cmd, args, { env: { ...env, AGENTIC_WORK: work }, timeout: timeoutMs, killSignal: "SIGTERM", maxBuffer: 8 * 1024 * 1024, encoding: "utf8" },
+    execFile(cmd, args, { env: { ...env, AGENTIC_WORK: work, AGENTIC_APPS_ROOT: work }, timeout: timeoutMs, killSignal: "SIGTERM", maxBuffer: 8 * 1024 * 1024, encoding: "utf8" },
       (error, stdout, stderr) => {
         if (!error) return resolve({ code: 0, out: stdout, err: stderr, timedOut: false });
         const e = error as Omit<NodeJS.ErrnoException, "code"> & { code?: string | number; killed?: boolean; signal?: string | null };

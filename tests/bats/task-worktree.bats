@@ -138,6 +138,28 @@ setup_multi() {
   [ "$status" -eq 1 ]; [ -d "$MW/webapp" ]
 }
 
+@test "a glob-named repository does not hide an uncommitted root file; remove keeps it" {
+  setup_multi
+  git init -q -b main "$R/a*"; git -C "$R/a*" commit -q --allow-empty -m init
+  git init -q -b main "$R/ab"; git -C "$R/ab" commit -q --allow-empty -m init
+  bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null
+  echo x > "$MW/abnotes.txt"
+  run bash "$S" check "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]
+  run bash "$S" remove "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]; [ -f "$MW/abnotes.txt" ]
+}
+
+@test "a dirty root worktree makes check fail and remove remove nothing" {
+  setup_multi
+  bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null
+  echo x > "$MW/notes.txt"
+  run bash "$S" check "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]
+  run bash "$S" remove "$R/webapp" T-1 agentic/T-1-x
+  [ "$status" -eq 1 ]; [ -f "$MW/notes.txt" ]; [ -d "$MW/webapp" ]
+}
+
 @test "multi remove deletes every worktree and branch" {
   setup_multi
   bash "$S" add "$R/webapp" T-1 agentic/T-1-x >/dev/null

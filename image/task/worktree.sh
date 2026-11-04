@@ -54,7 +54,7 @@ if [ "${AGENTIC_LAYOUT:-}" = multi ]; then
   live_repos() {
     live=() excl=()
     for n in ${cands[@]+"${cands[@]}"}; do
-      if [ -d "$root/$n/.git" ] && [ -f "$wt/$n/.git" ]; then live+=("$n"); excl+=(":(exclude)$n"); fi
+      if [ -d "$root/$n/.git" ] && [ -f "$wt/$n/.git" ]; then live+=("$n"); excl+=(":(exclude,literal)$n"); fi
     done
   }
   # add_one NAME: worktree of repository NAME; sets reason and fails when it must be skipped

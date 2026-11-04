@@ -1,4 +1,5 @@
 // The bridge's environment (spec §8.1, §12).
+import { dirname } from "node:path";
 import type { Tokens } from "./api.js";
 import { GRANT_RE } from "./task.js";
 import type { AgentName } from "./types.js";
@@ -108,5 +109,7 @@ export function agentEnvironment(env: NodeJS.ProcessEnv, cfg: Config): NodeJS.Pr
   out.AGENTIC_AGENT_TOKEN = cfg.tokens.agent;
   out.AGENTIC_BRIDGE_URL = `http://127.0.0.1:${cfg.port}`;
   out.AGENTIC_TASK_DIR = cfg.taskDir;
+  // multi: the apps' dir is relative to the task root, not to the target AGENTIC_WORK names
+  if (cfg.layout === "multi") out.AGENTIC_APPS_ROOT = cfg.worktree ? `${dirname(cfg.work)}/.worktrees/${cfg.task}` : dirname(cfg.work);
   return out;
 }

@@ -255,6 +255,15 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   AGENTIC_STOP_TIMEOUT=1 run ag takeover T-1
   [ "$status" -eq 0 ]
   grep -qx -- /work/.worktrees/T-1/web <<<"$(docker_call_with exec claude)"
+  grep -qx -- AGENTIC_APPS_ROOT=/work/.worktrees/T-1 <<<"$(docker_call_with exec claude)"
+}
+
+@test "takeover of a multi task without a worktree points the apps at the project root" {
+  record T-1 idle
+  printf 'AGENTIC_WORK=/work/web\nAGENTIC_LAYOUT=multi\n' >> "$H/T-1/env"
+  AGENTIC_STOP_TIMEOUT=1 run ag takeover T-1
+  [ "$status" -eq 0 ]
+  grep -qx -- AGENTIC_APPS_ROOT=/work <<<"$(docker_call_with exec claude)"
 }
 
 @test "an env file without AGENTIC_LAYOUT keeps the single paths" {
@@ -264,7 +273,11 @@ posted() { grep '^arg: http://127.0.0.1:49153/' "$CURL_LOG" | sed 's#^arg: http:
   [ "$status" -eq 0 ]
   grep -qx -- /work/web/.worktrees/T-1 <<<"$(docker_call_with exec claude)"
   DOCKER_BRIDGE_RC=1 run ag clean T-1
-  run ! grep -q AGENTIC_LAYOUT <<<"$(docker_call_with exec /opt/agentic/task/worktree.sh)"
+  [ "$status" -eq 0 ]
+  wt="$(docker_call_with exec /opt/agentic/task/worktree.sh)"
+  [[ "$wt" == *"/opt/agentic/task/worktree.sh"* ]]
+  run ! grep -q AGENTIC_LAYOUT <<<"$wt"
+  run ! grep -q AGENTIC_APPS_ROOT <<<"$(docker_call_with exec claude)"
 }
 
 @test "clean of a multi task passes the layout to worktree.sh" {
