@@ -38,3 +38,8 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" = from-pid1 ]
 }
+
+@test "a nested shell of the same SSH session keeps its own PATH (imported once per session)" {
+  SSH_CONNECTION="1 2 3 4" AGENTIC_PID1_ENVIRON="$E" run bash -c 'source "$P"; export PATH="/editor/bin:$PATH"; bash -c "source \"\$P\"; echo \$PATH"'
+  [ "$output" = "/editor/bin:/opt/tool/bin:/usr/bin" ]
+}

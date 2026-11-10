@@ -389,16 +389,16 @@ ssh_block() {
 # dev_ssh NAME [PUBKEY]: allows the key(s) in PUBKEY, then prints the ssh config block and whether the
 # running container publishes the port.
 dev_ssh() {
-  local name="$1" f="${2:-}" d port line lines=() first
+  local name="$1" f="${2:-}" d port line lines=() first n=0
   d="$(ssh_dir)/keys"; port="$(ssh_port)"
   if [ -n "$f" ]; then
     [ -f "$f" ] || die "$f: no such file"
     if grep -q 'PRIVATE KEY' "$f"; then die "$f is a private key; pass the .pub file"; fi
     while IFS= read -r line || [ -n "$line" ]; do
-      line="${line%$'\r'}"; [ -n "$line" ] || continue
+      n=$((n + 1)); line="${line%$'\r'}"; [ -n "$line" ] || continue
       first="${line%% *}"
       case "$first" in ssh-ed25519|ssh-rsa|ecdsa-sha2-*|sk-*) lines+=("$line") ;;
-        *) die "$f: not a public key line: ${line:0:40}" ;; esac
+        *) die "$f: line $n is not a public key (a .pub file holds lines such as ssh-ed25519 AAAA... name)" ;; esac
     done < "$f"
     [ "${#lines[@]}" -gt 0 ] || die "$f holds no public key"
     (umask 077; mkdir -p "$d"); chmod 700 "$d"
@@ -409,7 +409,9 @@ dev_ssh() {
   ssh_on || { echo "no key allowed yet: agentic dev ssh KEY.pub"; return 0; }
   echo "Add this to your ssh config (on Windows: %USERPROFILE%\\.ssh\\config):"; echo
   ssh_block "agentic-$(project_name)" "$port" "${f:+$(basename "${f%.pub}")}"; echo
-  if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)" = true ] && ! docker port "$name" 2222 >/dev/null 2>&1; then
+  # a container made before the key was allowed has no ssh port, running or stopped
+  if docker inspect -f '{{.State.Running}}' "$name" >/dev/null 2>&1 \
+    && [[ "$(docker inspect -f '{{json (index .HostConfig.PortBindings "2222/tcp")}}' "$name" 2>/dev/null || echo null)" == null ]]; then
     echo "$name does not publish SSH yet; run agentic dev recreate"
   fi
 }
@@ -434,7 +436,8 @@ dev_start() {
   fi
   docker run -d --name "$name" --restart unless-stopped --label agentic.kind=dev \
     "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" sleep infinity >/dev/null \
-    || die "could not start $name${ports:+; is one of the app ports ${ports% } in use on this host?}$sshhint"
+    || { docker rm -f "$name" >/dev/null 2>&1 || true  # a failed publish leaves it created; the next start makes it anew
+         die "could not start $name${ports:+; is one of the app ports ${ports% } in use on this host?}$sshhint"; }
 }
 
 # dev_connect NAME: a dev container created before the project network joins it.

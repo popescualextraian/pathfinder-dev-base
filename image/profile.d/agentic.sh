@@ -20,7 +20,8 @@ use-node() { use-tool node "$@"; }
 
 # agentic_ssh_env FILE: an SSH session starts with a fresh environment, so take the container's from
 # PID 1's NUL-separated environ (as docker exec would have it). Nothing is written to a file. PATH
-# replaces sshd's default; anything else the session already set stays.
+# replaces sshd's default; anything else the session already set stays. Once per session
+# (AGENTIC_SSH_ENV), so a nested shell keeps the PATH an editor or use-tool gave it.
 agentic_ssh_env() {
   local kv k
   [ -r "$1" ] || return 0
@@ -29,5 +30,6 @@ agentic_ssh_env() {
     case "$k" in HOME|HOSTNAME|PWD|SHLVL|TERM|''|[0-9]*|*[!A-Za-z0-9_]*) continue ;; PATH) ;; *) [ -z "${!k+x}" ] || continue ;; esac
     export "${kv?}"
   done < "$1"
+  export AGENTIC_SSH_ENV=1
 }
-[ -z "${SSH_CONNECTION:-}" ] || agentic_ssh_env "${AGENTIC_PID1_ENVIRON:-/proc/1/environ}"
+if [ -n "${SSH_CONNECTION:-}" ] && [ -z "${AGENTIC_SSH_ENV:-}" ]; then agentic_ssh_env "${AGENTIC_PID1_ENVIRON:-/proc/1/environ}"; fi

@@ -334,7 +334,7 @@ allow_ssh() { mkdir -p "$AGENTIC_DATA/projects/demo/ssh/keys"; echo "ssh-ed25519
   DOCKER_RUNNING=true run ag dev ssh
   [ "$status" -eq 0 ]
   [[ "$output" == *"run agentic dev recreate"* ]]
-  DOCKER_RUNNING=true DOCKER_PORT=2222 run ag dev ssh
+  DOCKER_RUNNING=true DOCKER_BINDINGS='[{"HostIp":"127.0.0.1","HostPort":"2222"}]' run ag dev ssh
   [[ "$output" != *"recreate"* ]]
 }
 
@@ -343,4 +343,26 @@ allow_ssh() { mkdir -p "$AGENTIC_DATA/projects/demo/ssh/keys"; echo "ssh-ed25519
   [[ "$output" == *"ssh=127.0.0.1:2222"* ]]
   DOCKER_RUNNING=true run ag dev status
   [[ "$output" != *"ssh="* ]]
+}
+
+@test "a failed dev start removes the half-created container, so the next start uses the new port" {
+  allow_ssh
+  DOCKER_RUN_RC=1 run ag dev
+  [ "$status" -eq 1 ]
+  [ "$(docker_sub rm | tr '\n' ' ')" = "rm -f agentic-demo-dev " ]
+}
+
+@test "dev ssh says to recreate when a stopped container has no ssh port, not when it has one" {
+  allow_ssh
+  DOCKER_RUNNING=false run ag dev ssh
+  [[ "$output" == *"run agentic dev recreate"* ]]
+  DOCKER_RUNNING=false DOCKER_BINDINGS='[{"HostIp":"127.0.0.1","HostPort":"2222"}]' run ag dev ssh
+  [[ "$output" != *"recreate"* ]]
+}
+
+@test "dev ssh never echoes the content of a line it refuses" {
+  printf 'GH_TOKEN=ghp_secret123\n' > "$BATS_TEST_TMPDIR/env"
+  run ag dev ssh "$BATS_TEST_TMPDIR/env"
+  [ "$status" -ne 0 ]
+  [[ "$output" != *ghp_secret123* && "$output" == *"line 1"* ]]
 }
