@@ -434,7 +434,7 @@ dev_start() {
     RUN_ARGS+=(-v "$sd/keys:/etc/agentic/ssh:ro" -v "$sd/host:/home/dev/.sshd" -p "127.0.0.1:$sp:2222")
     sshhint="; is the ssh port $sp in use on this host? another one goes in AGENTIC_SSH_PORT in .agentic/.env"
   fi
-  docker run -d --name "$name" --restart unless-stopped --label agentic.kind=dev \
+  docker run -d --init --name "$name" --restart unless-stopped --label agentic.kind=dev \
     "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" sleep infinity >/dev/null \
     || { docker rm -f "$name" >/dev/null 2>&1 || true  # a failed publish leaves it created; the next start makes it anew
          die "could not start $name${ports:+; is one of the app ports ${ports% } in use on this host?}$sshhint"; }

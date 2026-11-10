@@ -107,6 +107,7 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   grep -qx 'agentic-demo-dev' <<<"$run1"
   grep -qx 'unless-stopped' <<<"$run1"
   grep -qx 'agentic.kind=dev' <<<"$run1"
+  grep -qx -- '--init' <<<"$run1"
   [ "$(tail -n 2 <<<"$run1" | tr '\n' ' ')" = "sleep infinity " ]
   [ "$(docker_sub exec | tr '\n' ' ')" = "exec -it agentic-demo-dev dev-shell " ]
 }

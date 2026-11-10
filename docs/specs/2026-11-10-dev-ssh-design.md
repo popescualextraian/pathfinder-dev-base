@@ -38,7 +38,7 @@ Success criteria:
   and login fails. A bind mount from the host carries the host user's uid, which is 1000 on a typical
   WSL setup but not everywhere. The file is mounted read-only, so the ownership check protects
   nothing here; `StrictModes no` makes login work.
-- The dev container has no `--init` and no `--cap-drop` (`dev_start`); the entrypoint runs the start
+- The dev container runs with `--init` (it reaps the processes SSH sessions and editors leave) and no `--cap-drop` (`dev_start`); the entrypoint runs the start
   steps on every container start, including Docker's `--restart unless-stopped`. A step that starts
   sshd in daemon mode returns at once, because sshd detaches and closes its stdio.
 

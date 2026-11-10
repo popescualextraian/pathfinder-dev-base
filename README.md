@@ -130,6 +130,12 @@ project in the container. With Docker and `agentic` in WSL and the editor on Win
 4. Check it in PowerShell with `ssh agentic-<project>`, then add it in the editor as an SSH host
    (or import it from the ssh config) and open `/work`.
 
+   In Orca, import it with **Sync ~/.ssh/config** in Settings → SSH Hosts; don't add
+   `localhost:2222` with **Add host**. Orca's "Open in VS Code" needs the ssh config alias and
+   refuses a host added by address on a port other than 22 ("This editor needs an SSH config alias
+   for this host"). A host already added that way has to be removed first, and Orca makes you stop
+   its server on that host (Remote Orca Servers, **Stop…**) before it lets you remove it.
+
 Login is by key only, as `dev`, on `127.0.0.1`. A second project needs another port
 (`AGENTIC_SSH_PORT=2223` in `.agentic/.env`). Details: [`docs/dev-mode.md`](docs/dev-mode.md#ssh).
 
