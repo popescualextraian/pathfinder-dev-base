@@ -245,3 +245,94 @@ ag() { (cd "$PROJ" && bash "$A" "$@" </dev/null); }
   DOCKER_LABEL=copilot run ag setup
   [ "$status" -eq 0 ]
 }
+
+allow_ssh() { mkdir -p "$AGENTIC_DATA/projects/demo/ssh/keys"; echo "ssh-ed25519 AAAA k" > "$AGENTIC_DATA/projects/demo/ssh/keys/authorized_keys"; }
+
+@test "dev without allowed keys adds no ssh mount and no ssh port" {
+  run ag dev
+  [ "$status" -eq 0 ]
+  run1="$(docker_sub run)"
+  [[ "$run1" != *"/etc/agentic/ssh"* && "$run1" != *":2222"* ]]
+}
+
+@test "dev with allowed keys mounts the keys read-only, the host key dir, and publishes 2222 on loopback" {
+  allow_ssh
+  run ag dev
+  [ "$status" -eq 0 ]
+  run1="$(docker_sub run)"
+  grep -qxF "$AGENTIC_DATA/projects/demo/ssh/keys:/etc/agentic/ssh:ro" <<<"$run1"
+  grep -qxF "$AGENTIC_DATA/projects/demo/ssh/host:/home/dev/.sshd" <<<"$run1"
+  grep -qx "127.0.0.1:2222:2222" <<<"$run1"
+  [ -d "$AGENTIC_DATA/projects/demo/ssh/host" ]
+}
+
+@test "AGENTIC_SSH_PORT in .agentic/.env picks the host port; a bad one is refused" {
+  allow_ssh
+  echo AGENTIC_SSH_PORT=2233 > "$PROJ/.agentic/.env"
+  run ag dev
+  grep -qx "127.0.0.1:2233:2222" <<<"$(docker_sub run)"
+  : > "$DOCKER_LOG"
+  echo AGENTIC_SSH_PORT=99999 > "$PROJ/.agentic/.env"
+  run ag dev
+  [ "$status" -ne 0 ]
+  [[ "$output" == *AGENTIC_SSH_PORT* ]]
+}
+
+@test "a failed start with ssh on names the ssh port and AGENTIC_SSH_PORT" {
+  allow_ssh
+  DOCKER_RUN_RC=1 run ag dev
+  [ "$status" -eq 1 ]
+  [[ "$output" == *2222* && "$output" == *AGENTIC_SSH_PORT* ]]
+}
+
+@test "shell gets no ssh mount even with allowed keys" {
+  allow_ssh
+  run ag shell true
+  [[ "$(docker_sub run)" != *"/etc/agentic/ssh"* ]]
+}
+
+@test "dev ssh adds a public key once, CR stripped, with modes 700/600, and prints the block" {
+  printf 'ssh-ed25519 AAAAC3 me@laptop\r\n\r\n' > "$BATS_TEST_TMPDIR/k.pub"
+  run ag dev ssh "$BATS_TEST_TMPDIR/k.pub"
+  [ "$status" -eq 0 ]
+  run ag dev ssh "$BATS_TEST_TMPDIR/k.pub"
+  [ "$status" -eq 0 ]
+  f="$AGENTIC_DATA/projects/demo/ssh/keys/authorized_keys"
+  [ "$(cat "$f")" = "ssh-ed25519 AAAAC3 me@laptop" ]
+  [ "$(stat -c %a "$f")" = 600 ] && [ "$(stat -c %a "${f%/*}")" = 700 ]
+  [[ "$output" == *"Host agentic-demo"* && "$output" == *"Port 2222"* && "$output" == *"User dev"* ]]
+}
+
+@test "dev ssh takes every public key type and refuses a private key and a file that is not a key" {
+  printf 'ssh-rsa AAAAB a\necdsa-sha2-nistp256 AAAAE b\nsk-ssh-ed25519@openssh.com AAAAG c\n' > "$BATS_TEST_TMPDIR/many.pub"
+  run ag dev ssh "$BATS_TEST_TMPDIR/many.pub"
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$AGENTIC_DATA/projects/demo/ssh/keys/authorized_keys")" -eq 3 ]
+  rm -rf "$AGENTIC_DATA/projects/demo/ssh"
+  printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nx\n' > "$BATS_TEST_TMPDIR/k"
+  run ag dev ssh "$BATS_TEST_TMPDIR/k"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pass the .pub file"* ]]
+  printf 'ssh-ed25519 AAAA ok\nhello\n' > "$BATS_TEST_TMPDIR/x"
+  run ag dev ssh "$BATS_TEST_TMPDIR/x"
+  [ "$status" -ne 0 ]
+  [ ! -e "$AGENTIC_DATA/projects/demo/ssh/keys/authorized_keys" ]
+  run ag dev ssh "$BATS_TEST_TMPDIR/missing.pub"
+  [ "$status" -ne 0 ]
+}
+
+@test "dev ssh says to recreate when the running container does not publish the port" {
+  allow_ssh
+  DOCKER_RUNNING=true run ag dev ssh
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"run agentic dev recreate"* ]]
+  DOCKER_RUNNING=true DOCKER_PORT=2222 run ag dev ssh
+  [[ "$output" != *"recreate"* ]]
+}
+
+@test "dev status shows the ssh address when the port is published" {
+  DOCKER_RUNNING=true DOCKER_PORT=2222 run ag dev status
+  [[ "$output" == *"ssh=127.0.0.1:2222"* ]]
+  DOCKER_RUNNING=true run ag dev status
+  [[ "$output" != *"ssh="* ]]
+}

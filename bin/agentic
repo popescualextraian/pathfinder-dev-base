@@ -34,6 +34,7 @@ agentic <command> [options]          run inside a project repository
   doctor                             check the configured container: steps, tools, logins, MCP, certificates
   dev [stop|recreate|status] [--host-profile wsl|none]
                                      persistent dev container, attached through tmux (detach: Ctrl-b d)
+  dev ssh [KEY.pub]                  allow a public key to log in over SSH (127.0.0.1:2222); prints the ssh config
   target [NAME]                      the default repository of a multi-repository project
   run "prompt" [--target T] [--in ID] [--worktree] [--auto-clean] [--agent A] [--allow push|open-pr|deploy:T]... [--publish PORT]... [--id ID] [--json]
                                      start a detached task in a new container (or in task ID's); prints its id
@@ -369,6 +370,49 @@ host_args() {
   fi
 }
 
+# ssh_dir: the project's SSH files on the host (keys/authorized_keys, host/ for the host key).
+ssh_dir() { printf '%s\n' "$AGENTIC_DATA/projects/$(project_name)/ssh"; }
+ssh_on() { [ -s "$(ssh_dir)/keys/authorized_keys" ]; }
+# ssh_port: the host port for sshd, AGENTIC_SSH_PORT from .agentic/.env or 2222.
+ssh_port() {
+  local p; p="$(dotenv_value "$(project_root)/.agentic/.env" AGENTIC_SSH_PORT)"; p="${p:-2222}"
+  if ! [[ "$p" =~ ^[0-9]{1,5}$ ]] || [ "$p" -lt 1 ] || [ "$p" -gt 65535 ]; then
+    die "AGENTIC_SSH_PORT=$p in .agentic/.env is not a port (1-65535)"
+  fi
+  printf '%s\n' "$p"
+}
+ssh_block() {
+  printf 'Host %s\n  HostName localhost\n  Port %s\n  User dev\n  IdentityFile ~/.ssh/id_ed25519\n' "$1" "$2"
+}
+
+# dev_ssh NAME [PUBKEY]: allows the key(s) in PUBKEY, then prints the ssh config block and whether the
+# running container publishes the port.
+dev_ssh() {
+  local name="$1" f="${2:-}" d port line lines=() first
+  d="$(ssh_dir)/keys"; port="$(ssh_port)"
+  if [ -n "$f" ]; then
+    [ -f "$f" ] || die "$f: no such file"
+    if grep -q 'PRIVATE KEY' "$f"; then die "$f is a private key; pass the .pub file"; fi
+    while IFS= read -r line || [ -n "$line" ]; do
+      line="${line%$'\r'}"; [ -n "$line" ] || continue
+      first="${line%% *}"
+      case "$first" in ssh-ed25519|ssh-rsa|ecdsa-sha2-*|sk-*) lines+=("$line") ;;
+        *) die "$f: not a public key line: ${line:0:40}" ;; esac
+    done < "$f"
+    [ "${#lines[@]}" -gt 0 ] || die "$f holds no public key"
+    (umask 077; mkdir -p "$d"); chmod 700 "$d"
+    touch "$d/authorized_keys"; chmod 600 "$d/authorized_keys"
+    for line in "${lines[@]}"; do grep -qxF -- "$line" "$d/authorized_keys" || printf '%s\n' "$line" >> "$d/authorized_keys"; done
+    echo "allowed ${#lines[@]} key(s) in $d/authorized_keys"
+  fi
+  ssh_on || { echo "no key allowed yet: agentic dev ssh KEY.pub"; return 0; }
+  echo "Add this to your ssh config (on Windows: %USERPROFILE%\\.ssh\\config):"; echo
+  ssh_block "agentic-$(project_name)" "$port"; echo
+  if [ "$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null || true)" = true ] && ! docker port "$name" 2222 >/dev/null 2>&1; then
+    echo "$name does not publish SSH yet; run agentic dev recreate"
+  fi
+}
+
 dev_start() {
   local name="$1" img="$2" wsl="$3"
   image_exists "$img" || die "$img is not built; run agentic build"
@@ -378,9 +422,18 @@ dev_start() {
   local ports p
   ports="$(app_ports "$img" | tr '\n' ' ')"
   for p in $ports; do RUN_ARGS+=(-p "127.0.0.1:$p:$p"); done
+  # SSH only when a key is allowed (agentic dev ssh); the keys are read-only to the container
+  local sshmsg="" sp sd
+  if ssh_on; then
+    sp="$(ssh_port)"; sd="$(ssh_dir)"; mkdir -p "$sd/host"
+    bind_src_ok "$sd/keys" || die "$sd/keys is a symlink or goes through one; refused"
+    bind_src_ok "$sd/host" || die "$sd/host is a symlink or goes through one; refused"
+    RUN_ARGS+=(-v "$sd/keys:/etc/agentic/ssh:ro" -v "$sd/host:/home/dev/.sshd" -p "127.0.0.1:$sp:2222")
+    sshmsg="; is the ssh port $sp in use on this host? another one goes in AGENTIC_SSH_PORT in .agentic/.env"
+  fi
   docker run -d --name "$name" --restart unless-stopped --label agentic.kind=dev \
     "${RUN_ARGS[@]}" "${HOST_ARGS[@]}" "$img" sleep infinity >/dev/null \
-    || die "could not start $name${ports:+; is one of the app ports ${ports% } in use on this host?}"
+    || die "could not start $name${ports:+; is one of the app ports ${ports% } in use on this host?}$sshmsg"
 }
 
 # dev_connect NAME: a dev container created before the project network joins it.
@@ -392,22 +445,24 @@ dev_connect() {
 }
 
 dev_status() {
-  local name="$1" img="$2" running cur latest
+  local name="$1" img="$2" running cur latest sp
   if ! running="$(docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null)"; then
     echo "$name: not created"; return 0
   fi
   cur="$(docker inspect -f '{{.Image}}' "$name" 2>/dev/null || true)"
   latest="$(docker image inspect -f '{{.Id}}' "$img" 2>/dev/null || true)"
   echo "$name: running=$running image=$img"
+  if [ "$running" = true ] && sp="$(docker port "$name" 2222 2>/dev/null)"; then echo "ssh=$sp"; fi
   if [ -n "$latest" ] && [ "$cur" != "$latest" ]; then echo "outdated: $img was rebuilt; run agentic dev recreate"; fi
 }
 
 cmd_dev() {
   need_config
-  local action=attach wsl=0 name img
+  local action=attach wsl=0 name img key=""
   while [ $# -gt 0 ]; do
     case "$1" in
       attach|stop|recreate|status) action="$1" ;;
+      ssh) action=ssh; if [ $# -gt 1 ] && [[ "$2" != --* ]]; then key="$2"; shift; fi ;;
       --host-profile)
         case "${2:-}" in
           wsl) wsl=1 ;;
@@ -423,6 +478,7 @@ cmd_dev() {
   case "$action" in
     stop) docker stop "$name" >/dev/null; echo "stopped $name" ;;
     status) dev_status "$name" "$img" ;;
+    ssh) dev_ssh "$name" "$key" ;;
     recreate)
       docker rm -f "$name" >/dev/null 2>&1 || true
       dev_start "$name" "$img" "$wsl"
