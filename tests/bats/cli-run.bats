@@ -303,6 +303,14 @@ allow_ssh() { mkdir -p "$AGENTIC_DATA/projects/demo/ssh/keys"; echo "ssh-ed25519
   [[ "$output" == *"Host agentic-demo"* && "$output" == *"Port 2222"* && "$output" == *"User dev"* ]]
 }
 
+@test "dev ssh names the private key of the .pub it was given in IdentityFile" {
+  echo "ssh-ed25519 AAAA k" > "$BATS_TEST_TMPDIR/id_work_laptop.pub"
+  run ag dev ssh "$BATS_TEST_TMPDIR/id_work_laptop.pub"
+  grep -qx '  IdentityFile ~/.ssh/id_work_laptop' <<<"$output"
+  run ag dev ssh
+  grep -qx '  IdentityFile ~/.ssh/id_ed25519' <<<"$output"
+}
+
 @test "dev ssh takes every public key type and refuses a private key and a file that is not a key" {
   printf 'ssh-rsa AAAAB a\necdsa-sha2-nistp256 AAAAE b\nsk-ssh-ed25519@openssh.com AAAAG c\n' > "$BATS_TEST_TMPDIR/many.pub"
   run ag dev ssh "$BATS_TEST_TMPDIR/many.pub"

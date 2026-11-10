@@ -109,6 +109,27 @@ check "the project CA is trusted by curl, Node, Python and Java, and is in Chrom
 check "tmux keeps UTF-8 under a terminal" 'tmux new-session -d -s u -x 40 -y 5 "echo ●; sleep 8" && sleep 1 \
   && TERM=xterm-256color timeout 3 script -qec "tmux attach -t u" /tmp/out >/dev/null 2>&1 </dev/null; grep -q ● /tmp/out'
 
+step "ssh: a key-only login as dev into the dev container, with the project env and the image's PATH"
+dev="agentic-smoke-project-dev"
+docker rm -f "$dev" >/dev/null 2>&1 || true
+trap 'docker rm -f "$dev" >/dev/null 2>&1; rm -rf "$tmp"' EXIT
+ssh-keygen -q -t ed25519 -N '' -f "$tmp/sk"
+printf 'X=from-env\nAGENTIC_SSH_PORT=2299\n' >> "$proj/.agentic/.env"
+(cd "$proj" && "$A" dev ssh "$tmp/sk.pub") | grep -q 'Port 2299' || fail "ssh: dev ssh did not print the config block"
+start_dev() { (cd "$proj" && bash -c "source '$A'; dev_start $dev $IMG 0"); }
+sshto() { ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$tmp/kh" -o BatchMode=yes -o ConnectTimeout=5 \
+  -i "$tmp/sk" -p 2299 "$@" dev@127.0.0.1 'bash -ic "id -un; echo \$X; command -v java"' 2>/dev/null; }
+login() { local out; for _ in $(seq 1 20); do out="$(sshto)" && { printf '%s' "$out"; return 0; }; sleep 0.5; done; return 1; }
+start_dev
+out="$(login)" || fail "ssh: no login ($(docker exec "$dev" cat /home/dev/.agentic/sshd.log 2>&1 | tail -3))"
+[[ "$out" == dev$'\n'from-env$'\n'/opt/java/* ]] || fail "ssh: got '$out'"
+if sshto -o PubkeyAuthentication=no -o PreferredAuthentications=password >/dev/null; then fail "ssh: a password login was accepted"; fi
+docker restart "$dev" >/dev/null
+login >/dev/null || fail "ssh: no login after a docker restart (host key changed?)"
+docker rm -f "$dev" >/dev/null && start_dev
+login >/dev/null || fail "ssh: no login after a recreate (host key changed?)"
+docker rm -f "$dev" >/dev/null
+
 step "with the gate on, git push is refused by the hook"
 out="$(docker run --rm -e AGENTIC_GATE=1 "$IMG" bash -lc \
   'echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git push\"}}" | bash /opt/agentic/task/hook.sh claude pretooluse; echo "rc=$?"' 2>&1)"

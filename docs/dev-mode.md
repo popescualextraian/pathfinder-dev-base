@@ -13,6 +13,7 @@ come back later. Everything keeps running while you are away.
 | `agentic dev status` | `running=true/false`, and `outdated` when the image was rebuilt since the container started. |
 | `agentic dev stop` | Stops the container. The next `agentic dev` starts it again. |
 | `agentic dev recreate` | Removes the container, starts a new one from the current image and attaches. Use it after `agentic build`; `agentic add ... --yes` does it for you. |
+| `agentic dev ssh [KEY.pub]` | Allows a public key to log in over SSH and prints the ssh config block (see [SSH](#ssh)). |
 | `agentic dev --host-profile wsl\|none` | Forces the WSL host conveniences on or off (see below). |
 | `agentic shell [CMD...]` | A separate throwaway container, removed on exit. It is not part of the dev session. |
 
@@ -27,6 +28,7 @@ The container restarts with Docker (`--restart unless-stopped`). What survives:
 |---|---|---|---|
 | Files in `/work` (your project on the host) | yes | yes | yes |
 | Logins and Claude/Copilot history (`~/.claude`, `~/.copilot`, mounted from the host) | yes | yes | yes |
+| SSH: the allowed keys and the host key (`agentic dev ssh`, mounted from the host) | yes | yes | yes |
 | Running agents and tmux windows | yes | no | no |
 | Other changes inside the container (`~/.tmux.conf`, ad-hoc installs) | yes | yes | no |
 
@@ -109,6 +111,44 @@ can share `/work` without worktrees.
 - On WSL with WSLg, the container gets the display, the Wayland clipboard and the host `/tmp`, so
   pasting an image into Claude Code works. This is detected automatically. `--host-profile none`
   (or `AGENTIC_HOST_PROFILE=none`) turns it off, and `--host-profile wsl` forces it on.
+
+## SSH
+
+An editor that connects over SSH (VS Code Remote-SSH, JetBrains Gateway, Orca) can open the
+project in the dev container. SSH is off until you allow a key.
+
+1. `agentic dev ssh PATH/TO/KEY.pub` allows a public key. Only the `.pub` file is accepted; a private
+   key is refused. On WSL, a Windows key is under `/mnt/c/Users/<you>/.ssh/`.
+2. `agentic dev recreate`. The container now runs sshd and publishes it on `127.0.0.1:2222`.
+3. Add the block that `agentic dev ssh` prints to your ssh config (`~/.ssh/config`, or
+   `%USERPROFILE%\.ssh\config` on Windows) and connect with `ssh agentic-<project>`.
+
+Details:
+
+- Login is as `dev`, by key only: no password, no root, no agent forwarding. Local port
+  forwarding works, so an editor can forward a dev server it previews.
+- The port is bound to `127.0.0.1`. WSL's localhost forwarding makes it reachable from Windows. A
+  second project with SSH needs its own port: `AGENTIC_SSH_PORT=2223` in `.agentic/.env`, then
+  `agentic dev recreate`.
+- The allowed keys live in `~/.agentic/projects/<project>/ssh/keys/authorized_keys` on the host and
+  are read-only in the container, so nothing inside it can add a key. To remove a key, edit that file.
+  The host key is in `…/ssh/host` and survives a recreate.
+- An interactive SSH shell gets the container's environment (`.agentic/.env`, git identity, proxy,
+  the image's `PATH`) from its main process; nothing is written to a file. A non-interactive
+  `ssh host CMD` does not.
+- An editor caches its server in the container's home (`~/.cache/<editor>`, `~/.vscode-server`). After a
+  recreate it downloads it again.
+- sshd's log is `~/.agentic/sshd.log` in the container. When sshd fails to start, the container
+  starts anyway with a warning.
+- No published port: if your editor runs the system ssh client, a `ProxyCommand` reaches sshd
+  through `docker exec`, with the same keys. On Windows:
+
+  ```text
+  Host agentic-<project>
+    User dev
+    IdentityFile ~/.ssh/id_ed25519
+    ProxyCommand wsl.exe docker exec -i agentic-<project>-dev /usr/sbin/sshd -i -f /home/dev/.agentic/sshd_config
+  ```
 
 ## When something is off
 

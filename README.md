@@ -99,6 +99,40 @@ installed by hand inside the container do not. `claude --continue` brings a conv
 Parallel agents that change code each need their own git worktree. Full guide:
 [`docs/dev-mode.md`](docs/dev-mode.md).
 
+### SSH into the dev container
+
+So an editor that connects over SSH (VS Code Remote-SSH, JetBrains Gateway, Orca) can open the
+project in the container. With Docker and `agentic` in WSL and the editor on Windows:
+
+1. Create a key on Windows if you have none (PowerShell). It goes to `%USERPROFILE%\.ssh\id_ed25519`:
+
+   ```powershell
+   ssh-keygen -t ed25519
+   ```
+
+2. Allow that key, from WSL in the project folder (any `.pub` file works; a private key is refused):
+
+   ```bash
+   agentic dev ssh /mnt/c/Users/<you>/.ssh/id_ed25519.pub
+   agentic dev recreate
+   ```
+
+3. Paste the block it prints into `%USERPROFILE%\.ssh\config` on Windows:
+
+   ```text
+   Host agentic-<project>
+     HostName localhost
+     Port 2222
+     User dev
+     IdentityFile ~/.ssh/id_ed25519
+   ```
+
+4. Check it in PowerShell with `ssh agentic-<project>`, then add it in the editor as an SSH host
+   (or import it from the ssh config) and open `/work`.
+
+Login is by key only, as `dev`, on `127.0.0.1`. A second project needs another port
+(`AGENTIC_SSH_PORT=2223` in `.agentic/.env`). Details: [`docs/dev-mode.md`](docs/dev-mode.md#ssh).
+
 ## Detached tasks
 
 `agentic run` starts an unattended task in a container set up like the dev
