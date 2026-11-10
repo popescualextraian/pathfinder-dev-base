@@ -68,3 +68,8 @@ D="$REPO_ROOT/image/Dockerfile"
   [ "$(grep -n 'npm ci --omit=dev' "$D" | cut -d: -f1)" -lt "$(grep -n '^COPY image/lib ' "$D" | cut -d: -f1)" ]
   [ "$(grep -n 'COPY image/arch/validate.mjs' "$D" | cut -d: -f1)" -gt "$(grep -n '^COPY image/lib ' "$D" | cut -d: -f1)" ]
 }
+
+@test "the base image installs openssh-server and removes the package's host keys" {
+  grep -Eq '^\s+.*\bopenssh-server\b' "$REPO_ROOT/image/Dockerfile"
+  grep -q 'rm -f /etc/ssh/ssh_host_\*' "$REPO_ROOT/image/Dockerfile"
+}

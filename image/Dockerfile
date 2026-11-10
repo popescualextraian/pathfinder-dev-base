@@ -41,8 +41,9 @@ RUN --mount=type=bind,from=agentic-ca,target=/tmp/agentic-ca \
 
 # OS packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl wget gnupg git openssh-client bash make build-essential unzip zip tar xz-utils \
+      ca-certificates curl wget gnupg git openssh-client openssh-server bash make build-essential unzip zip tar xz-utils \
       jq ripgrep tmux less procps python3 python3-venv pipx libnss3-tools xvfb lsb-release wl-clipboard \
+ && rm -f /etc/ssh/ssh_host_* \
  && rm -rf /var/lib/apt/lists/*
 
 # gh, Docker CLI, Azure CLI from their vendor repositories
